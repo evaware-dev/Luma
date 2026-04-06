@@ -1,11 +1,11 @@
 package sweetie.evaware
 
-import java.awt.image.BufferedImage
 import net.fabricmc.api.ModInitializer
 import org.slf4j.LoggerFactory
 import sweetie.evaware.luma.shader.LumaGlslLibrary
 import sweetie.evaware.renderutil.RenderUtil
 import sweetie.evaware.renderutil.font.RenderFonts
+import java.awt.image.BufferedImage
 
 object LumaRenderer : ModInitializer {
     val logger = LoggerFactory.getLogger("luma-renderer")
@@ -36,8 +36,6 @@ object LumaRenderer : ModInitializer {
             }
             image
         }
-
-        Runtime.getRuntime().addShutdownHook(Thread(RenderUtil::close, "luma-renderer-shutdown"))
         logger.info("Luma initialized")
     }
 }

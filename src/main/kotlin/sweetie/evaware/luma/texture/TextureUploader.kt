@@ -1,8 +1,5 @@
 package sweetie.evaware.luma.texture
 
-import java.awt.image.BufferedImage
-import java.awt.image.DataBufferInt
-import java.nio.IntBuffer
 import com.mojang.blaze3d.opengl.GlStateManager
 import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL12
@@ -10,6 +7,9 @@ import org.lwjgl.opengl.GL14
 import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.resource.LumaResources
+import java.awt.image.BufferedImage
+import java.awt.image.DataBufferInt
+import java.nio.IntBuffer
 
 object TextureUploader {
     private var uploadBuffer: IntBuffer = MemoryUtil.memAllocInt(1)
@@ -104,5 +104,11 @@ object TextureUploader {
             capacity = capacity shl 1
         }
         return capacity
+    }
+
+    fun close() {
+        MemoryUtil.memFree(uploadBuffer)
+        uploadBuffer = MemoryUtil.memAllocInt(1)
+        scratchPixels = IntArray(0)
     }
 }

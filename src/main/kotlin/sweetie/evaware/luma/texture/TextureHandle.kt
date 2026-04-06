@@ -23,7 +23,9 @@ class TextureHandle(
     override fun close() {
         if (closed) return
         Luma.onTextureDeleted(id)
-        GL11.glDeleteTextures(id)
+        if (Luma.hasContext()) {
+            GL11.glDeleteTextures(id)
+        }
         closed = true
         LumaResources.untrack(this)
     }

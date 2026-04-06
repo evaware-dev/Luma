@@ -34,6 +34,8 @@ dependencies {
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 	modImplementation "net.fabricmc:fabric-language-kotlin:${project.fabric_kotlin_version}"
+	testImplementation "org.jetbrains.kotlin:kotlin-test"
+	testImplementation files(sourceSets.main.output)
 }
 
 
@@ -54,6 +56,10 @@ processResources {
 
 tasks.withType(JavaCompile).configureEach {
 	it.options.release = 21
+}
+
+tasks.named("test") {
+	useJUnitPlatform()
 }
 
 kotlin {

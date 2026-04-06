@@ -1,19 +1,16 @@
 package sweetie.evaware.renderutil
 
-import java.awt.image.BufferedImage
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.resource.LumaResources
 import sweetie.evaware.luma.scissor.ScissorControl
 import sweetie.evaware.luma.texture.TextureAtlas
+import sweetie.evaware.luma.texture.TextureUploader
 import sweetie.evaware.msdf.MsdfFont
 import sweetie.evaware.renderutil.api.IBatch
 import sweetie.evaware.renderutil.api.RenderPipeline
 import sweetie.evaware.renderutil.font.RenderFonts
-import sweetie.evaware.renderutil.renderers.RectRenderer
-import sweetie.evaware.renderutil.renderers.RoundedRectRenderer
-import sweetie.evaware.renderutil.renderers.TextRenderer
-import sweetie.evaware.renderutil.renderers.TextureRenderer
-import sweetie.evaware.renderutil.renderers.UberRenderer
+import sweetie.evaware.renderutil.renderers.*
+import java.awt.image.BufferedImage
 
 object RenderUtil {
     private val uberRenderer = UberRenderer()
@@ -27,12 +24,14 @@ object RenderUtil {
     private var activePipeline: RenderPipeline? = null
     private var loaded = false
     private var frameActive = false
+    private var closed = false
 
     val RECT get() = rectRenderer.reset()
     val TEXTURE get() = textureRenderer.reset()
     val ROUNDED_RECT get() = roundedRectRenderer.reset()
 
     fun load() {
+        closed = false
         if (loaded) return
 
         RenderFonts.stage()
@@ -44,14 +43,20 @@ object RenderUtil {
     }
 
     fun close() {
-        if (frameActive) {
+        if (closed) return
+        closed = true
+
+        if (frameActive && Luma.hasContext()) {
             endFrame()
         }
+
+        frameActive = false
 
         uberRenderer.close()
         roundedRectRenderer.close()
         TextureAtlas.close()
         RenderFonts.close()
+        TextureUploader.close()
         LumaResources.closeAll()
 
         activeBatch = null

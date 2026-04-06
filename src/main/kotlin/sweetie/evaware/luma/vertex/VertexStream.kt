@@ -1,11 +1,11 @@
 package sweetie.evaware.luma.vertex
 
-import java.nio.FloatBuffer
 import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL15
 import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.Clearable
+import java.nio.FloatBuffer
 
 class VertexStream : Clearable, AutoCloseable {
     companion object {
@@ -17,6 +17,7 @@ class VertexStream : Clearable, AutoCloseable {
     private var vertexCount = 0
     private var gpuFloatCapacity = 0
     private var uploadBuffer: FloatBuffer = MemoryUtil.memAllocFloat(INITIAL_FLOAT_CAPACITY)
+    private var closed = false
 
     fun hasVertices() = vertexCount > 0
 
@@ -122,6 +123,7 @@ class VertexStream : Clearable, AutoCloseable {
         uploadBuffer.position(0)
         Luma.bindArrayBuffer(vbo)
         ensureGpuCapacity(floatCount)
+        GL15.glBufferData(GL15.GL_ARRAY_BUFFER, gpuFloatCapacity.toLong() * Float.SIZE_BYTES.toLong(), GL15.GL_STREAM_DRAW)
         GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, 0, uploadBuffer)
         GL11.glDrawArrays(drawMode, 0, vertexCount)
         val uploadedVertices = vertexCount
@@ -169,9 +171,12 @@ class VertexStream : Clearable, AutoCloseable {
     }
 
     override fun close() {
+        if (closed) return
         MemoryUtil.memFree(uploadBuffer)
-        uploadBuffer = MemoryUtil.memAllocFloat(INITIAL_FLOAT_CAPACITY)
         gpuFloatCapacity = 0
-        clear()
+        floatCount = 0
+        vertexCount = 0
+        nextLayoutIndex = 0
+        closed = true
     }
 }

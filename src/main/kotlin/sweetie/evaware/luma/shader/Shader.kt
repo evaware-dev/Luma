@@ -104,18 +104,25 @@ class Shader(
 
     override fun close() {
         vertices.close()
+        val hasContext = Luma.hasContext()
         if (vbo != 0) {
-            GL15.glDeleteBuffers(vbo)
+            if (hasContext) {
+                GL15.glDeleteBuffers(vbo)
+            }
             Luma.onArrayBufferDeleted(vbo)
             vbo = 0
         }
         if (vao != 0) {
-            GL30.glDeleteVertexArrays(vao)
+            if (hasContext) {
+                GL30.glDeleteVertexArrays(vao)
+            }
             Luma.onVertexArrayDeleted(vao)
             vao = 0
         }
         if (programId != 0) {
-            GL20.glDeleteProgram(programId)
+            if (hasContext) {
+                GL20.glDeleteProgram(programId)
+            }
             Luma.onProgramDeleted(programId)
             programId = 0
         }

@@ -2,21 +2,17 @@ package sweetie.evaware.luma
 
 import com.mojang.blaze3d.opengl.GlConst
 import com.mojang.blaze3d.opengl.GlStateManager
-import java.nio.IntBuffer
 import net.minecraft.client.Minecraft
 import org.lwjgl.BufferUtils
-import org.lwjgl.opengl.GL11
-import org.lwjgl.opengl.GL13
-import org.lwjgl.opengl.GL14
-import org.lwjgl.opengl.GL15
-import org.lwjgl.opengl.GL20
-import org.lwjgl.opengl.GL30
+import org.lwjgl.glfw.GLFW
+import org.lwjgl.opengl.*
 import sweetie.evaware.luma.framebuffer.FramebufferHandle
 import sweetie.evaware.luma.matrix.MatrixControl
 import sweetie.evaware.luma.shader.Shader
 import sweetie.evaware.luma.texture.TextureHandle
 import sweetie.evaware.luma.uniform.Mat4Uniform
 import sweetie.evaware.luma.uniform.ShaderUniforms
+import java.nio.IntBuffer
 
 object Luma {
     class GlStateSnapshot {
@@ -86,6 +82,10 @@ object Luma {
     private var boundTextureId = -1
     private var boundProgramId = -1
     private var boundVertexArrayId = -1
+
+    internal var contextProvider: () -> Boolean = { GLFW.glfwGetCurrentContext() != 0L }
+
+    fun hasContext() = contextProvider()
 
     private fun swapToMainFramebuffer() {
         val target = Minecraft.getInstance().mainRenderTarget

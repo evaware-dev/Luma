@@ -1,5 +1,6 @@
 package sweetie.evaware.luma.mixin.client;
 
+import kotlin.Unit;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
@@ -10,8 +11,6 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import sweetie.evaware.luma.matrix.MatrixControl;
-import sweetie.evaware.renderutil.RenderStats;
 import sweetie.evaware.renderutil.RenderTest;
 import sweetie.evaware.renderutil.RenderUtil;
 
@@ -37,8 +36,9 @@ public class MixinGameRenderer {
         )
     )
     private void luma$renderGuiRects(DeltaTracker deltaTracker, boolean tick, CallbackInfo callbackInfo) {
-        RenderStats.INSTANCE.beginFrame();
-        MatrixControl.INSTANCE.beginGuiFrame();
-        RenderTest.INSTANCE.renderGui();
+        RenderUtil.INSTANCE.renderFrame(() -> {
+            RenderTest.INSTANCE.renderGui();
+            return Unit.INSTANCE;
+        });
     }
 }

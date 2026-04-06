@@ -25,7 +25,7 @@ object RenderTestApp {
     private val projectionMatrix = Matrix4f()
     private val widthBuffer = BufferUtils.createIntBuffer(1)
     private val heightBuffer = BufferUtils.createIntBuffer(1)
-    private lateinit var uMatrix: Mat4Uniform
+    private var uMatrix: Mat4Uniform
 
     init {
         with(shader) {
@@ -67,6 +67,7 @@ object RenderTestApp {
             GLFW.glfwDestroyWindow(window)
             GLFW.glfwTerminate()
             GLFW.glfwSetErrorCallback(null)?.free()
+            GL.setCapabilities(null)
         }
     }
 
