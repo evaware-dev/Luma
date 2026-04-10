@@ -1,13 +1,10 @@
 package sweetie.evaware.renderutil.renderers
 
-import org.lwjgl.opengl.GL11
 import sweetie.evaware.luma.Luma
-import sweetie.evaware.luma.matrix.MatrixControl
-import sweetie.evaware.luma.scissor.ScissorControl
-import sweetie.evaware.luma.shader.Shader
-import sweetie.evaware.luma.texture.TextureAtlas
-import sweetie.evaware.luma.uniform.Int1Uniform
-import sweetie.evaware.luma.uniform.Mat4Uniform
+import sweetie.evaware.luma.wrapper.LumaVertexBuffer
+import sweetie.evaware.luma.wrapper.matrix.MatrixControl
+import sweetie.evaware.luma.wrapper.scissor.ScissorControl
+import sweetie.evaware.luma.wrapper.texture.TextureAtlas
 import sweetie.evaware.msdf.MsdfFont
 import sweetie.evaware.renderutil.RenderStats
 import sweetie.evaware.renderutil.api.BatchRenderer
@@ -17,42 +14,22 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
     companion object {
         private const val plainMode = 0f
         private const val textMode = 1f
+        private const val floatsPerVertex = 14
     }
 
-    private val shader = Shader(
-        "assets/luma-renderer/shaders/core/uber.frag",
-        "assets/luma-renderer/shaders/core/uber.vert"
-    ).drawMode(GL11.GL_TRIANGLES)
-
-    private val uMatrix: Mat4Uniform
-    private val uTexture: Int1Uniform
-    private val scissor = FloatArray(4)
-
-    init {
-        with(shader) {
-            vertices.float(2, 0)
-            vertices.float(2, 1)
-            vertices.float(4, 2)
-            vertices.float(2, 3)
-            vertices.float(4, 4)
-            uMatrix = uniforms.mat4("uMatrix")
-            uTexture = uniforms.int1("uTexture")
-        }
-    }
+    private val vertices = LumaVertexBuffer(floatsPerVertex)
 
     override fun load() {
-        shader.load()
+        TextureAtlas.prepare()
     }
 
-    override fun hasPending() = shader.vertices.hasVertices()
+    override fun hasPending() = vertices.hasVertices()
 
     fun rect(x: Float, y: Float, width: Float, height: Float, color: Int) {
-        ScissorControl.copyCurrent(scissor)
         quad(TextureAtlas.whiteRegion(), x, y, width, height, color, plainMode, 0f)
     }
 
     fun texture(id: String, x: Float, y: Float, width: Float, height: Float, color: Int) {
-        ScissorControl.copyCurrent(scissor)
         quad(TextureAtlas.region(id), x, y, width, height, color, plainMode, 0f)
     }
 
@@ -68,8 +45,6 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
         var cursorX = x
         var baselineY = y + (font.lineHeight + font.descender) * size
         var index = 0
-
-        ScissorControl.copyCurrent(scissor)
 
         while (index < text.length) {
             val code = text.codePointAt(index)
@@ -112,19 +87,13 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
 
     override fun flush() {
         if (!hasPending()) return
-
-        shader.attach()
-        shader.uniforms.int1(uTexture, 0)
-        Luma.applyGameMatrix(shader.uniforms, uMatrix)
-        Luma.bindTexture(TextureAtlas.texture())
         RenderStats.markBatch()
-        Luma.drawShader(shader)
+        Luma.draw(RenderUtilPipelines.uber, vertices, TextureAtlas.texture())
         RenderStats.markDrawCall()
-        shader.detach()
     }
 
     override fun close() {
-        shader.close()
+        vertices.close()
     }
 
     private fun quad(
@@ -195,10 +164,11 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
         mode: Float,
         range: Float
     ) {
-        shader.vertices.attribute2(0, MatrixControl.transformX(x, y), MatrixControl.transformY(x, y))
-        shader.vertices.attribute2(1, u, v)
-        shader.vertices.attribute4(2, red, green, blue, alpha)
-        shader.vertices.attribute2(3, mode, range)
-        shader.vertices.attribute4(4, scissor[0], scissor[1], scissor[2], scissor[3])
+        vertices.put2(MatrixControl.transformX(x, y), MatrixControl.transformY(x, y))
+        vertices.put2(u, v)
+        vertices.put4(red, green, blue, alpha)
+        vertices.put2(mode, range)
+        vertices.put4(ScissorControl.minX, ScissorControl.minY, ScissorControl.maxX, ScissorControl.maxY)
+        vertices.completeVertex()
     }
 }

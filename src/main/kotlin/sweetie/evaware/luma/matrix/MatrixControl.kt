@@ -1,116 +1,44 @@
 package sweetie.evaware.luma.matrix
 
-import net.minecraft.client.Minecraft
 import org.joml.Matrix4f
 import org.joml.Matrix4fStack
-import sweetie.evaware.luma.scissor.ScissorControl
 
 object MatrixControl {
-    private val projectionMatrix = Matrix4f()
-    private val combinedMatrix = Matrix4f()
+    val matrix4fStack: Matrix4fStack
+        get() = sweetie.evaware.luma.wrapper.matrix.MatrixControl.matrix4fStack
 
-    @JvmField
-    val matrix4fStack = Matrix4fStack(32).apply {
-        identity()
-    }
+    fun beginGuiFrame() = sweetie.evaware.luma.wrapper.matrix.MatrixControl.beginGuiFrame()
 
-    private var tm00 = 1f
-    private var tm01 = 0f
-    private var tm10 = 0f
-    private var tm11 = 1f
-    private var tm30 = 0f
-    private var tm31 = 0f
-    private var projectionVersion = 0
+    fun unscaledProjection() = sweetie.evaware.luma.wrapper.matrix.MatrixControl.unscaledProjection()
 
-    fun beginGuiFrame() {
-        matrix4fStack.clear()
-        unscaledProjection()
-        reset()
-        ScissorControl.beginGuiFrame()
-    }
+    fun scaledProjection() = sweetie.evaware.luma.wrapper.matrix.MatrixControl.scaledProjection()
 
-    fun unscaledProjection() {
-        val window = Minecraft.getInstance().window
-        projectionMatrix.identity().ortho(
-            0f,
-            window.guiScaledWidth.toFloat(),
-            window.guiScaledHeight.toFloat(),
-            0f,
-            -1000f,
-            1000f
-        )
-        projectionVersion++
-    }
+    fun startScale(x: Float, y: Float, scale: Float) =
+        sweetie.evaware.luma.wrapper.matrix.MatrixControl.startScale(x, y, scale)
 
-    fun scaledProjection() {
-        val window = Minecraft.getInstance().window
-        projectionMatrix.identity().ortho(
-            0f,
-            window.guiScaledWidth.toFloat() * 0.5f,
-            window.guiScaledHeight.toFloat() * 0.5f,
-            0f,
-            -1000f,
-            1000f
-        )
-        projectionVersion++
-    }
+    fun startScale(x: Float, y: Float, scaleX: Float, scaleY: Float) =
+        sweetie.evaware.luma.wrapper.matrix.MatrixControl.startScale(x, y, scaleX, scaleY)
 
-    fun startScale(x: Float, y: Float, scale: Float) {
-        startScale(x, y, scale, scale)
-    }
+    fun translate(x: Float, y: Float) = sweetie.evaware.luma.wrapper.matrix.MatrixControl.translate(x, y)
 
-    fun startScale(x: Float, y: Float, scaleX: Float, scaleY: Float) {
-        matrix4fStack.translate(x, y, 0f)
-        matrix4fStack.scale(scaleX, scaleY, 1f)
-        matrix4fStack.translate(-x, -y, 0f)
-        cacheTransform()
-    }
+    fun scale(x: Float, y: Float, z: Float = 1f) =
+        sweetie.evaware.luma.wrapper.matrix.MatrixControl.scale(x, y, z)
 
-    fun translate(x: Float, y: Float) {
-        matrix4fStack.translate(x, y, 0f)
-        cacheTransform()
-    }
+    fun rotateZ(angleRadians: Float) = sweetie.evaware.luma.wrapper.matrix.MatrixControl.rotateZ(angleRadians)
 
-    fun scale(x: Float, y: Float, z: Float = 1f) {
-        matrix4fStack.scale(x, y, z)
-        cacheTransform()
-    }
+    fun reset() = sweetie.evaware.luma.wrapper.matrix.MatrixControl.reset()
 
-    fun rotateZ(angleRadians: Float) {
-        matrix4fStack.rotateZ(angleRadians)
-        cacheTransform()
-    }
+    fun pushMatrix() = sweetie.evaware.luma.wrapper.matrix.MatrixControl.pushMatrix()
 
-    fun reset() {
-        matrix4fStack.identity()
-        cacheTransform()
-    }
+    fun popMatrix() = sweetie.evaware.luma.wrapper.matrix.MatrixControl.popMatrix()
 
-    fun pushMatrix() {
-        matrix4fStack.pushMatrix()
-    }
+    fun projection(): Matrix4f = sweetie.evaware.luma.wrapper.matrix.MatrixControl.projection()
 
-    fun popMatrix() {
-        matrix4fStack.popMatrix()
-        cacheTransform()
-    }
+    fun projectionVersion() = sweetie.evaware.luma.wrapper.matrix.MatrixControl.projectionVersion()
 
-    fun projection() = projectionMatrix
+    fun current(): Matrix4f = sweetie.evaware.luma.wrapper.matrix.MatrixControl.current()
 
-    fun projectionVersion() = projectionVersion
+    fun transformX(x: Float, y: Float) = sweetie.evaware.luma.wrapper.matrix.MatrixControl.transformX(x, y)
 
-    fun current() = combinedMatrix.set(projectionMatrix).mul(matrix4fStack)
-
-    fun transformX(x: Float, y: Float) = tm00 * x + tm10 * y + tm30
-
-    fun transformY(x: Float, y: Float) = tm01 * x + tm11 * y + tm31
-
-    private fun cacheTransform() {
-        tm00 = matrix4fStack.m00()
-        tm01 = matrix4fStack.m01()
-        tm10 = matrix4fStack.m10()
-        tm11 = matrix4fStack.m11()
-        tm30 = matrix4fStack.m30()
-        tm31 = matrix4fStack.m31()
-    }
+    fun transformY(x: Float, y: Float) = sweetie.evaware.luma.wrapper.matrix.MatrixControl.transformY(x, y)
 }

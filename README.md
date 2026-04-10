@@ -1,20 +1,20 @@
 # Luma
 
-Lightweight OpenGL wrapper written in Kotlin.
+Lightweight Kotlin rendering wrapper.
 
-It keeps the core rendering pieces explicit: shaders, vertex layouts, uniforms, textures, framebuffers, matrices, and GL state. The project also includes a small GLSL library system.
+Minecraft integration can route through the active Mojang GPU backend for OpenGL or Vulkan. Standalone OpenGL remains available through the OpenGL host.
 
 ## Requirements
 
-- Java 21+
+- Java 25
 - Kotlin
+- Minecraft 26.2 snapshot environment for Fabric integration
 
 ## Usage
 
 Usage examples are in:
 
 - [Render utility for Minecraft](src/main/kotlin/sweetie/evaware/renderutil)
-- [Standalone app](src/test/kotlin)
 
 ## License
 

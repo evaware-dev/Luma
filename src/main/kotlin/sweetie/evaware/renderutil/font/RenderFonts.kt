@@ -1,17 +1,17 @@
 package sweetie.evaware.renderutil.font
 
 import com.google.gson.Gson
-import java.io.InputStreamReader
-import java.nio.charset.StandardCharsets
-import sweetie.evaware.luma.texture.TextureAtlas
+import sweetie.evaware.luma.wrapper.texture.TextureAtlas
 import sweetie.evaware.msdf.MsdfFont
 import sweetie.evaware.msdf.MsdfGlyph
+import java.io.InputStreamReader
+import java.nio.charset.StandardCharsets
 
 object RenderFonts {
     private val gson = Gson()
-    private val sources = LinkedHashMap<String, FontAsset>()
-    private val dataByName = HashMap<String, FontData>()
-    private val fonts = LinkedHashMap<String, MsdfFont>()
+    private val sources = linkedMapOf<String, FontAsset>()
+    private val dataByName = mutableMapOf<String, FontData>()
+    private val fonts = linkedMapOf<String, MsdfFont>()
     private var staged = false
     private var loaded = false
 
@@ -40,7 +40,7 @@ object RenderFonts {
             val region = TextureAtlas.region("font:$name")
             val atlasWidth = data.atlas.width
             val atlasHeight = data.atlas.height
-            val glyphs = HashMap<Int, MsdfGlyph>(data.glyphs.size)
+            val glyphs = HashMap<Int, MsdfGlyph>(hashCapacity(data.glyphs.size))
             val bottomOrigin = data.atlas.yOrigin == "bottom"
 
             for (glyphData in data.glyphs) {
@@ -115,5 +115,10 @@ object RenderFonts {
                     ?: error("Unable to parse font data: $path")
             }
         }
+    }
+
+    private fun hashCapacity(size: Int): Int {
+        if (size < 3) return size + 1
+        return size + (size shr 1) + 1
     }
 }

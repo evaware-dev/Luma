@@ -1,20 +1,21 @@
 package sweetie.evaware.renderutil
 
 import sweetie.evaware.luma.Luma
-import sweetie.evaware.luma.resource.LumaResources
-import sweetie.evaware.luma.scissor.ScissorControl
-import sweetie.evaware.luma.texture.TextureAtlas
-import sweetie.evaware.luma.texture.TextureUploader
+import sweetie.evaware.luma.wrapper.scissor.ScissorControl
+import sweetie.evaware.luma.wrapper.texture.TextureAtlas
+import sweetie.evaware.luma.wrapper.texture.TextureUploader
 import sweetie.evaware.msdf.MsdfFont
 import sweetie.evaware.renderutil.api.IBatch
 import sweetie.evaware.renderutil.api.RenderPipeline
 import sweetie.evaware.renderutil.font.RenderFonts
-import sweetie.evaware.renderutil.renderers.*
+import sweetie.evaware.renderutil.renderers.RectRenderer
+import sweetie.evaware.renderutil.renderers.TextRenderer
+import sweetie.evaware.renderutil.renderers.TextureRenderer
+import sweetie.evaware.renderutil.renderers.UberRenderer
 import java.awt.image.BufferedImage
 
 object RenderUtil {
     private val uberRenderer = UberRenderer()
-    private val roundedRectRenderer = RoundedRectRenderer()
 
     private val rectRenderer = RectRenderer(uberRenderer)
     private val textureRenderer = TextureRenderer(uberRenderer)
@@ -28,7 +29,6 @@ object RenderUtil {
 
     val RECT get() = rectRenderer.reset()
     val TEXTURE get() = textureRenderer.reset()
-    val ROUNDED_RECT get() = roundedRectRenderer.reset()
 
     fun load() {
         closed = false
@@ -38,7 +38,6 @@ object RenderUtil {
         TextureAtlas.prepare()
         RenderFonts.load()
         uberRenderer.load()
-        roundedRectRenderer.load()
         loaded = true
     }
 
@@ -53,11 +52,10 @@ object RenderUtil {
         frameActive = false
 
         uberRenderer.close()
-        roundedRectRenderer.close()
         TextureAtlas.close()
         RenderFonts.close()
         TextureUploader.close()
-        LumaResources.closeAll()
+        Luma.close()
 
         activeBatch = null
         activePipeline = null
@@ -83,10 +81,31 @@ object RenderUtil {
         }
     }
 
+    fun renderCurrentFrame(action: () -> Unit) {
+        beginCurrentFrame()
+        try {
+            action()
+        } finally {
+            endFrame()
+        }
+    }
+
     fun beginFrame() {
+        beginFrame(bindMainFramebuffer = true)
+    }
+
+    fun beginCurrentFrame() {
+        beginFrame(bindMainFramebuffer = false)
+    }
+
+    private fun beginFrame(bindMainFramebuffer: Boolean) {
         load()
         RenderStats.beginFrame()
-        Luma.beginMainFramebufferFrame()
+        if (bindMainFramebuffer) {
+            Luma.beginMainFramebufferFrame()
+        } else {
+            Luma.beginCurrentFramebufferFrame()
+        }
         frameActive = true
     }
 
@@ -128,10 +147,6 @@ object RenderUtil {
         switchTo(uberRenderer, pipeline)
     }
 
-    internal fun useRoundedBatch(pipeline: RenderPipeline) {
-        switchTo(roundedRectRenderer, pipeline)
-    }
-
     private fun switchTo(batch: IBatch, pipeline: RenderPipeline) {
         load()
         if (activeBatch === batch && activePipeline == pipeline) return
@@ -148,17 +163,15 @@ object RenderUtil {
     }
 
     private fun flushPipeline(pipeline: RenderPipeline) {
-        if (!uberRenderer.hasPending(pipeline) && !roundedRectRenderer.hasPending(pipeline)) return
+        if (!uberRenderer.hasPending(pipeline)) return
 
         if (frameActive || Luma.isFrameActive()) {
             uberRenderer.flush(pipeline)
-            roundedRectRenderer.flush(pipeline)
             return
         }
 
         Luma.renderToMainFramebuffer {
             uberRenderer.flush(pipeline)
-            roundedRectRenderer.flush(pipeline)
         }
     }
 }
