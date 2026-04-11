@@ -207,7 +207,7 @@ private class OpenGlPipeline(
 
     private fun compile(type: Int, path: String): Int {
         val shaderId = GL20.glCreateShader(type)
-        GL20.glShaderSource(shaderId, LumaGlslLibrary.resolve(loadResource(path)))
+        GL20.glShaderSource(shaderId, LumaGlslLibrary.resolveResource(path))
         GL20.glCompileShader(shaderId)
         if (GL20.glGetShaderi(shaderId, GL20.GL_COMPILE_STATUS) == GL11.GL_FALSE) {
             val log = GL20.glGetShaderInfoLog(shaderId)
@@ -216,11 +216,6 @@ private class OpenGlPipeline(
         }
         return shaderId
     }
-
-    private fun loadResource(path: String) = javaClass.classLoader.getResourceAsStream(path)
-        ?.bufferedReader()
-        ?.use { it.readText() }
-        ?: error("Missing shader resource: $path")
 
     override fun close() {
         if (closed) return

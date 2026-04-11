@@ -13,9 +13,6 @@ internal object MinecraftGpuShaderSource : ShaderSource {
             else -> error("Unsupported shader type: $type")
         }
         val resourcePath = "assets/${id.namespace}/shaders/${id.path}.$extension"
-        return javaClass.classLoader.getResourceAsStream(resourcePath)
-            ?.bufferedReader()
-            ?.use { LumaGlslLibrary.resolve(it.readText()) }
-            ?: error("Missing shader resource: $resourcePath")
+        return LumaGlslLibrary.resolveResource(resourcePath)
     }
 }

@@ -1,7 +1,7 @@
 package sweetie.evaware.luma.wrapper.shader
 
 object LumaGlslLibrary {
-    private val importPattern = Regex("""^\s*#(?:import|include)<([a-zA-Z0-9_./-]+)>\s*$""")
+    private val importPattern = Regex("""^\s*#(?:import|include)\s*(?:<([a-zA-Z0-9_./-]+)>|"([a-zA-Z0-9_./-]+)")\s*$""")
     private val paths = linkedMapOf<String, String>()
     private val sources = mutableMapOf<String, String>()
     private val resolvedSources = mutableMapOf<String, String>()
@@ -20,10 +20,12 @@ object LumaGlslLibrary {
     }
 
     fun resolve(source: String): String = resolvedSources.getOrPut(source) {
-        resolve(source, mutableSetOf())
+        resolveImports(source, mutableSetOf())
     }
 
-    private fun resolve(source: String, stack: MutableSet<String>): String {
+    fun resolveResource(path: String): String = resolve(load(path))
+
+    private fun resolveImports(source: String, stack: MutableSet<String>): String {
         val builder = StringBuilder(source.length + 64)
 
         for (line in source.lineSequence()) {
@@ -33,9 +35,9 @@ object LumaGlslLibrary {
                 continue
             }
 
-            val name = match.groupValues[1]
+            val name = match.groupValues[1].ifBlank { match.groupValues[2] }
             check(stack.add(name)) { "Recursive GLSL import: $name" }
-            builder.append(resolve(sourceOf(name), stack))
+            builder.append(resolveImports(sourceOf(name), stack))
             stack.remove(name)
         }
 
