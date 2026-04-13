@@ -10,9 +10,9 @@
 	],
 	"license": "MIT",
 	"icon": "assets/luma-renderer/icon.png",
-	"environment": "*",
+	"environment": "client",
 	"entrypoints": {
-		"main": [
+		"client": [
 			{
 				"value": "sweetie.evaware.LumaRenderer",
 				"adapter": "kotlin"

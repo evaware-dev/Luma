@@ -20,7 +20,7 @@ object MatrixControl {
     private var tm11 = 1f
     private var tm30 = 0f
     private var tm31 = 0f
-    private var projectionVersion = 0
+    private var matrixVersion = 0
 
     fun beginGuiFrame() {
         matrix4fStack.clear()
@@ -39,7 +39,7 @@ object MatrixControl {
             -1000f,
             1000f
         )
-        projectionVersion++
+        matrixVersion++
     }
 
     fun scaledProjection() {
@@ -52,7 +52,7 @@ object MatrixControl {
             -1000f,
             1000f
         )
-        projectionVersion++
+        matrixVersion++
     }
 
     fun startScale(x: Float, y: Float, scale: Float) {
@@ -97,7 +97,7 @@ object MatrixControl {
 
     fun projection() = projectionMatrix
 
-    fun projectionVersion() = projectionVersion
+    fun projectionVersion() = matrixVersion
 
     fun current() = combinedMatrix.set(projectionMatrix).mul(matrix4fStack)
 
@@ -112,5 +112,6 @@ object MatrixControl {
         tm11 = matrix4fStack.m11()
         tm30 = matrix4fStack.m30()
         tm31 = matrix4fStack.m31()
+        matrixVersion++
     }
 }

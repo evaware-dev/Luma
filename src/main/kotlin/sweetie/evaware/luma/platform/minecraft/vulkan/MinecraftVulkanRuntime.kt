@@ -44,6 +44,7 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
         val vertexFormatBytes: Int
     ) : AutoCloseable {
         private var vertexBuffer: GpuBuffer? = null
+        private var vertexSlice: GpuBufferSlice? = null
         private var vertexCapacityBytes = 0
 
         fun prepareVertexBuffer(device: GpuDevice, encoder: CommandEncoder, vertices: LumaVertexBuffer): GpuBuffer {
@@ -56,16 +57,18 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
                     GpuBuffer.USAGE_VERTEX or GpuBuffer.USAGE_COPY_DST,
                     vertexCapacityBytes.toLong()
                 )
+                vertexSlice = vertexBuffer?.slice(0, vertexCapacityBytes.toLong())
             }
 
             val target = vertexBuffer ?: error("Vertex buffer was not created")
-            encoder.writeToBuffer(target.slice(0, requiredBytes.toLong()), vertices.byteView())
+            encoder.writeToBuffer(vertexSlice ?: error("Vertex slice was not created"), vertices.byteView())
             return target
         }
 
         override fun close() {
             vertexBuffer?.close()
             vertexBuffer = null
+            vertexSlice = null
             vertexCapacityBytes = 0
         }
 
@@ -87,22 +90,34 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
     private var matrixUniformSlice: GpuBufferSlice? = null
     private var matrixUniformVersion = Int.MIN_VALUE
     private var device: GpuDevice? = null
+    private var activeEncoder: CommandEncoder? = null
+    private var activePass: RenderPass? = null
     private val pipelines = IdentityHashMap<LumaPipeline, PipelineState>()
     private val textures = IdentityHashMap<TextureHandle, UploadedTexture>()
 
-    override fun beginFrame(frameInfo: FrameInfo) = Unit
+    override fun beginFrame(frameInfo: FrameInfo) {
+        if (activeEncoder != null) return
+        activeEncoder = ensureDevice().createCommandEncoder()
+    }
 
     override fun draw(pipeline: LumaPipeline, vertices: LumaVertexBuffer, texture: TextureHandle?) {
         if (!vertices.hasVertices()) return
         val resolvedDevice = ensureDevice()
         val pipelineState = ensurePipeline(resolvedDevice, pipeline)
-        val encoder = resolvedDevice.createCommandEncoder()
+        val encoder = activeEncoder ?: resolvedDevice.createCommandEncoder()
+        val ownsEncoder = activeEncoder == null
         val vertexBuffer = pipelineState.prepareVertexBuffer(resolvedDevice, encoder, vertices)
         val matrixSlice = prepareMatrixUniform(resolvedDevice, encoder)
         val uploadedTexture = texture?.let { ensureTexture(resolvedDevice, it) }
         val resolvedSampler = if (pipeline.usesTexture) ensureSampler(resolvedDevice) else null
 
-        createRenderPass(encoder).use { pass ->
+        val pass = if (ownsEncoder) {
+            createRenderPass(encoder)
+        } else {
+            activePass ?: createRenderPass(encoder).also { activePass = it }
+        }
+
+        try {
             configurePass(pass, pipeline, pipelineState.pipeline, matrixSlice)
             if (pipeline.usesTexture) {
                 val textureView = uploadedTexture?.view ?: error("Texture is required for textured pipeline")
@@ -114,13 +129,29 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
             }
             pass.setVertexBuffer(0, vertexBuffer)
             pass.draw(0, vertices.vertexCount())
+        } finally {
+            if (ownsEncoder) {
+                pass.close()
+            }
         }
 
-        encoder.submit()
+        if (ownsEncoder) {
+            encoder.submit()
+        }
         vertices.clear()
     }
 
+    override fun endFrame() {
+        activePass?.close()
+        activePass = null
+        activeEncoder?.submit()
+        activeEncoder = null
+    }
+
     override fun close() {
+        activePass?.close()
+        activePass = null
+        activeEncoder = null
         matrixUniform?.close()
         matrixUniform = null
         matrixUniformSlice = null
@@ -202,14 +233,14 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
             matrixUniformSlice = it.slice(0, matrixUniformSize)
         }
 
-        val projectionVersion = MatrixControl.projectionVersion()
-        if (matrixUniformVersion != projectionVersion) {
+        val matrixVersion = MatrixControl.projectionVersion()
+        if (matrixUniformVersion != matrixVersion) {
             matrixUploadFloats.clear()
-            MatrixControl.projection().get(matrixUploadFloats)
+            MatrixControl.current().get(matrixUploadFloats)
             matrixUploadBytes.position(0)
             matrixUploadBytes.limit(matrixUniformSize.toInt())
             encoder.writeToBuffer(matrixUniformSlice ?: uniform.slice(0, matrixUniformSize), matrixUploadBytes)
-            matrixUniformVersion = projectionVersion
+            matrixUniformVersion = matrixVersion
         }
         return matrixUniformSlice ?: uniform.slice(0, matrixUniformSize).also {
             matrixUniformSlice = it

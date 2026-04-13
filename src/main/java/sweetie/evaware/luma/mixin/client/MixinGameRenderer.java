@@ -1,5 +1,6 @@
 package sweetie.evaware.luma.mixin.client;
 
+import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.ItemInHandRenderer;
@@ -22,5 +23,29 @@ public class MixinGameRenderer {
         CallbackInfo callbackInfo
     ) {
         MinecraftRenderHooks.INSTANCE.initialize();
+    }
+
+    @Inject(
+        method = "render",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/client/gui/render/GuiRenderer;render()V",
+            shift = At.Shift.BEFORE
+        )
+    )
+    private void luma$renderHud(DeltaTracker deltaTracker, boolean tick, CallbackInfo callbackInfo) {
+        MinecraftRenderHooks.INSTANCE.renderHud(deltaTracker.getGameTimeDeltaPartialTick(false));
+    }
+
+    @Inject(
+        method = "render",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/client/gui/render/GuiRenderer;render()V",
+            shift = At.Shift.AFTER
+        )
+    )
+    private void luma$renderGui(DeltaTracker deltaTracker, boolean tick, CallbackInfo callbackInfo) {
+        MinecraftRenderHooks.INSTANCE.renderGui(deltaTracker.getGameTimeDeltaPartialTick(false));
     }
 }

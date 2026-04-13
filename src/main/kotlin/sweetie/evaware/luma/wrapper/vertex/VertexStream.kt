@@ -126,8 +126,9 @@ class VertexStream : Clearable, AutoCloseable {
         uploadBuffer.limit(floatCount)
         uploadBuffer.position(0)
         Luma.bindArrayBuffer(vbo)
-        ensureGpuCapacity(floatCount)
-        GL15.glBufferData(GL15.GL_ARRAY_BUFFER, gpuFloatCapacity.toLong() * Float.SIZE_BYTES.toLong(), GL15.GL_STREAM_DRAW)
+        if (ensureGpuCapacity(floatCount)) {
+            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, gpuFloatCapacity.toLong() * Float.SIZE_BYTES.toLong(), GL15.GL_STREAM_DRAW)
+        }
         GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, 0, uploadBuffer)
         GL11.glDrawArrays(OpenGlMappings.drawMode(drawMode), 0, vertexCount)
         val uploadedVertices = vertexCount
@@ -160,9 +161,10 @@ class VertexStream : Clearable, AutoCloseable {
         uploadBuffer.clear()
     }
 
-    private fun ensureGpuCapacity(requiredFloats: Int) {
-        if (requiredFloats <= gpuFloatCapacity) return
+    private fun ensureGpuCapacity(requiredFloats: Int): Boolean {
+        if (requiredFloats <= gpuFloatCapacity) return false
         gpuFloatCapacity = nextCapacity(requiredFloats, gpuFloatCapacity.coerceAtLeast(1))
+        return true
     }
 
     private fun nextCapacity(required: Int, current: Int): Int {

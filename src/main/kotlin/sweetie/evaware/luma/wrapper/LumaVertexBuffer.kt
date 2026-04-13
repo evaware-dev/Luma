@@ -35,6 +35,42 @@ class LumaVertexBuffer(
         floatBuffer.put(floatCount++, fourth)
     }
 
+    internal fun putVertex14(
+        first: Float,
+        second: Float,
+        third: Float,
+        fourth: Float,
+        fifth: Float,
+        sixth: Float,
+        seventh: Float,
+        eighth: Float,
+        ninth: Float,
+        tenth: Float,
+        eleventh: Float,
+        twelfth: Float,
+        thirteenth: Float,
+        fourteenth: Float
+    ) {
+        ensureCapacity(floatCount + 14)
+        val index = floatCount
+        floatBuffer.put(index, first)
+        floatBuffer.put(index + 1, second)
+        floatBuffer.put(index + 2, third)
+        floatBuffer.put(index + 3, fourth)
+        floatBuffer.put(index + 4, fifth)
+        floatBuffer.put(index + 5, sixth)
+        floatBuffer.put(index + 6, seventh)
+        floatBuffer.put(index + 7, eighth)
+        floatBuffer.put(index + 8, ninth)
+        floatBuffer.put(index + 9, tenth)
+        floatBuffer.put(index + 10, eleventh)
+        floatBuffer.put(index + 11, twelfth)
+        floatBuffer.put(index + 12, thirteenth)
+        floatBuffer.put(index + 13, fourteenth)
+        floatCount += 14
+        vertexCount++
+    }
+
     fun completeVertex() {
         require(floatCount % floatsPerVertex == 0) {
             "Vertex buffer is misaligned: $floatCount floats for $floatsPerVertex-float vertices"

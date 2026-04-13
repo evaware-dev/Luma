@@ -17,4 +17,19 @@ class LumaVertexBufferTest {
 
         buffer.close()
     }
+
+    @Test
+    fun `fast vertex path appends full 14-float vertex`() {
+        val buffer = LumaVertexBuffer(floatsPerVertex = 14)
+
+        buffer.putVertex14(
+            1f, 2f, 3f, 4f, 5f, 6f, 7f,
+            8f, 9f, 10f, 11f, 12f, 13f, 14f
+        )
+
+        assertEquals(14, buffer.floatCount())
+        assertEquals(1, buffer.vertexCount())
+
+        buffer.close()
+    }
 }

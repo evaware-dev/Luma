@@ -42,6 +42,10 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
         val alpha = ColorUtil.alphaf(color)
         val lineHeight = font.lineHeight * size
         val range = font.range
+        val scissorMinX = ScissorControl.minX
+        val scissorMinY = ScissorControl.minY
+        val scissorMaxX = ScissorControl.maxX
+        val scissorMaxY = ScissorControl.maxY
         var cursorX = x
         var baselineY = y + (font.lineHeight + font.descender) * size
         var index = 0
@@ -77,7 +81,11 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
                     blue,
                     alpha,
                     textMode,
-                    range
+                    range,
+                    scissorMinX,
+                    scissorMinY,
+                    scissorMaxX,
+                    scissorMaxY
                 )
             }
 
@@ -110,6 +118,10 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
         val green = ColorUtil.greenf(color)
         val blue = ColorUtil.bluef(color)
         val alpha = ColorUtil.alphaf(color)
+        val scissorMinX = ScissorControl.minX
+        val scissorMinY = ScissorControl.minY
+        val scissorMaxX = ScissorControl.maxX
+        val scissorMaxY = ScissorControl.maxY
         putQuad(
             x,
             y,
@@ -124,7 +136,11 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
             blue,
             alpha,
             mode,
-            range
+            range,
+            scissorMinX,
+            scissorMinY,
+            scissorMaxX,
+            scissorMaxY
         )
     }
 
@@ -142,14 +158,18 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
         blue: Float,
         alpha: Float,
         mode: Float,
-        range: Float
+        range: Float,
+        scissorMinX: Float,
+        scissorMinY: Float,
+        scissorMaxX: Float,
+        scissorMaxY: Float
     ) {
-        putVertex(minX, minY, minU, minV, red, green, blue, alpha, mode, range)
-        putVertex(minX, maxY, minU, maxV, red, green, blue, alpha, mode, range)
-        putVertex(maxX, maxY, maxU, maxV, red, green, blue, alpha, mode, range)
-        putVertex(minX, minY, minU, minV, red, green, blue, alpha, mode, range)
-        putVertex(maxX, maxY, maxU, maxV, red, green, blue, alpha, mode, range)
-        putVertex(maxX, minY, maxU, minV, red, green, blue, alpha, mode, range)
+        putVertex(minX, minY, minU, minV, red, green, blue, alpha, mode, range, scissorMinX, scissorMinY, scissorMaxX, scissorMaxY)
+        putVertex(minX, maxY, minU, maxV, red, green, blue, alpha, mode, range, scissorMinX, scissorMinY, scissorMaxX, scissorMaxY)
+        putVertex(maxX, maxY, maxU, maxV, red, green, blue, alpha, mode, range, scissorMinX, scissorMinY, scissorMaxX, scissorMaxY)
+        putVertex(minX, minY, minU, minV, red, green, blue, alpha, mode, range, scissorMinX, scissorMinY, scissorMaxX, scissorMaxY)
+        putVertex(maxX, maxY, maxU, maxV, red, green, blue, alpha, mode, range, scissorMinX, scissorMinY, scissorMaxX, scissorMaxY)
+        putVertex(maxX, minY, maxU, minV, red, green, blue, alpha, mode, range, scissorMinX, scissorMinY, scissorMaxX, scissorMaxY)
     }
 
     private fun putVertex(
@@ -162,13 +182,27 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
         blue: Float,
         alpha: Float,
         mode: Float,
-        range: Float
+        range: Float,
+        scissorMinX: Float,
+        scissorMinY: Float,
+        scissorMaxX: Float,
+        scissorMaxY: Float
     ) {
-        vertices.put2(MatrixControl.transformX(x, y), MatrixControl.transformY(x, y))
-        vertices.put2(u, v)
-        vertices.put4(red, green, blue, alpha)
-        vertices.put2(mode, range)
-        vertices.put4(ScissorControl.minX, ScissorControl.minY, ScissorControl.maxX, ScissorControl.maxY)
-        vertices.completeVertex()
+        vertices.putVertex14(
+            x,
+            y,
+            u,
+            v,
+            red,
+            green,
+            blue,
+            alpha,
+            mode,
+            range,
+            scissorMinX,
+            scissorMinY,
+            scissorMaxX,
+            scissorMaxY
+        )
     }
 }

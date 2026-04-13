@@ -1,3 +1,5 @@
 package sweetie.evaware.renderutil.api
 
-interface BatchRenderer : Renderable, IBatch
+import sweetie.evaware.luma.wrapper.api.Loadable
+
+interface BatchRenderer : Loadable, IBatch, AutoCloseable

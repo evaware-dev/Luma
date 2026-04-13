@@ -31,8 +31,8 @@ internal class OpenGlBackend : LumaBackend {
         val textureId = texture?.let(::ensureTexture)
         this.pipeline(pipeline).draw(
             vertices = vertices,
-            projection = MatrixControl.projection(),
-            projectionVersion = MatrixControl.projectionVersion(),
+            matrix = MatrixControl.current(),
+            matrixVersion = MatrixControl.projectionVersion(),
             textureId = textureId
         )
     }
@@ -130,21 +130,22 @@ private class OpenGlPipeline(
     private var textureUniformLocation = -1
     private var projectionVersion = Int.MIN_VALUE
 
-    fun draw(vertices: LumaVertexBuffer, projection: Matrix4f, projectionVersion: Int, textureId: Int?) {
+    fun draw(vertices: LumaVertexBuffer, matrix: Matrix4f, matrixVersion: Int, textureId: Int?) {
         ensureLoaded()
 
         Luma.useProgram(programId)
         Luma.bindVertexArray(vaoId)
         Luma.bindArrayBuffer(vboId)
-        ensureGpuCapacity(vertices.floatCount())
-        GL15.glBufferData(GL15.GL_ARRAY_BUFFER, gpuFloatCapacity.toLong() * Float.SIZE_BYTES, GL15.GL_STREAM_DRAW)
+        if (ensureGpuCapacity(vertices.floatCount())) {
+            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, gpuFloatCapacity.toLong() * Float.SIZE_BYTES, GL15.GL_STREAM_DRAW)
+        }
         GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, 0, vertices.byteView())
 
-        if (uMatrixLocation >= 0 && this.projectionVersion != projectionVersion) {
-            projection.get(matrixBuffer.clear())
+        if (uMatrixLocation >= 0 && this.projectionVersion != matrixVersion) {
+            matrix.get(matrixBuffer.clear())
             matrixBuffer.flip()
             GL20.glUniformMatrix4fv(uMatrixLocation, false, matrixBuffer)
-            this.projectionVersion = projectionVersion
+            this.projectionVersion = matrixVersion
         }
 
         if (spec.usesTexture) {
@@ -196,13 +197,14 @@ private class OpenGlPipeline(
         }
     }
 
-    private fun ensureGpuCapacity(requiredFloats: Int) {
-        if (requiredFloats <= gpuFloatCapacity) return
+    private fun ensureGpuCapacity(requiredFloats: Int): Boolean {
+        if (requiredFloats <= gpuFloatCapacity) return false
         var capacity = gpuFloatCapacity.coerceAtLeast(spec.layout.strideFloats)
         while (capacity < requiredFloats) {
             capacity = capacity shl 1
         }
         gpuFloatCapacity = capacity
+        return true
     }
 
     private fun compile(type: Int, path: String): Int {

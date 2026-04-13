@@ -5,7 +5,6 @@ import sweetie.evaware.luma.wrapper.scissor.ScissorControl
 import sweetie.evaware.luma.wrapper.texture.TextureAtlas
 import sweetie.evaware.luma.wrapper.texture.TextureUploader
 import sweetie.evaware.msdf.MsdfFont
-import sweetie.evaware.renderutil.api.IBatch
 import sweetie.evaware.renderutil.api.RenderPipeline
 import sweetie.evaware.renderutil.font.RenderFonts
 import sweetie.evaware.renderutil.renderers.RectRenderer
@@ -21,8 +20,6 @@ object RenderUtil {
     private val textureRenderer = TextureRenderer(uberRenderer)
     private val textRenderer = TextRenderer(uberRenderer)
 
-    private var activeBatch: IBatch? = null
-    private var activePipeline: RenderPipeline? = null
     private var loaded = false
     private var frameActive = false
     private var closed = false
@@ -57,8 +54,6 @@ object RenderUtil {
         TextureUploader.close()
         Luma.close()
 
-        activeBatch = null
-        activePipeline = null
         loaded = false
     }
 
@@ -125,41 +120,17 @@ object RenderUtil {
     }
 
     fun flush(pipeline: RenderPipeline) {
-        val currentPipeline = activePipeline
-        if (currentPipeline != null && currentPipeline != pipeline) {
-            flushActiveBatch()
-        }
         flushPipeline(pipeline)
-        if (activePipeline == pipeline) {
-            activeBatch = null
-            activePipeline = null
-        }
     }
 
     fun flushAll() {
-        flushActiveBatch()
         for (pipeline in RenderPipeline.entries) {
             flushPipeline(pipeline)
         }
     }
 
     internal fun useUberBatch(pipeline: RenderPipeline) {
-        switchTo(uberRenderer, pipeline)
-    }
-
-    private fun switchTo(batch: IBatch, pipeline: RenderPipeline) {
         load()
-        if (activeBatch === batch && activePipeline == pipeline) return
-        flushActiveBatch()
-        activeBatch = batch
-        activePipeline = pipeline
-    }
-
-    private fun flushActiveBatch() {
-        val pipeline = activePipeline ?: return
-        flushPipeline(pipeline)
-        activeBatch = null
-        activePipeline = null
     }
 
     private fun flushPipeline(pipeline: RenderPipeline) {

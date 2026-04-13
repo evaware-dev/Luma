@@ -127,7 +127,7 @@ object Luma {
     }
 
     fun applyGameMatrix(uniforms: ShaderUniforms, uniform: Mat4Uniform) {
-        uniforms.projectionMat4(uniform, MatrixControl.projection(), MatrixControl.projectionVersion())
+        uniforms.projectionMat4(uniform, MatrixControl.current(), MatrixControl.projectionVersion())
     }
 
     fun drawShader(shader: Shader): Int = shader.draw()
