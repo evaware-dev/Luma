@@ -6,18 +6,17 @@ import org.lwjgl.opengl.GL20
 import org.lwjgl.opengl.GL30
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.Attachable
+import sweetie.evaware.luma.api.CloseableResourceBase
 import sweetie.evaware.luma.api.Loadable
-import sweetie.evaware.luma.api.Unloadable
 import sweetie.evaware.luma.resource.LumaResources
-import sweetie.evaware.luma.uniform.ShaderUniforms
-import sweetie.evaware.luma.vertex.ShaderVertices
 
 class Shader(
     private val fragmentPath: String,
     private val vertexPath: String
-) : Loadable, Attachable, Unloadable, AutoCloseable {
-    val vertices = ShaderVertices()
-    val uniforms = ShaderUniforms()
+) : CloseableResourceBase(), Loadable, Attachable {
+    val inputs = ShaderInputs()
+    val vertices get() = inputs.vertices
+    val uniforms get() = inputs.uniforms
 
     private var drawMode = GL11.GL_TRIANGLES
     private var programId = 0
@@ -29,8 +28,9 @@ class Shader(
     }
 
     override fun load() {
+        requireOpen()
         if (programId != 0) return
-        vertices.requireConfigured()
+        inputs.requireConfigured()
 
         var vertexShaderId = 0
         var fragmentShaderId = 0
@@ -46,7 +46,7 @@ class Shader(
             createdProgramId = GL20.glCreateProgram()
             GL20.glAttachShader(createdProgramId, vertexShaderId)
             GL20.glAttachShader(createdProgramId, fragmentShaderId)
-            vertices.bindLocations(createdProgramId)
+            inputs.beforeLink(createdProgramId)
             GL20.glLinkProgram(createdProgramId)
 
             if (GL20.glGetProgrami(createdProgramId, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
@@ -56,8 +56,7 @@ class Shader(
 
             createdVao = GL30.glGenVertexArrays()
             createdVbo = GL15.glGenBuffers()
-            vertices.bind(createdVao, createdVbo)
-            uniforms.resolve(createdProgramId)
+            inputs.afterLink(createdProgramId, createdVao, createdVbo)
 
             programId = createdProgramId
             vao = createdVao
@@ -96,14 +95,11 @@ class Shader(
 
     override fun detach() = Unit
 
-    fun draw(): Int = vertices.upload(vbo, drawMode)
-
-    override fun unload() {
-        close()
-    }
+    fun draw(): Int = inputs.upload(vbo, drawMode)
 
     override fun close() {
-        vertices.close()
+        if (!markClosed()) return
+        inputs.close()
         val hasContext = Luma.hasContext()
         if (vbo != 0) {
             if (hasContext) {

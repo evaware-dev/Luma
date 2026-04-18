@@ -4,7 +4,6 @@ import net.fabricmc.api.ModInitializer
 import org.slf4j.LoggerFactory
 import sweetie.evaware.luma.shader.LumaGlslLibrary
 import sweetie.evaware.renderutil.RenderUtil
-import sweetie.evaware.renderutil.font.RenderFonts
 import java.awt.image.BufferedImage
 
 object LumaRenderer : ModInitializer {
@@ -12,18 +11,8 @@ object LumaRenderer : ModInitializer {
 
     override fun onInitialize() {
         LumaGlslLibrary
-            .register("font_renderer", "assets/luma-renderer/shaders/include/font_renderer.glsl")
             .register("scissor", "assets/luma-renderer/shaders/include/scissor.glsl")
             .attach()
-
-        RenderFonts.register(
-            "google_sans",
-            "assets/luma-renderer/fonts/google_sans/google_sans_regular.json"
-        )
-        RenderFonts.register(
-            "google_sans_medium",
-            "assets/luma-renderer/fonts/google_sans/google_sans_medium.json"
-        )
 
         RenderUtil.registerTexture("demo_icon", "assets/luma-renderer/icon.png")
         RenderUtil.registerTexture("demo_checker") {

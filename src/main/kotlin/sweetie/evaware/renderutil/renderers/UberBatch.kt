@@ -8,17 +8,11 @@ import sweetie.evaware.luma.shader.Shader
 import sweetie.evaware.luma.texture.TextureAtlas
 import sweetie.evaware.luma.uniform.Int1Uniform
 import sweetie.evaware.luma.uniform.Mat4Uniform
-import sweetie.evaware.msdf.MsdfFont
 import sweetie.evaware.renderutil.RenderStats
 import sweetie.evaware.renderutil.api.BatchRenderer
 import sweetie.evaware.renderutil.helper.ColorUtil
 
 internal class UberBatch : BatchRenderer, AutoCloseable {
-    companion object {
-        private const val plainMode = 0f
-        private const val textMode = 1f
-    }
-
     private val shader = Shader(
         "assets/luma-renderer/shaders/core/uber.frag",
         "assets/luma-renderer/shaders/core/uber.vert"
@@ -26,15 +20,18 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
 
     private val uMatrix: Mat4Uniform
     private val uTexture: Int1Uniform
-    private val scissor = FloatArray(4)
+    private var scissorVersion = Int.MIN_VALUE
+    private var scissorMinX = 0f
+    private var scissorMinY = 0f
+    private var scissorMaxX = 0f
+    private var scissorMaxY = 0f
 
     init {
         with(shader) {
             vertices.float(2, 0)
             vertices.float(2, 1)
             vertices.float(4, 2)
-            vertices.float(2, 3)
-            vertices.float(4, 4)
+            vertices.float(4, 3)
             uMatrix = uniforms.mat4("uMatrix")
             uTexture = uniforms.int1("uTexture")
         }
@@ -47,67 +44,13 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
     override fun hasPending() = shader.vertices.hasVertices()
 
     fun rect(x: Float, y: Float, width: Float, height: Float, color: Int) {
-        ScissorControl.copyCurrent(scissor)
-        quad(TextureAtlas.whiteRegion(), x, y, width, height, color, plainMode, 0f)
+        cacheScissor()
+        quad(TextureAtlas.whiteRegion(), x, y, width, height, color)
     }
 
     fun texture(id: String, x: Float, y: Float, width: Float, height: Float, color: Int) {
-        ScissorControl.copyCurrent(scissor)
-        quad(TextureAtlas.region(id), x, y, width, height, color, plainMode, 0f)
-    }
-
-    fun text(font: MsdfFont, text: String, x: Float, y: Float, size: Float, color: Int) {
-        if (text.isEmpty()) return
-
-        val red = ColorUtil.redf(color)
-        val green = ColorUtil.greenf(color)
-        val blue = ColorUtil.bluef(color)
-        val alpha = ColorUtil.alphaf(color)
-        val lineHeight = font.lineHeight * size
-        val range = font.range
-        var cursorX = x
-        var baselineY = y + (font.lineHeight + font.descender) * size
-        var index = 0
-
-        ScissorControl.copyCurrent(scissor)
-
-        while (index < text.length) {
-            val code = text.codePointAt(index)
-            index += Character.charCount(code)
-
-            if (code == '\n'.code) {
-                cursorX = x
-                baselineY += lineHeight
-                continue
-            }
-
-            val glyph = font.glyph(code) ?: continue
-            val minX = cursorX + glyph.planeLeft * size
-            val maxX = cursorX + glyph.planeRight * size
-            val minY = baselineY - glyph.planeTop * size
-            val maxY = baselineY - glyph.planeBottom * size
-
-            if (minX != maxX && minY != maxY) {
-                putQuad(
-                    minX,
-                    minY,
-                    maxX,
-                    maxY,
-                    glyph.minU,
-                    glyph.minV,
-                    glyph.maxU,
-                    glyph.maxV,
-                    red,
-                    green,
-                    blue,
-                    alpha,
-                    textMode,
-                    range
-                )
-            }
-
-            cursorX += glyph.advance * size
-        }
+        cacheScissor()
+        quad(TextureAtlas.region(id), x, y, width, height, color)
     }
 
     override fun flush() {
@@ -133,9 +76,7 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
         y: Float,
         width: Float,
         height: Float,
-        color: Int,
-        mode: Float,
-        range: Float
+        color: Int
     ) {
         val red = ColorUtil.redf(color)
         val green = ColorUtil.greenf(color)
@@ -153,9 +94,7 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
             red,
             green,
             blue,
-            alpha,
-            mode,
-            range
+            alpha
         )
     }
 
@@ -171,16 +110,14 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
         red: Float,
         green: Float,
         blue: Float,
-        alpha: Float,
-        mode: Float,
-        range: Float
+        alpha: Float
     ) {
-        putVertex(minX, minY, minU, minV, red, green, blue, alpha, mode, range)
-        putVertex(minX, maxY, minU, maxV, red, green, blue, alpha, mode, range)
-        putVertex(maxX, maxY, maxU, maxV, red, green, blue, alpha, mode, range)
-        putVertex(minX, minY, minU, minV, red, green, blue, alpha, mode, range)
-        putVertex(maxX, maxY, maxU, maxV, red, green, blue, alpha, mode, range)
-        putVertex(maxX, minY, maxU, minV, red, green, blue, alpha, mode, range)
+        putVertex(minX, minY, minU, minV, red, green, blue, alpha)
+        putVertex(minX, maxY, minU, maxV, red, green, blue, alpha)
+        putVertex(maxX, maxY, maxU, maxV, red, green, blue, alpha)
+        putVertex(minX, minY, minU, minV, red, green, blue, alpha)
+        putVertex(maxX, maxY, maxU, maxV, red, green, blue, alpha)
+        putVertex(maxX, minY, maxU, minV, red, green, blue, alpha)
     }
 
     private fun putVertex(
@@ -191,14 +128,22 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
         red: Float,
         green: Float,
         blue: Float,
-        alpha: Float,
-        mode: Float,
-        range: Float
+        alpha: Float
     ) {
-        shader.vertices.attribute2(0, MatrixControl.transformX(x, y), MatrixControl.transformY(x, y))
-        shader.vertices.attribute2(1, u, v)
-        shader.vertices.attribute4(2, red, green, blue, alpha)
-        shader.vertices.attribute2(3, mode, range)
-        shader.vertices.attribute4(4, scissor[0], scissor[1], scissor[2], scissor[3])
+        shader.vertices
+            .vec2(MatrixControl.transformX(x, y), MatrixControl.transformY(x, y))
+            .vec2(u, v)
+            .vec4(red, green, blue, alpha)
+            .vec4(scissorMinX, scissorMinY, scissorMaxX, scissorMaxY)
+    }
+
+    private fun cacheScissor() {
+        val version = ScissorControl.version()
+        if (version == scissorVersion) return
+        scissorVersion = version
+        scissorMinX = ScissorControl.minX()
+        scissorMinY = ScissorControl.minY()
+        scissorMaxX = ScissorControl.maxX()
+        scissorMaxY = ScissorControl.maxY()
     }
 }

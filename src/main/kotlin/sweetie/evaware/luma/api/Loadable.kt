@@ -1,5 +1,5 @@
 package sweetie.evaware.luma.api
 
-internal interface Loadable {
+interface Loadable {
     fun load()
 }

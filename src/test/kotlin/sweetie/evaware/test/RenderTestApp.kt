@@ -115,6 +115,8 @@ object RenderTestApp {
     }
 
     private fun putVertex(x: Float, y: Float, red: Float, green: Float, blue: Float, alpha: Float) {
-        shader.vertices.vertex(x, y, red, green, blue, alpha)
+        shader.vertices
+            .vec2(x, y)
+            .vec4(red, green, blue, alpha)
     }
 }

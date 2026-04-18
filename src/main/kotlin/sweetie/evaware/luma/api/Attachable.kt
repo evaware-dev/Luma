@@ -1,6 +1,6 @@
 package sweetie.evaware.luma.api
 
-internal interface Attachable {
+interface Attachable {
     fun attach()
     fun detach()
 }

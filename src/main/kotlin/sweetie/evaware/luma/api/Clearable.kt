@@ -1,5 +1,5 @@
 package sweetie.evaware.luma.api
 
-internal interface Clearable {
+interface Clearable {
     fun clear()
 }

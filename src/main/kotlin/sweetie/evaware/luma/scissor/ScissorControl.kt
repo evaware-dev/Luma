@@ -1,8 +1,9 @@
 package sweetie.evaware.luma.scissor
 
-import kotlin.math.max
-import kotlin.math.min
+import kotlin.math.ceil
+import kotlin.math.floor
 import net.minecraft.client.Minecraft
+import org.lwjgl.opengl.GL11
 import sweetie.evaware.luma.api.Clearable
 
 object ScissorControl : Clearable {
@@ -12,6 +13,7 @@ object ScissorControl : Clearable {
     private var stack = FloatArray(INITIAL_DEPTH * 4)
     private var scale = 1f
     private var windowHeight = 0f
+    private var stateVersion = 0
 
     private var currentMinX = 0f
     private var currentMinY = 0f
@@ -31,7 +33,20 @@ object ScissorControl : Clearable {
         currentMinY = 0f
         currentMaxX = 0f
         currentMaxY = 0f
+        stateVersion++
     }
+
+    fun version() = stateVersion
+
+    fun minX() = currentMinX
+
+    fun minY() = currentMinY
+
+    fun maxX() = currentMaxX
+
+    fun maxY() = currentMaxY
+
+    fun hasActive() = size > 0
 
     fun push(x: Float, y: Float, width: Float, height: Float) {
         val minX = x * scale
@@ -39,36 +54,69 @@ object ScissorControl : Clearable {
         val maxX = (x + width) * scale
         val maxY = windowHeight - y * scale
 
-        val nextMinX = if (size == 0) minX else max(minX, currentMinX)
-        val nextMinY = if (size == 0) minY else max(minY, currentMinY)
-        val nextMaxX = if (size == 0) maxX else min(maxX, currentMaxX)
-        val nextMaxY = if (size == 0) maxY else min(maxY, currentMaxY)
+        val nextMinX: Float
+        val nextMinY: Float
+        val nextMaxX: Float
+        val nextMaxY: Float
+
+        if (size == 0) {
+            nextMinX = minX
+            nextMinY = minY
+            nextMaxX = maxX
+            nextMaxY = maxY
+        } else {
+            nextMinX = if (minX > currentMinX) minX else currentMinX
+            nextMinY = if (minY > currentMinY) minY else currentMinY
+            nextMaxX = if (maxX < currentMaxX) maxX else currentMaxX
+            nextMaxY = if (maxY < currentMaxY) maxY else currentMaxY
+        }
 
         ensureCapacity(size + 1)
         val index = size * 4
-        stack[index] = nextMinX
-        stack[index + 1] = nextMinY
-        stack[index + 2] = max(nextMinX, nextMaxX)
-        stack[index + 3] = max(nextMinY, nextMaxY)
+        currentMinX = nextMinX
+        currentMinY = nextMinY
+        currentMaxX = if (nextMinX > nextMaxX) nextMinX else nextMaxX
+        currentMaxY = if (nextMinY > nextMaxY) nextMinY else nextMaxY
+        stack[index] = currentMinX
+        stack[index + 1] = currentMinY
+        stack[index + 2] = currentMaxX
+        stack[index + 3] = currentMaxY
         size++
-        restoreCurrent(index)
+        stateVersion++
     }
 
     fun pop() {
         require(size > 0) { "Scissor stack underflow" }
         size--
         if (size == 0) {
-            clear()
+            currentMinX = 0f
+            currentMinY = 0f
+            currentMaxX = 0f
+            currentMaxY = 0f
+            stateVersion++
             return
         }
         restoreCurrent((size - 1) * 4)
+        stateVersion++
     }
 
-    fun copyCurrent(out: FloatArray, offset: Int = 0) {
-        out[offset] = currentMinX
-        out[offset + 1] = currentMinY
-        out[offset + 2] = currentMaxX
-        out[offset + 3] = currentMaxY
+    fun applyGlScissor() {
+        if (size == 0) {
+            disableGlScissor()
+            return
+        }
+
+        val x = floor(currentMinX).toInt()
+        val y = floor(currentMinY).toInt()
+        val width = (ceil(currentMaxX) - floor(currentMinX)).toInt().coerceAtLeast(0)
+        val height = (ceil(currentMaxY) - floor(currentMinY)).toInt().coerceAtLeast(0)
+
+        GL11.glEnable(GL11.GL_SCISSOR_TEST)
+        GL11.glScissor(x, y, width, height)
+    }
+
+    fun disableGlScissor() {
+        GL11.glDisable(GL11.GL_SCISSOR_TEST)
     }
 
     private fun restoreCurrent(index: Int) {

@@ -11,29 +11,29 @@ sealed class UniformHandle {
     protected open fun invalidateCache() = Unit
 }
 
-class Float1Uniform internal constructor() : UniformHandle() {
-    private var initialized = false
-    private var valueBits = 0
+sealed class CachedUniformHandle : UniformHandle() {
+    protected var initialized = false
 
-    internal fun shouldUpload(value: Float): Boolean {
-        val nextBits = value.toRawBits()
-        if (initialized && valueBits == nextBits) return false
-        initialized = true
-        valueBits = nextBits
-        return true
-    }
-
-    override fun invalidateCache() {
+    final override fun invalidateCache() {
         initialized = false
     }
 }
 
-class Float2Uniform internal constructor() : UniformHandle() {
-    private var initialized = false
-    private var firstBits = 0
-    private var secondBits = 0
+sealed class FloatBitsUniform : CachedUniformHandle() {
+    protected var firstBits = 0
+    protected var secondBits = 0
+    protected var thirdBits = 0
+    protected var fourthBits = 0
 
-    internal fun shouldUpload(first: Float, second: Float): Boolean {
+    protected fun shouldUpload1(value: Float): Boolean {
+        val nextBits = value.toRawBits()
+        if (initialized && firstBits == nextBits) return false
+        initialized = true
+        firstBits = nextBits
+        return true
+    }
+
+    protected fun shouldUpload2(first: Float, second: Float): Boolean {
         val nextFirstBits = first.toRawBits()
         val nextSecondBits = second.toRawBits()
         if (initialized && firstBits == nextFirstBits && secondBits == nextSecondBits) return false
@@ -43,18 +43,7 @@ class Float2Uniform internal constructor() : UniformHandle() {
         return true
     }
 
-    override fun invalidateCache() {
-        initialized = false
-    }
-}
-
-class Float3Uniform internal constructor() : UniformHandle() {
-    private var initialized = false
-    private var firstBits = 0
-    private var secondBits = 0
-    private var thirdBits = 0
-
-    internal fun shouldUpload(first: Float, second: Float, third: Float): Boolean {
+    protected fun shouldUpload3(first: Float, second: Float, third: Float): Boolean {
         val nextFirstBits = first.toRawBits()
         val nextSecondBits = second.toRawBits()
         val nextThirdBits = third.toRawBits()
@@ -66,19 +55,7 @@ class Float3Uniform internal constructor() : UniformHandle() {
         return true
     }
 
-    override fun invalidateCache() {
-        initialized = false
-    }
-}
-
-class Float4Uniform internal constructor() : UniformHandle() {
-    private var initialized = false
-    private var firstBits = 0
-    private var secondBits = 0
-    private var thirdBits = 0
-    private var fourthBits = 0
-
-    internal fun shouldUpload(first: Float, second: Float, third: Float, fourth: Float): Boolean {
+    protected fun shouldUpload4(first: Float, second: Float, third: Float, fourth: Float): Boolean {
         val nextFirstBits = first.toRawBits()
         val nextSecondBits = second.toRawBits()
         val nextThirdBits = third.toRawBits()
@@ -99,14 +76,26 @@ class Float4Uniform internal constructor() : UniformHandle() {
         fourthBits = nextFourthBits
         return true
     }
-
-    override fun invalidateCache() {
-        initialized = false
-    }
 }
 
-class Int1Uniform internal constructor() : UniformHandle() {
-    private var initialized = false
+class Float1Uniform internal constructor() : FloatBitsUniform() {
+    internal fun shouldUpload(value: Float) = shouldUpload1(value)
+}
+
+class Float2Uniform internal constructor() : FloatBitsUniform() {
+    internal fun shouldUpload(first: Float, second: Float) = shouldUpload2(first, second)
+}
+
+class Float3Uniform internal constructor() : FloatBitsUniform() {
+    internal fun shouldUpload(first: Float, second: Float, third: Float) = shouldUpload3(first, second, third)
+}
+
+class Float4Uniform internal constructor() : FloatBitsUniform() {
+    internal fun shouldUpload(first: Float, second: Float, third: Float, fourth: Float) =
+        shouldUpload4(first, second, third, fourth)
+}
+
+class Int1Uniform internal constructor() : CachedUniformHandle() {
     private var lastValue = 0
 
     internal fun shouldUpload(value: Int): Boolean {
@@ -114,10 +103,6 @@ class Int1Uniform internal constructor() : UniformHandle() {
         initialized = true
         lastValue = value
         return true
-    }
-
-    override fun invalidateCache() {
-        initialized = false
     }
 }
 

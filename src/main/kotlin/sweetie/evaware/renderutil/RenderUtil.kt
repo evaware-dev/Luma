@@ -1,50 +1,47 @@
 package sweetie.evaware.renderutil
 
 import sweetie.evaware.luma.Luma
+import sweetie.evaware.luma.api.CloseableResourceBase
 import sweetie.evaware.luma.resource.LumaResources
 import sweetie.evaware.luma.scissor.ScissorControl
 import sweetie.evaware.luma.texture.TextureAtlas
 import sweetie.evaware.luma.texture.TextureUploader
-import sweetie.evaware.msdf.MsdfFont
 import sweetie.evaware.renderutil.api.IBatch
+import sweetie.evaware.renderutil.api.RenderApi
 import sweetie.evaware.renderutil.api.RenderPipeline
-import sweetie.evaware.renderutil.font.RenderFonts
 import sweetie.evaware.renderutil.renderers.*
 import java.awt.image.BufferedImage
 
-object RenderUtil {
-    private val uberRenderer = UberRenderer()
-    private val roundedRectRenderer = RoundedRectRenderer()
-
-    private val rectRenderer = RectRenderer(uberRenderer)
-    private val textureRenderer = TextureRenderer(uberRenderer)
-    private val textRenderer = TextRenderer(uberRenderer)
+object RenderUtil : CloseableResourceBase(), RenderApi {
+    private var uberRenderer = UberRenderer()
+    private var roundedRectRenderer = RoundedRectRenderer()
+    private var rectRenderer = RectRenderer(uberRenderer)
+    private var textureRenderer = TextureRenderer(uberRenderer)
 
     private var activeBatch: IBatch? = null
     private var activePipeline: RenderPipeline? = null
     private var loaded = false
     private var frameActive = false
-    private var closed = false
 
     val RECT get() = rectRenderer.reset()
     val TEXTURE get() = textureRenderer.reset()
     val ROUNDED_RECT get() = roundedRectRenderer.reset()
 
     fun load() {
-        closed = false
+        if (isClosed) {
+            rebuildRenderers()
+            reopenResource()
+        }
         if (loaded) return
 
-        RenderFonts.stage()
         TextureAtlas.prepare()
-        RenderFonts.load()
         uberRenderer.load()
         roundedRectRenderer.load()
         loaded = true
     }
 
-    fun close() {
-        if (closed) return
-        closed = true
+    override fun close() {
+        if (!markClosed()) return
 
         if (frameActive && Luma.hasContext()) {
             endFrame()
@@ -55,7 +52,6 @@ object RenderUtil {
         uberRenderer.close()
         roundedRectRenderer.close()
         TextureAtlas.close()
-        RenderFonts.close()
         TextureUploader.close()
         LumaResources.closeAll()
 
@@ -72,7 +68,43 @@ object RenderUtil {
         TextureAtlas.register(id, loader)
     }
 
-    fun text(font: MsdfFont, pipeline: RenderPipeline = RenderPipeline.GUI) = textRenderer.reset(font, pipeline)
+    override fun rect(x: Float, y: Float, width: Float, height: Float, color: Int, pipeline: RenderPipeline) {
+        RECT
+            .priority(pipeline)
+            .color(color)
+            .draw(x, y, width, height)
+    }
+
+    override fun texture(
+        id: String,
+        x: Float,
+        y: Float,
+        width: Float,
+        height: Float,
+        color: Int,
+        pipeline: RenderPipeline
+    ) {
+        TEXTURE
+            .priority(pipeline)
+            .color(color)
+            .draw(id, x, y, width, height)
+    }
+
+    override fun roundedRect(
+        x: Float,
+        y: Float,
+        width: Float,
+        height: Float,
+        radius: Float,
+        color: Int,
+        pipeline: RenderPipeline
+    ) {
+        ROUNDED_RECT
+            .priority(pipeline)
+            .color(color)
+            .radius(radius)
+            .draw(x, y, width, height)
+    }
 
     fun renderFrame(action: () -> Unit) {
         beginFrame()
@@ -103,6 +135,15 @@ object RenderUtil {
 
     fun endScissor() {
         ScissorControl.pop()
+    }
+
+    override fun scissor(x: Float, y: Float, width: Float, height: Float, action: () -> Unit) {
+        startScissor(x, y, width, height)
+        try {
+            action()
+        } finally {
+            endScissor()
+        }
     }
 
     fun flush(pipeline: RenderPipeline) {
@@ -160,5 +201,12 @@ object RenderUtil {
             uberRenderer.flush(pipeline)
             roundedRectRenderer.flush(pipeline)
         }
+    }
+
+    private fun rebuildRenderers() {
+        uberRenderer = UberRenderer()
+        roundedRectRenderer = RoundedRectRenderer()
+        rectRenderer = RectRenderer(uberRenderer)
+        textureRenderer = TextureRenderer(uberRenderer)
     }
 }

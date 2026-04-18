@@ -18,7 +18,11 @@ internal class RectQuadsRenderer : BatchRenderer, AutoCloseable {
     ).drawMode(GL11.GL_TRIANGLES)
 
     private val uMatrix: Mat4Uniform
-    private val scissor = FloatArray(4)
+    private var scissorVersion = Int.MIN_VALUE
+    private var scissorMinX = 0f
+    private var scissorMinY = 0f
+    private var scissorMaxX = 0f
+    private var scissorMaxY = 0f
 
     init {
         with(shader) {
@@ -67,7 +71,7 @@ internal class RectQuadsRenderer : BatchRenderer, AutoCloseable {
         val blue = ColorUtil.bluef(color)
         val alpha = ColorUtil.alphaf(color)
 
-        ScissorControl.copyCurrent(scissor)
+        cacheScissor()
 
         putVertex(minX, minY, 0f, 0f, width, height, topLeft, topRight, bottomRight, bottomLeft, red, green, blue, alpha)
         putVertex(minX, maxY, 0f, height, width, height, topLeft, topRight, bottomRight, bottomLeft, red, green, blue, alpha)
@@ -107,11 +111,22 @@ internal class RectQuadsRenderer : BatchRenderer, AutoCloseable {
         blue: Float,
         alpha: Float
     ) {
-        shader.vertices.attribute2(0, MatrixControl.transformX(x, y), MatrixControl.transformY(x, y))
-        shader.vertices.attribute2(1, localX, localY)
-        shader.vertices.attribute2(2, width, height)
-        shader.vertices.attribute4(3, topLeftRadius, topRightRadius, bottomRightRadius, bottomLeftRadius)
-        shader.vertices.attribute4(4, red, green, blue, alpha)
-        shader.vertices.attribute4(5, scissor[0], scissor[1], scissor[2], scissor[3])
+        shader.vertices
+            .vec2(MatrixControl.transformX(x, y), MatrixControl.transformY(x, y))
+            .vec2(localX, localY)
+            .vec2(width, height)
+            .vec4(topLeftRadius, topRightRadius, bottomRightRadius, bottomLeftRadius)
+            .vec4(red, green, blue, alpha)
+            .vec4(scissorMinX, scissorMinY, scissorMaxX, scissorMaxY)
+    }
+
+    private fun cacheScissor() {
+        val version = ScissorControl.version()
+        if (version == scissorVersion) return
+        scissorVersion = version
+        scissorMinX = ScissorControl.minX()
+        scissorMinY = ScissorControl.minY()
+        scissorMaxX = ScissorControl.maxX()
+        scissorMaxY = ScissorControl.maxY()
     }
 }

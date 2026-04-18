@@ -86,7 +86,6 @@ object TextureAtlas {
 
         texture = TextureUploader.upload(atlas)
         saveRegions(packedAtlas.size, packedAtlas.entries)
-        sources.clear()
     }
 
     fun texture() = texture ?: error("Texture atlas is not prepared")
@@ -99,7 +98,6 @@ object TextureAtlas {
         texture?.close()
         texture = null
         regions.clear()
-        sources.clear()
     }
 
     private fun ensureWhiteSource() {
