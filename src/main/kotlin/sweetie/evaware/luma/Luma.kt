@@ -13,8 +13,11 @@ import sweetie.evaware.luma.wrapper.backend.LumaPipeline
 import sweetie.evaware.luma.wrapper.backend.RenderHost
 import sweetie.evaware.luma.wrapper.frame.FrameState
 import sweetie.evaware.luma.wrapper.matrix.MatrixControl
+import sweetie.evaware.luma.wrapper.resource.LumaRenderTarget
 import sweetie.evaware.luma.wrapper.resource.LumaResources
 import sweetie.evaware.luma.wrapper.shader.Shader
+import sweetie.evaware.luma.wrapper.texture.SampledTexture
+import sweetie.evaware.luma.wrapper.texture.TextureBinding
 import sweetie.evaware.luma.wrapper.texture.TextureHandle
 import sweetie.evaware.luma.wrapper.uniform.Mat4Uniform
 import sweetie.evaware.luma.wrapper.uniform.ShaderUniforms
@@ -132,8 +135,20 @@ object Luma {
 
     fun drawShader(shader: Shader): Int = shader.draw()
 
-    fun draw(pipeline: LumaPipeline, vertices: LumaVertexBuffer, texture: TextureHandle? = null) {
+    fun draw(pipeline: LumaPipeline, vertices: LumaVertexBuffer, texture: TextureBinding? = null) {
         session.draw(pipeline, vertices, texture)
+    }
+
+    fun draw(pipeline: LumaPipeline, vertices: LumaVertexBuffer, texture: TextureHandle) {
+        session.draw(pipeline, vertices, TextureBinding.Managed(texture))
+    }
+
+    fun createRenderTarget(debugName: String, width: Int, height: Int): LumaRenderTarget {
+        return session.createRenderTarget(debugName, width, height)
+    }
+
+    fun drawTo(target: LumaRenderTarget, pipeline: LumaPipeline, vertices: LumaVertexBuffer, texture: SampledTexture? = null) {
+        session.drawTo(target, pipeline, vertices, texture)
     }
 
     fun closeBackends() {

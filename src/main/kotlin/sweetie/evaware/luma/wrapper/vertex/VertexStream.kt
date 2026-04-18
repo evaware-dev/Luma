@@ -2,23 +2,17 @@ package sweetie.evaware.luma.wrapper.vertex
 
 import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL15
-import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.opengl.OpenGlMappings
+import sweetie.evaware.luma.wrapper.LumaVertexBuffer
 import sweetie.evaware.luma.wrapper.api.Clearable
 import sweetie.evaware.luma.wrapper.api.DrawMode
-import java.nio.FloatBuffer
 
 class VertexStream : Clearable, AutoCloseable {
-    companion object {
-        private const val INITIAL_FLOAT_CAPACITY = 1024
-    }
-
     private var nextLayoutIndex = 0
-    private var floatCount = 0
     private var vertexCount = 0
     private var gpuFloatCapacity = 0
-    private var uploadBuffer: FloatBuffer = MemoryUtil.memAllocFloat(INITIAL_FLOAT_CAPACITY)
+    private val buffer = LumaVertexBuffer(1)
     private var closed = false
 
     fun hasVertices() = vertexCount > 0
@@ -33,42 +27,37 @@ class VertexStream : Clearable, AutoCloseable {
         require(nextCount == count) { "Expected layout count $nextCount, got $count" }
         require(args.size == count) { "Expected $count args, got ${args.size}" }
 
-        ensureCapacity(floatCount + count)
         for (arg in args) {
-            uploadBuffer.put(floatCount++, arg.toFloat())
+            buffer.put(type, arg)
         }
 
         advance(layouts)
     }
 
     fun put2(first: Float, second: Float) {
-        ensureCapacity(floatCount + 2)
-        uploadBuffer.put(floatCount++, first)
-        uploadBuffer.put(floatCount++, second)
+        buffer.put2(first, second)
         completeVertex()
     }
 
     fun put6(first: Float, second: Float, third: Float, fourth: Float, fifth: Float, sixth: Float) {
-        ensureCapacity(floatCount + 6)
-        uploadBuffer.put(floatCount++, first)
-        uploadBuffer.put(floatCount++, second)
-        uploadBuffer.put(floatCount++, third)
-        uploadBuffer.put(floatCount++, fourth)
-        uploadBuffer.put(floatCount++, fifth)
-        uploadBuffer.put(floatCount++, sixth)
+        buffer.putFloat(first)
+        buffer.putFloat(second)
+        buffer.putFloat(third)
+        buffer.putFloat(fourth)
+        buffer.putFloat(fifth)
+        buffer.putFloat(sixth)
         completeVertex()
     }
 
     fun put8(first: Float, second: Float, third: Float, fourth: Float, fifth: Float, sixth: Float, seventh: Float, eighth: Float) {
-        ensureCapacity(floatCount + 8)
-        uploadBuffer.put(floatCount++, first)
-        uploadBuffer.put(floatCount++, second)
-        uploadBuffer.put(floatCount++, third)
-        uploadBuffer.put(floatCount++, fourth)
-        uploadBuffer.put(floatCount++, fifth)
-        uploadBuffer.put(floatCount++, sixth)
-        uploadBuffer.put(floatCount++, seventh)
-        uploadBuffer.put(floatCount++, eighth)
+        buffer.putFloat(first)
+        buffer.putFloat(second)
+        buffer.putFloat(third)
+        buffer.putFloat(fourth)
+        buffer.putFloat(fifth)
+        buffer.putFloat(sixth)
+        buffer.putFloat(seventh)
+        buffer.putFloat(eighth)
         completeVertex()
     }
 
@@ -84,37 +73,30 @@ class VertexStream : Clearable, AutoCloseable {
         ninth: Float,
         tenth: Float
     ) {
-        ensureCapacity(floatCount + 10)
-        uploadBuffer.put(floatCount++, first)
-        uploadBuffer.put(floatCount++, second)
-        uploadBuffer.put(floatCount++, third)
-        uploadBuffer.put(floatCount++, fourth)
-        uploadBuffer.put(floatCount++, fifth)
-        uploadBuffer.put(floatCount++, sixth)
-        uploadBuffer.put(floatCount++, seventh)
-        uploadBuffer.put(floatCount++, eighth)
-        uploadBuffer.put(floatCount++, ninth)
-        uploadBuffer.put(floatCount++, tenth)
+        buffer.putFloat(first)
+        buffer.putFloat(second)
+        buffer.putFloat(third)
+        buffer.putFloat(fourth)
+        buffer.putFloat(fifth)
+        buffer.putFloat(sixth)
+        buffer.putFloat(seventh)
+        buffer.putFloat(eighth)
+        buffer.putFloat(ninth)
+        buffer.putFloat(tenth)
         completeVertex()
     }
 
     fun putAttribute2(layouts: VertexLayout, layoutPos: Int, first: Float, second: Float) {
         val nextLayoutPos = layouts.layoutPos(nextLayoutIndex)
         require(nextLayoutPos == layoutPos) { "Expected layout $nextLayoutPos, got $layoutPos" }
-        ensureCapacity(floatCount + 2)
-        uploadBuffer.put(floatCount++, first)
-        uploadBuffer.put(floatCount++, second)
+        buffer.put2(first, second)
         advance(layouts)
     }
 
     fun putAttribute4(layouts: VertexLayout, layoutPos: Int, first: Float, second: Float, third: Float, fourth: Float) {
         val nextLayoutPos = layouts.layoutPos(nextLayoutIndex)
         require(nextLayoutPos == layoutPos) { "Expected layout $nextLayoutPos, got $layoutPos" }
-        ensureCapacity(floatCount + 4)
-        uploadBuffer.put(floatCount++, first)
-        uploadBuffer.put(floatCount++, second)
-        uploadBuffer.put(floatCount++, third)
-        uploadBuffer.put(floatCount++, fourth)
+        buffer.put4(first, second, third, fourth)
         advance(layouts)
     }
 
@@ -123,13 +105,11 @@ class VertexStream : Clearable, AutoCloseable {
     fun upload(vbo: Int, drawMode: DrawMode): Int {
         if (!hasVertices()) return 0
 
-        uploadBuffer.limit(floatCount)
-        uploadBuffer.position(0)
         Luma.bindArrayBuffer(vbo)
-        if (ensureGpuCapacity(floatCount)) {
-            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, gpuFloatCapacity.toLong() * Float.SIZE_BYTES.toLong(), GL15.GL_STREAM_DRAW)
+        if (ensureGpuCapacity(buffer.byteCount())) {
+            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, gpuFloatCapacity.toLong(), GL15.GL_STREAM_DRAW)
         }
-        GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, 0, uploadBuffer)
+        GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, 0, buffer.byteView())
         GL11.glDrawArrays(OpenGlMappings.drawMode(drawMode), 0, vertexCount)
         val uploadedVertices = vertexCount
         clear()
@@ -150,20 +130,13 @@ class VertexStream : Clearable, AutoCloseable {
 
     override fun clear() {
         nextLayoutIndex = 0
-        floatCount = 0
         vertexCount = 0
-        uploadBuffer.clear()
+        buffer.clear()
     }
 
-    private fun ensureCapacity(requiredFloats: Int) {
-        if (requiredFloats <= uploadBuffer.capacity()) return
-        uploadBuffer = MemoryUtil.memRealloc(uploadBuffer, nextCapacity(requiredFloats, uploadBuffer.capacity()))
-        uploadBuffer.clear()
-    }
-
-    private fun ensureGpuCapacity(requiredFloats: Int): Boolean {
-        if (requiredFloats <= gpuFloatCapacity) return false
-        gpuFloatCapacity = nextCapacity(requiredFloats, gpuFloatCapacity.coerceAtLeast(1))
+    private fun ensureGpuCapacity(requiredBytes: Int): Boolean {
+        if (requiredBytes <= gpuFloatCapacity) return false
+        gpuFloatCapacity = nextCapacity(requiredBytes, gpuFloatCapacity.coerceAtLeast(1))
         return true
     }
 
@@ -177,9 +150,8 @@ class VertexStream : Clearable, AutoCloseable {
 
     override fun close() {
         if (closed) return
-        MemoryUtil.memFree(uploadBuffer)
+        buffer.close()
         gpuFloatCapacity = 0
-        floatCount = 0
         vertexCount = 0
         nextLayoutIndex = 0
         closed = true

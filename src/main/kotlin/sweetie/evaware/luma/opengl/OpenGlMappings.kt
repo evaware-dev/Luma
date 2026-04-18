@@ -26,5 +26,11 @@ internal object OpenGlMappings {
 
     fun vertexType(type: ShaderVertType) = when (type) {
         ShaderVertType.FLOAT -> GL11.GL_FLOAT
+        ShaderVertType.BYTE -> GL11.GL_BYTE
+        ShaderVertType.UNSIGNED_BYTE -> GL11.GL_UNSIGNED_BYTE
+        ShaderVertType.SHORT -> GL11.GL_SHORT
+        ShaderVertType.UNSIGNED_SHORT -> GL11.GL_UNSIGNED_SHORT
+        ShaderVertType.INT -> GL11.GL_INT
+        ShaderVertType.UNSIGNED_INT -> GL11.GL_UNSIGNED_INT
     }
 }

@@ -1,6 +1,7 @@
 package sweetie.evaware.luma.wrapper.vertex
 
 import org.lwjgl.opengl.GL20
+import org.lwjgl.opengl.GL30
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.opengl.OpenGlMappings
 
@@ -16,8 +17,11 @@ class VertexLayout {
     private var normalizedFlags = BooleanArray(INITIAL_CAPACITY)
     private var byteSizes = IntArray(INITIAL_CAPACITY)
 
-    var strideFloats = 0
+    var strideBytes = 0
         private set
+
+    @Deprecated("Use strideBytes", ReplaceWith("strideBytes"))
+    val strideFloats get() = strideBytes / Float.SIZE_BYTES
 
     fun add(layout: ShaderVert) {
         add(layout.type, layout.count, layout.layoutPos, layout.normalized)
@@ -30,7 +34,7 @@ class VertexLayout {
         layoutPositions[size] = layoutPos
         normalizedFlags[size] = normalized
         byteSizes[size] = count * type.byteSize
-        strideFloats += count
+        strideBytes += byteSizes[size]
         size++
     }
 
@@ -39,18 +43,29 @@ class VertexLayout {
         Luma.bindArrayBuffer(vbo)
 
         var offset = 0L
-        val strideBytes = strideFloats * Float.SIZE_BYTES
+        val resolvedStrideBytes = strideBytes
         for (index in 0 until size) {
             val layoutPos = layoutPositions[index]
             GL20.glEnableVertexAttribArray(layoutPos)
-            GL20.glVertexAttribPointer(
-                layoutPos,
-                counts[index],
-                OpenGlMappings.vertexType(types[index]!!),
-                normalizedFlags[index],
-                strideBytes,
-                offset
-            )
+            val type = types[index]!!
+            if (type.integer && !normalizedFlags[index]) {
+                GL30.glVertexAttribIPointer(
+                    layoutPos,
+                    counts[index],
+                    OpenGlMappings.vertexType(type),
+                    resolvedStrideBytes,
+                    offset
+                )
+            } else {
+                GL20.glVertexAttribPointer(
+                    layoutPos,
+                    counts[index],
+                    OpenGlMappings.vertexType(type),
+                    normalizedFlags[index],
+                    resolvedStrideBytes,
+                    offset
+                )
+            }
             offset += byteSizes[index].toLong()
         }
 

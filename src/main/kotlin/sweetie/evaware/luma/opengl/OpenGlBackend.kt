@@ -11,7 +11,11 @@ import sweetie.evaware.luma.wrapper.backend.LumaPipeline
 import sweetie.evaware.luma.wrapper.backend.RenderHost
 import sweetie.evaware.luma.wrapper.frame.FrameInfo
 import sweetie.evaware.luma.wrapper.matrix.MatrixControl
+import sweetie.evaware.luma.wrapper.resource.LumaRenderTarget
 import sweetie.evaware.luma.wrapper.shader.LumaGlslLibrary
+import sweetie.evaware.luma.wrapper.texture.LumaSampler
+import sweetie.evaware.luma.wrapper.texture.SampledTexture
+import sweetie.evaware.luma.wrapper.texture.TextureBinding
 import sweetie.evaware.luma.wrapper.texture.TextureHandle
 import java.awt.image.BufferedImage
 import java.awt.image.DataBufferInt
@@ -19,6 +23,15 @@ import java.nio.FloatBuffer
 import java.util.*
 
 internal class OpenGlBackend : LumaBackend {
+    private data class OpenGlStateSnapshot(
+        val drawFramebuffer: Int,
+        val readFramebuffer: Int,
+        val viewportX: Int,
+        val viewportY: Int,
+        val viewportWidth: Int,
+        val viewportHeight: Int
+    )
+
     private val textures = IdentityHashMap<TextureHandle, Int>()
     private val pipelines = IdentityHashMap<LumaPipeline, OpenGlPipeline>()
 
@@ -26,15 +39,38 @@ internal class OpenGlBackend : LumaBackend {
 
     override fun beginFrame(frameInfo: FrameInfo, host: RenderHost) = Unit
 
-    override fun draw(pipeline: LumaPipeline, vertices: LumaVertexBuffer, texture: TextureHandle?) {
+    override fun draw(pipeline: LumaPipeline, vertices: LumaVertexBuffer, texture: TextureBinding?) {
         if (!vertices.hasVertices()) return
-        val textureId = texture?.let(::ensureTexture)
+        val textureId = when (texture) {
+            null -> null
+            is TextureBinding.Managed -> ensureTexture(texture.handle)
+            is TextureBinding.OpenGl -> texture.textureId
+            is TextureBinding.Vulkan -> error("Vulkan textures are not supported on the OpenGL backend")
+        }
         this.pipeline(pipeline).draw(
             vertices = vertices,
             matrix = MatrixControl.current(),
             matrixVersion = MatrixControl.projectionVersion(),
             textureId = textureId
         )
+    }
+
+    override fun createRenderTarget(debugName: String, width: Int, height: Int): LumaRenderTarget =
+        OpenGlRenderTarget(debugName, width, height, LumaSampler.LINEAR_CLAMP)
+
+    override fun drawTo(target: LumaRenderTarget, pipeline: LumaPipeline, vertices: LumaVertexBuffer, texture: SampledTexture?) {
+        if (!vertices.hasVertices()) return
+        val resolvedTarget = target as? OpenGlRenderTarget
+            ?: error("OpenGL backend requires an OpenGlRenderTarget")
+        resolvedTarget.ensureSize(resolvedTarget.width, resolvedTarget.height)
+        val state = captureState()
+        try {
+            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, resolvedTarget.framebufferId())
+            GL11.glViewport(0, 0, resolvedTarget.width, resolvedTarget.height)
+            draw(pipeline, vertices, texture?.binding)
+        } finally {
+            restoreState(state)
+        }
     }
 
     fun bind(texture: TextureHandle, unit: Int = 0) {
@@ -112,6 +148,101 @@ internal class OpenGlBackend : LumaBackend {
     private fun pipeline(spec: LumaPipeline): OpenGlPipeline = pipelines.getOrPut(spec) {
         OpenGlPipeline(spec)
     }
+
+    private fun captureState(): OpenGlStateSnapshot {
+        val viewport = MemoryUtil.memAllocInt(4)
+        return try {
+            GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport)
+            OpenGlStateSnapshot(
+                drawFramebuffer = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING),
+                readFramebuffer = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING),
+                viewportX = viewport.get(0),
+                viewportY = viewport.get(1),
+                viewportWidth = viewport.get(2),
+                viewportHeight = viewport.get(3)
+            )
+        } finally {
+            MemoryUtil.memFree(viewport)
+        }
+    }
+
+    private fun restoreState(snapshot: OpenGlStateSnapshot) {
+        GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, snapshot.drawFramebuffer)
+        GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, snapshot.readFramebuffer)
+        GL11.glViewport(snapshot.viewportX, snapshot.viewportY, snapshot.viewportWidth, snapshot.viewportHeight)
+    }
+
+    private inner class OpenGlRenderTarget(
+        override val debugName: String,
+        width: Int,
+        height: Int,
+        private val sampler: LumaSampler
+    ) : LumaRenderTarget {
+        override val apiType = RenderApiType.OPEN_GL
+
+        override var width: Int = 0
+            private set
+        override var height: Int = 0
+            private set
+
+        private var framebufferId = 0
+        private var textureId = 0
+
+        init {
+            ensureSize(width, height)
+        }
+
+        override fun ensureSize(width: Int, height: Int) {
+            if (width <= 0 || height <= 0) return
+            if (this.width == width && this.height == height && framebufferId != 0 && textureId != 0) return
+
+            close()
+            this.width = width
+            this.height = height
+
+            textureId = GL11.glGenTextures()
+            Luma.bindTexture(textureId)
+            applySampler(sampler)
+            GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA8, width, height, 0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, 0L)
+
+            framebufferId = GL30.glGenFramebuffers()
+            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, framebufferId)
+            GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, textureId, 0)
+            if (GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER) != GL30.GL_FRAMEBUFFER_COMPLETE) {
+                close()
+                error("Failed to create OpenGL render target: $debugName")
+            }
+        }
+
+        override fun textureBinding(): TextureBinding = TextureBinding.OpenGl(textureId)
+
+        fun framebufferId(): Int = framebufferId
+
+        override fun close() {
+            if (framebufferId != 0 && Luma.hasContext()) {
+                GL30.glDeleteFramebuffers(framebufferId)
+            }
+            if (textureId != 0 && Luma.hasContext()) {
+                GL11.glDeleteTextures(textureId)
+                Luma.onTextureDeleted(textureId)
+            }
+            framebufferId = 0
+            textureId = 0
+            width = 0
+            height = 0
+        }
+
+        private fun applySampler(sampler: LumaSampler) {
+            when (sampler) {
+                LumaSampler.LINEAR_CLAMP -> {
+                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR)
+                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR)
+                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE)
+                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE)
+                }
+            }
+        }
+    }
 }
 
 private class OpenGlPipeline(
@@ -136,8 +267,8 @@ private class OpenGlPipeline(
         Luma.useProgram(programId)
         Luma.bindVertexArray(vaoId)
         Luma.bindArrayBuffer(vboId)
-        if (ensureGpuCapacity(vertices.floatCount())) {
-            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, gpuFloatCapacity.toLong() * Float.SIZE_BYTES, GL15.GL_STREAM_DRAW)
+        if (ensureGpuCapacity(vertices.byteCount())) {
+            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, gpuFloatCapacity.toLong(), GL15.GL_STREAM_DRAW)
         }
         GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, 0, vertices.byteView())
 
@@ -177,17 +308,22 @@ private class OpenGlPipeline(
         Luma.bindArrayBuffer(vboId)
 
         var offsetBytes = 0L
-        val strideBytes = spec.layout.strideFloats * Float.SIZE_BYTES
+        val strideBytes = spec.layout.strideBytes
         for (index in spec.layout.attributes.indices) {
-            val size = spec.layout.attributes[index].components
+            val attribute = spec.layout.attributes[index]
+            val size = attribute.components
             GL20.glEnableVertexAttribArray(index)
-            GL20.glVertexAttribPointer(index, size, GL11.GL_FLOAT, false, strideBytes, offsetBytes)
-            offsetBytes += size.toLong() * Float.SIZE_BYTES
+            if (attribute.type.integer && !attribute.normalized) {
+                GL30.glVertexAttribIPointer(index, size, OpenGlMappings.vertexType(attribute.type), strideBytes, offsetBytes)
+            } else {
+                GL20.glVertexAttribPointer(index, size, OpenGlMappings.vertexType(attribute.type), attribute.normalized, strideBytes, offsetBytes)
+            }
+            offsetBytes += attribute.byteSize.toLong()
         }
 
         uMatrixLocation = GL20.glGetUniformLocation(programId, spec.openGl.matrixUniform)
         textureUniformLocation = if (spec.usesTexture) {
-            GL20.glGetUniformLocation(programId, spec.textureBinding?.openGlUniform ?: error("Missing texture binding"))
+            GL20.glGetUniformLocation(programId, spec.textureBinding?.openGl?.uniform ?: error("Missing texture binding"))
         } else {
             -1
         }
@@ -197,10 +333,10 @@ private class OpenGlPipeline(
         }
     }
 
-    private fun ensureGpuCapacity(requiredFloats: Int): Boolean {
-        if (requiredFloats <= gpuFloatCapacity) return false
-        var capacity = gpuFloatCapacity.coerceAtLeast(spec.layout.strideFloats)
-        while (capacity < requiredFloats) {
+    private fun ensureGpuCapacity(requiredBytes: Int): Boolean {
+        if (requiredBytes <= gpuFloatCapacity) return false
+        var capacity = gpuFloatCapacity.coerceAtLeast(spec.layout.strideBytes)
+        while (capacity < requiredBytes) {
             capacity = capacity shl 1
         }
         gpuFloatCapacity = capacity

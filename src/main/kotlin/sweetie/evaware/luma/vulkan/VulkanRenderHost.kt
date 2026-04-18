@@ -1,5 +1,7 @@
 package sweetie.evaware.luma.vulkan
 
-interface VulkanRenderHost {
-    fun vulkanRuntime(): VulkanRuntime
+import sweetie.evaware.luma.gpu.ManagedGpuRenderHost
+
+interface VulkanRenderHost : ManagedGpuRenderHost {
+    fun vulkanRuntime(): VulkanRuntime = managedGpuRuntime()
 }

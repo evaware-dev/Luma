@@ -3,6 +3,9 @@ package sweetie.evaware.renderutil.renderers
 import sweetie.evaware.luma.wrapper.LumaMetadata
 import sweetie.evaware.luma.wrapper.backend.LumaAttribute
 import sweetie.evaware.luma.wrapper.backend.LumaPipeline
+import sweetie.evaware.luma.wrapper.shader.OpenGlShader
+import sweetie.evaware.luma.wrapper.shader.VulkanShader
+import sweetie.evaware.luma.wrapper.shader.WrapperShaderSet
 
 internal object RenderUtilPipelines {
     val uber = LumaPipeline.builder("renderutil_uber")
@@ -14,10 +17,14 @@ internal object RenderUtilPipelines {
             LumaAttribute("Scissor", 4)
         )
         .textured()
-        .openGl(
-            vertexShader = LumaMetadata.coreShader("uber.vert"),
-            fragmentShader = LumaMetadata.coreShader("uber.frag")
+        .shaders(
+            WrapperShaderSet(
+                openGl = OpenGlShader(
+                    vertexShader = LumaMetadata.coreShader("uber.vert"),
+                    fragmentShader = LumaMetadata.coreShader("uber.frag")
+                ),
+                vulkan = VulkanShader(LumaMetadata.coreVulkanShader("uber"))
+            )
         )
-        .vulkan(LumaMetadata.coreVulkanShader("uber"))
         .build()
 }

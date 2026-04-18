@@ -21,5 +21,5 @@ object MinecraftRenderHost : RenderHost, VulkanRenderHost {
         }
     }
 
-    override fun vulkanRuntime(): VulkanRuntime = vulkanRuntime
+    override fun managedGpuRuntime(): VulkanRuntime = vulkanRuntime
 }

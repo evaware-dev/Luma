@@ -2,21 +2,29 @@ package sweetie.evaware.luma.wrapper.backend
 
 import sweetie.evaware.luma.wrapper.LumaMetadata
 import sweetie.evaware.luma.wrapper.api.DrawMode
+import sweetie.evaware.luma.wrapper.shader.OpenGlShader
+import sweetie.evaware.luma.wrapper.shader.VulkanShader
+import sweetie.evaware.luma.wrapper.shader.WrapperShaderSet
+import sweetie.evaware.luma.wrapper.texture.WrapperTextureBinding
+import sweetie.evaware.luma.wrapper.vertex.ShaderVertType
 
 class LumaPipeline private constructor(
     val debugName: String,
     val drawMode: DrawMode,
     val layout: Layout,
-    val openGl: OpenGlShaders,
-    val vulkan: VulkanShaders,
-    val textureBinding: TextureBinding?
+    val shaders: WrapperShaderSet,
+    val textureBinding: WrapperTextureBinding?
 ) {
+    val openGl get() = shaders.openGl
+
+    val vulkan get() = shaders.vulkan
+
     val usesTexture
         get() = textureBinding != null
 
-    @Deprecated("Use layout.strideFloats", ReplaceWith("layout.strideFloats"))
+    @Deprecated("Use layout.strideBytes", ReplaceWith("layout.strideBytes"))
     val vertexStrideFloats
-        get() = layout.strideFloats
+        get() = layout.strideBytes / Float.SIZE_BYTES
 
     @Deprecated("Use layout.attributes.map { it.components }", ReplaceWith("layout.attributes.map { it.components }.toIntArray()"))
     val vertexAttributes
@@ -50,17 +58,19 @@ class LumaPipeline private constructor(
                 LumaAttribute("Attribute$index", components)
             }
         ),
-        openGl = OpenGlShaders(
-            vertexShader = openGlVertexShader,
-            fragmentShader = openGlFragmentShader
+        shaders = WrapperShaderSet(
+            openGl = OpenGlShader(
+                vertexShader = openGlVertexShader,
+                fragmentShader = openGlFragmentShader
+            ),
+            vulkan = VulkanShader(
+                vertexShader = vulkanShaderBase
+            )
         ),
-        vulkan = VulkanShaders(
-            vertexShader = vulkanShaderBase
-        ),
-        textureBinding = if (usesTexture) TextureBinding() else null
+        textureBinding = if (usesTexture) WrapperTextureBinding() else null
     ) {
-        require(vertexStrideFloats == layout.strideFloats) {
-            "Vertex stride $vertexStrideFloats does not match layout stride ${layout.strideFloats}"
+        require(vertexStrideFloats * Float.SIZE_BYTES == layout.strideBytes) {
+            "Vertex stride ${vertexStrideFloats * Float.SIZE_BYTES} bytes does not match layout stride ${layout.strideBytes}"
         }
     }
 
@@ -69,9 +79,9 @@ class LumaPipeline private constructor(
     ) {
         private val attributes = mutableListOf<LumaAttribute>()
         private var drawMode = DrawMode.TRIANGLES
-        private var openGl: OpenGlShaders? = null
-        private var vulkan: VulkanShaders? = null
-        private var textureBinding: TextureBinding? = null
+        private var openGl: OpenGlShader? = null
+        private var vulkan: VulkanShader? = null
+        private var textureBinding: WrapperTextureBinding? = null
 
         fun drawMode(drawMode: DrawMode) = apply {
             this.drawMode = drawMode
@@ -89,21 +99,35 @@ class LumaPipeline private constructor(
             this.attributes += attributes
         }
 
+        fun shaders(openGl: OpenGlShader, vulkan: VulkanShader) = apply {
+            this.openGl = openGl
+            this.vulkan = vulkan
+        }
+
+        fun shaders(shaderSet: WrapperShaderSet) = apply {
+            shaders(shaderSet.openGl, shaderSet.vulkan)
+        }
+
         fun textured(
             openGlUniform: String = LumaMetadata.defaultOpenGlTextureUniform,
             vulkanSampler: String = LumaMetadata.defaultVulkanTextureSampler
         ) = apply {
-            textureBinding = TextureBinding(openGlUniform, vulkanSampler)
+            textureBinding = WrapperTextureBinding(
+                openGl = sweetie.evaware.luma.wrapper.texture.OpenGlTextureBinding(openGlUniform),
+                vulkan = sweetie.evaware.luma.wrapper.texture.VulkanTextureBinding(vulkanSampler)
+            )
         }
 
+        @Deprecated("Prefer a single shaders(...) call with WrapperShaderSet")
         fun openGl(
             vertexShader: String,
             fragmentShader: String,
             matrixUniform: String = LumaMetadata.defaultOpenGlMatrixUniform
         ) = apply {
-            openGl = OpenGlShaders(vertexShader, fragmentShader, matrixUniform)
+            openGl = OpenGlShader(vertexShader, fragmentShader, matrixUniform)
         }
 
+        @Deprecated("Prefer a single shaders(...) call with WrapperShaderSet")
         fun vulkan(
             vertexShader: String,
             fragmentShader: String = vertexShader,
@@ -115,7 +139,7 @@ class LumaPipeline private constructor(
             require(fragmentNamespace == resolvedNamespace) {
                 "Vulkan vertex/fragment shaders must use the same namespace: $resolvedNamespace != $fragmentNamespace"
             }
-            vulkan = VulkanShaders(
+            vulkan = VulkanShader(
                 vertexShader = resolvedVertexShader,
                 fragmentShader = resolvedFragmentShader,
                 shaderNamespace = resolvedNamespace,
@@ -129,8 +153,10 @@ class LumaPipeline private constructor(
                 debugName = debugName,
                 drawMode = drawMode,
                 layout = Layout(attributes.toList()),
-                openGl = openGl ?: error("Pipeline $debugName is missing OpenGL shader paths"),
-                vulkan = vulkan ?: error("Pipeline $debugName is missing Vulkan shader base"),
+                shaders = WrapperShaderSet(
+                    openGl = openGl ?: error("Pipeline $debugName is missing OpenGL shader paths"),
+                    vulkan = vulkan ?: error("Pipeline $debugName is missing Vulkan shader base")
+                ),
                 textureBinding = textureBinding
             )
         }
@@ -145,24 +171,6 @@ class LumaPipeline private constructor(
         }
     }
 
-    data class OpenGlShaders(
-        val vertexShader: String,
-        val fragmentShader: String,
-        val matrixUniform: String = LumaMetadata.defaultOpenGlMatrixUniform
-    )
-
-    data class VulkanShaders(
-        val vertexShader: String,
-        val fragmentShader: String = vertexShader,
-        val shaderNamespace: String = LumaMetadata.namespace,
-        val matrixUniform: String = LumaMetadata.defaultVulkanMatrixUniform
-    )
-
-    data class TextureBinding(
-        val openGlUniform: String = LumaMetadata.defaultOpenGlTextureUniform,
-        val vulkanSampler: String = LumaMetadata.defaultVulkanTextureSampler
-    )
-
     data class Layout(
         val attributes: List<LumaAttribute>
     ) {
@@ -173,7 +181,10 @@ class LumaPipeline private constructor(
             }
         }
 
-        val strideFloats = attributes.sumOf(LumaAttribute::components)
+        val strideBytes = attributes.sumOf(LumaAttribute::byteSize)
+
+        @Deprecated("Use strideBytes", ReplaceWith("strideBytes"))
+        val strideFloats = strideBytes / Float.SIZE_BYTES
     }
 
     companion object {
@@ -183,10 +194,17 @@ class LumaPipeline private constructor(
 
 data class LumaAttribute(
     val name: String,
-    val components: Int
+    val components: Int,
+    val type: ShaderVertType = ShaderVertType.FLOAT,
+    val normalized: Boolean = false
 ) {
     init {
         require(name.isNotBlank()) { "Attribute name must not be blank" }
-        require(components in 1..4) { "Attribute $name must use between 1 and 4 float components" }
+        require(components in 1..4) { "Attribute $name must use between 1 and 4 components" }
+        require(type.floating || !normalized || type.byteSize <= Short.SIZE_BYTES) {
+            "Normalized attributes are only supported for 8-bit and 16-bit fixed-point types"
+        }
     }
+
+    val byteSize = components * type.byteSize
 }

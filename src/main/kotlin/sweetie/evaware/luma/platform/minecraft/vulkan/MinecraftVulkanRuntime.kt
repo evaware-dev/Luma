@@ -18,9 +18,14 @@ import org.lwjgl.BufferUtils
 import sweetie.evaware.luma.vulkan.VulkanRuntime
 import sweetie.evaware.luma.wrapper.LumaMetadata
 import sweetie.evaware.luma.wrapper.LumaVertexBuffer
+import sweetie.evaware.luma.wrapper.RenderApiType
 import sweetie.evaware.luma.wrapper.backend.LumaPipeline
 import sweetie.evaware.luma.wrapper.frame.FrameInfo
 import sweetie.evaware.luma.wrapper.matrix.MatrixControl
+import sweetie.evaware.luma.wrapper.resource.LumaRenderTarget
+import sweetie.evaware.luma.wrapper.texture.LumaSampler
+import sweetie.evaware.luma.wrapper.texture.SampledTexture
+import sweetie.evaware.luma.wrapper.texture.TextureBinding
 import sweetie.evaware.luma.wrapper.texture.TextureHandle
 import java.awt.image.BufferedImage
 import java.awt.image.DataBufferInt
@@ -48,7 +53,7 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
         private var vertexCapacityBytes = 0
 
         fun prepareVertexBuffer(device: GpuDevice, encoder: CommandEncoder, vertices: LumaVertexBuffer): GpuBuffer {
-            val requiredBytes = vertices.floatCount() * Float.SIZE_BYTES
+            val requiredBytes = vertices.byteCount()
             if (vertexBuffer == null || requiredBytes > vertexCapacityBytes) {
                 vertexBuffer?.close()
                 vertexCapacityBytes = nextCapacity(requiredBytes, vertexFormatBytes.coerceAtLeast(1))
@@ -81,17 +86,65 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
         }
     }
 
+    private inner class VulkanRenderTarget(
+        override val debugName: String,
+        width: Int,
+        height: Int
+    ) : LumaRenderTarget {
+        override val apiType = RenderApiType.VULKAN
+
+        override var width: Int = 0
+            private set
+        override var height: Int = 0
+            private set
+
+        private var texture: GpuTexture? = null
+        private var view: GpuTextureView? = null
+        private var owningDevice: GpuDevice? = null
+
+        init {
+            ensureSize(width, height)
+        }
+
+        override fun ensureSize(width: Int, height: Int) {
+            if (width <= 0 || height <= 0) return
+            val device = ensureDevice()
+            if (owningDevice !== device || this.width != width || this.height != height || texture == null || view == null) {
+                close()
+                owningDevice = device
+                this.width = width
+                this.height = height
+                texture = createRenderTexture(device, debugName, width, height)
+                view = device.createTextureView(texture ?: error("Render target texture is missing"))
+            }
+        }
+
+        override fun textureBinding(): TextureBinding =
+            TextureBinding.Vulkan(view ?: error("Render target view is missing"))
+
+        fun colorView(): GpuTextureView = view ?: error("Render target view is missing")
+
+        override fun close() {
+            view?.close()
+            texture?.close()
+            view = null
+            texture = null
+            owningDevice = null
+            width = 0
+            height = 0
+        }
+    }
+
     private val matrixUploadBytes: ByteBuffer = BufferUtils.createByteBuffer(16 * Float.SIZE_BYTES)
     private val matrixUploadFloats: FloatBuffer = matrixUploadBytes.asFloatBuffer()
     private val matrixUniformSize = 16L * Float.SIZE_BYTES
 
-    private var sampler: GpuSampler? = null
+    private val samplers = EnumMap<LumaSampler, GpuSampler>(LumaSampler::class.java)
     private var matrixUniform: GpuBuffer? = null
     private var matrixUniformSlice: GpuBufferSlice? = null
     private var matrixUniformVersion = Int.MIN_VALUE
     private var device: GpuDevice? = null
     private var activeEncoder: CommandEncoder? = null
-    private var activePass: RenderPass? = null
     private val pipelines = IdentityHashMap<LumaPipeline, PipelineState>()
     private val textures = IdentityHashMap<TextureHandle, UploadedTexture>()
 
@@ -100,7 +153,36 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
         activeEncoder = ensureDevice().createCommandEncoder()
     }
 
-    override fun draw(pipeline: LumaPipeline, vertices: LumaVertexBuffer, texture: TextureHandle?) {
+    override fun draw(pipeline: LumaPipeline, vertices: LumaVertexBuffer, texture: TextureBinding?) {
+        drawInternal(
+            targetView = null,
+            pipeline = pipeline,
+            vertices = vertices,
+            texture = texture?.let { SampledTexture(it) }
+        )
+    }
+
+    override fun createRenderTarget(debugName: String, width: Int, height: Int): LumaRenderTarget =
+        VulkanRenderTarget(debugName, width, height)
+
+    override fun drawTo(target: LumaRenderTarget, pipeline: LumaPipeline, vertices: LumaVertexBuffer, texture: SampledTexture?) {
+        val resolvedTarget = target as? VulkanRenderTarget
+            ?: error("Vulkan backend requires a VulkanRenderTarget")
+        resolvedTarget.ensureSize(resolvedTarget.width, resolvedTarget.height)
+        drawInternal(
+            targetView = resolvedTarget.colorView(),
+            pipeline = pipeline,
+            vertices = vertices,
+            texture = texture
+        )
+    }
+
+    private fun drawInternal(
+        targetView: GpuTextureView?,
+        pipeline: LumaPipeline,
+        vertices: LumaVertexBuffer,
+        texture: SampledTexture?
+    ) {
         if (!vertices.hasVertices()) return
         val resolvedDevice = ensureDevice()
         val pipelineState = ensurePipeline(resolvedDevice, pipeline)
@@ -108,21 +190,17 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
         val ownsEncoder = activeEncoder == null
         val vertexBuffer = pipelineState.prepareVertexBuffer(resolvedDevice, encoder, vertices)
         val matrixSlice = prepareMatrixUniform(resolvedDevice, encoder)
-        val uploadedTexture = texture?.let { ensureTexture(resolvedDevice, it) }
-        val resolvedSampler = if (pipeline.usesTexture) ensureSampler(resolvedDevice) else null
+        val uploadedTexture = resolveTexture(resolvedDevice, texture?.binding)
+        val resolvedSampler = if (pipeline.usesTexture) ensureSampler(resolvedDevice, texture?.sampler ?: LumaSampler.LINEAR_CLAMP) else null
 
-        val pass = if (ownsEncoder) {
-            createRenderPass(encoder)
-        } else {
-            activePass ?: createRenderPass(encoder).also { activePass = it }
-        }
+        val pass = createRenderPass(encoder, targetView)
 
         try {
             configurePass(pass, pipeline, pipelineState.pipeline, matrixSlice)
             if (pipeline.usesTexture) {
                 val textureView = uploadedTexture?.view ?: error("Texture is required for textured pipeline")
                 pass.bindTexture(
-                    pipeline.textureBinding?.vulkanSampler ?: error("Missing texture binding"),
+                    pipeline.textureBinding?.vulkan?.sampler ?: error("Missing texture binding"),
                     textureView,
                     resolvedSampler ?: error("Sampler is missing")
                 )
@@ -130,9 +208,7 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
             pass.setVertexBuffer(0, vertexBuffer)
             pass.draw(0, vertices.vertexCount())
         } finally {
-            if (ownsEncoder) {
-                pass.close()
-            }
+            pass.close()
         }
 
         if (ownsEncoder) {
@@ -142,23 +218,19 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
     }
 
     override fun endFrame() {
-        activePass?.close()
-        activePass = null
         activeEncoder?.submit()
         activeEncoder = null
     }
 
     override fun close() {
-        activePass?.close()
-        activePass = null
         activeEncoder = null
         matrixUniform?.close()
         matrixUniform = null
         matrixUniformSlice = null
         pipelines.values.forEach(PipelineState::close)
         pipelines.clear()
-        sampler?.close()
-        sampler = null
+        samplers.values.forEach(GpuSampler::close)
+        samplers.clear()
         matrixUniformVersion = Int.MIN_VALUE
         textures.values.forEach(UploadedTexture::close)
         textures.clear()
@@ -176,17 +248,19 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
         return currentDevice
     }
 
-    private fun ensureSampler(device: GpuDevice): GpuSampler {
-        sampler?.let { return it }
-        return device.createSampler(
-            AddressMode.CLAMP_TO_EDGE,
-            AddressMode.CLAMP_TO_EDGE,
-            FilterMode.LINEAR,
-            FilterMode.LINEAR,
-            1,
-            OptionalDouble.empty()
-        ).also {
-            sampler = it
+    private fun ensureSampler(device: GpuDevice, sampler: LumaSampler): GpuSampler {
+        samplers[sampler]?.let { return it }
+        return when (sampler) {
+            LumaSampler.LINEAR_CLAMP -> device.createSampler(
+                AddressMode.CLAMP_TO_EDGE,
+                AddressMode.CLAMP_TO_EDGE,
+                FilterMode.LINEAR,
+                FilterMode.LINEAR,
+                1,
+                OptionalDouble.empty()
+            )
+        }.also {
+            samplers[sampler] = it
         }
     }
 
@@ -213,7 +287,7 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
             .withVertexFormat(vertexFormat, MinecraftGpuVertexFormats.drawMode(spec.drawMode))
 
         if (spec.usesTexture) {
-            builder.withSampler(spec.textureBinding?.vulkanSampler ?: error("Missing texture binding"))
+            builder.withSampler(spec.textureBinding?.vulkan?.sampler ?: error("Missing texture binding"))
         }
 
         val pipeline = builder.build()
@@ -268,6 +342,13 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
         }
     }
 
+    private fun resolveTexture(device: GpuDevice, binding: TextureBinding?): UploadedTexture? = when (binding) {
+        null -> null
+        is TextureBinding.Managed -> ensureTexture(device, binding.handle)
+        is TextureBinding.OpenGl -> error("Raw OpenGL textures are not supported on the Vulkan backend")
+        is TextureBinding.Vulkan -> UploadedTexture(binding.view.texture(), binding.view)
+    }
+
     private fun uploadTexture(device: GpuDevice, texture: GpuTexture, image: BufferedImage) {
         NativeImage(NativeImage.Format.RGBA, image.width, image.height, false).use { nativeImage ->
             val pixels = extractPixels(image)
@@ -303,11 +384,15 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
         return alpha or green or blue or red
     }
 
-    private fun createRenderPass(encoder: CommandEncoder): RenderPass {
+    private fun createRenderPass(encoder: CommandEncoder, colorOverride: GpuTextureView? = null): RenderPass {
         val target = Minecraft.getInstance().mainRenderTarget
-        val colorView = RenderSystem.outputColorTextureOverride ?: target.colorTextureView
+        val colorView = colorOverride ?: RenderSystem.outputColorTextureOverride ?: target.colorTextureView
             ?: error(LumaMetadata.message("could not resolve color target"))
-        val depthView = RenderSystem.outputDepthTextureOverride ?: target.depthTextureView
+        val depthView = if (colorOverride == null) {
+            RenderSystem.outputDepthTextureOverride ?: target.depthTextureView
+        } else {
+            null
+        }
 
         return if (depthView != null) {
             encoder.createRenderPass(
@@ -330,4 +415,15 @@ internal class MinecraftVulkanRuntime : VulkanRuntime {
         pass.setPipeline(pipeline)
         pass.setUniform(spec.vulkan.matrixUniform, matrixSlice)
     }
+
+    private fun createRenderTexture(device: GpuDevice, debugName: String, width: Int, height: Int): GpuTexture =
+        device.createTexture(
+            { LumaMetadata.textureLabel(debugName) },
+            GpuTexture.USAGE_RENDER_ATTACHMENT or GpuTexture.USAGE_TEXTURE_BINDING,
+            GpuFormat.RGBA8_UNORM,
+            width,
+            height,
+            1,
+            1
+        )
 }

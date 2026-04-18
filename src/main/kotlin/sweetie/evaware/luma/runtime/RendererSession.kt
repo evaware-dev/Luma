@@ -7,7 +7,9 @@ import sweetie.evaware.luma.wrapper.backend.LumaPipeline
 import sweetie.evaware.luma.wrapper.backend.RenderHost
 import sweetie.evaware.luma.wrapper.frame.FrameState
 import sweetie.evaware.luma.wrapper.matrix.MatrixControl
-import sweetie.evaware.luma.wrapper.texture.TextureHandle
+import sweetie.evaware.luma.wrapper.resource.LumaRenderTarget
+import sweetie.evaware.luma.wrapper.texture.SampledTexture
+import sweetie.evaware.luma.wrapper.texture.TextureBinding
 
 internal class RendererSession(
     private val backendRouter: LumaBackendRouter,
@@ -88,9 +90,19 @@ internal class RendererSession(
         }
     }
 
-    fun draw(pipeline: LumaPipeline, vertices: LumaVertexBuffer, texture: TextureHandle?) {
+    fun draw(pipeline: LumaPipeline, vertices: LumaVertexBuffer, texture: TextureBinding?) {
         val backend = activeBackend ?: backendRouter.resolve()
         backend.draw(pipeline, vertices, texture)
+    }
+
+    fun createRenderTarget(debugName: String, width: Int, height: Int): LumaRenderTarget {
+        val backend = activeBackend ?: backendRouter.resolve()
+        return backend.createRenderTarget(debugName, width, height)
+    }
+
+    fun drawTo(target: LumaRenderTarget, pipeline: LumaPipeline, vertices: LumaVertexBuffer, texture: SampledTexture?) {
+        val backend = activeBackend ?: backendRouter.resolve()
+        backend.drawTo(target, pipeline, vertices, texture)
     }
 
     fun closeBackends() {
