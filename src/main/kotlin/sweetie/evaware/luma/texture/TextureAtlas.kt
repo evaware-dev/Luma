@@ -6,6 +6,7 @@ import javax.imageio.ImageIO
 
 object TextureAtlas {
     private const val whiteId = "luma:white"
+    private const val packPadding = 4
 
     data class Region(
         val uOffset: Float,
@@ -155,18 +156,20 @@ object TextureAtlas {
 
         for (entry in images) {
             val image = entry.image
-            if (image.width > size || image.height > size) return null
-            if (x + image.width > size) {
+            val paddedWidth = image.width + packPadding
+            val paddedHeight = image.height + packPadding
+            if (paddedWidth > size || paddedHeight > size) return null
+            if (x + paddedWidth > size) {
                 x = 0
                 y += rowHeight
                 rowHeight = 0
             }
-            if (y + image.height > size) return null
+            if (y + paddedHeight > size) return null
 
             packed += Packed(entry.id, image, x, y)
-            x += image.width
-            if (image.height > rowHeight) {
-                rowHeight = image.height
+            x += paddedWidth
+            if (paddedHeight > rowHeight) {
+                rowHeight = paddedHeight
             }
         }
 

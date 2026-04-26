@@ -296,6 +296,7 @@ object Luma {
             boundTextureUnit = activeUnit
             boundTextureId = -1
         }
+        GL33C.glBindSampler(unit, 0)
         if (boundTextureId == textureId) return
         GlStateManager._bindTexture(textureId)
         boundTextureId = textureId
