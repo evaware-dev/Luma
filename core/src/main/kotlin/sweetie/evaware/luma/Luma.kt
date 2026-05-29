@@ -120,10 +120,10 @@ object Luma {
 
         GL20.glBlendEquationSeparate(snapshot.blendEquationRgb, snapshot.blendEquationAlpha)
 
-        GL13.glActiveTexture(snapshot.activeTexture)
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, snapshot.boundTexture2d)
-        GL20.glUseProgram(snapshot.program)
-        GL30.glBindVertexArray(snapshot.vertexArray)
+        platform.activeTexture(snapshot.activeTexture)
+        platform.bindTexture2d(snapshot.boundTexture2d)
+        platform.useProgram(snapshot.program)
+        platform.bindVertexArray(snapshot.vertexArray)
 
         boundTextureUnit = snapshot.activeTexture
         boundTextureId = snapshot.boundTexture2d
@@ -209,15 +209,15 @@ object Luma {
     }
 
     private fun restoreFramebuffer(snapshot: FramebufferSnapshot) {
-        GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, snapshot.drawFramebuffer)
-        GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, snapshot.readFramebuffer)
-        GL11.glViewport(snapshot.viewportX, snapshot.viewportY, snapshot.viewportWidth, snapshot.viewportHeight)
+        platform.bindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, snapshot.drawFramebuffer)
+        platform.bindFramebuffer(GL30.GL_READ_FRAMEBUFFER, snapshot.readFramebuffer)
+        platform.viewport(snapshot.viewportX, snapshot.viewportY, snapshot.viewportWidth, snapshot.viewportHeight)
     }
 
     private fun restoreFramebuffer(snapshot: GlStateSnapshot) {
-        GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, snapshot.drawFramebuffer)
-        GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, snapshot.readFramebuffer)
-        GL11.glViewport(snapshot.viewportX, snapshot.viewportY, snapshot.viewportWidth, snapshot.viewportHeight)
+        platform.bindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, snapshot.drawFramebuffer)
+        platform.bindFramebuffer(GL30.GL_READ_FRAMEBUFFER, snapshot.readFramebuffer)
+        platform.viewport(snapshot.viewportX, snapshot.viewportY, snapshot.viewportWidth, snapshot.viewportHeight)
     }
 
     inline fun render(action: () -> Unit) {
@@ -275,13 +275,13 @@ object Luma {
 
     internal fun useProgram(programId: Int) {
         if (boundProgramId == programId) return
-        GL20.glUseProgram(programId)
+        platform.useProgram(programId)
         boundProgramId = programId
     }
 
     internal fun bindVertexArray(vertexArrayId: Int) {
         if (boundVertexArrayId == vertexArrayId) return
-        GL30.glBindVertexArray(vertexArrayId)
+        platform.bindVertexArray(vertexArrayId)
         boundVertexArrayId = vertexArrayId
     }
 
@@ -296,13 +296,13 @@ object Luma {
     fun bindTexture(textureId: Int, unit: Int = 0) {
         val activeUnit = GL13.GL_TEXTURE0 + unit
         if (boundTextureUnit != activeUnit) {
-            GL13.glActiveTexture(activeUnit)
+            platform.activeTexture(activeUnit)
             boundTextureUnit = activeUnit
             boundTextureId = -1
         }
         GL33.glBindSampler(unit, 0)
         if (boundTextureId == textureId) return
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
+        platform.bindTexture2d(textureId)
         boundTextureId = textureId
     }
 
@@ -349,8 +349,8 @@ object Luma {
     }
 
     fun bindFramebuffer(framebufferId: Int, width: Int, height: Int) {
-        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, framebufferId)
-        GL11.glViewport(0, 0, width, height)
+        platform.bindFramebuffer(GL30.GL_FRAMEBUFFER, framebufferId)
+        platform.viewport(0, 0, width, height)
     }
 
     @PublishedApi internal fun acquireTransientStateSnapshot(): GlStateSnapshot {

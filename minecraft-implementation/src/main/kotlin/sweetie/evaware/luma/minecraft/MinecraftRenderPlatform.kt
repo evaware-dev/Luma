@@ -16,7 +16,7 @@ object MinecraftRenderPlatform : RenderPlatform {
 
     override fun getViewport(viewport: IntArray): Boolean {
         val colorTexture = try {
-            Minecraft.getInstance().mainRenderTarget?.colorTextureView
+            Minecraft.getInstance().mainRenderTarget.colorTextureView
         } catch (e: Throwable) {
             null
         }
@@ -53,9 +53,6 @@ object MinecraftRenderPlatform : RenderPlatform {
             snapshot.blendSrcAlpha,
             snapshot.blendDstAlpha
         )
-
-        GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, snapshot.drawFramebuffer)
-        GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, snapshot.readFramebuffer)
     }
 
     override fun getBoundTexture2d(): Int {
@@ -72,5 +69,29 @@ object MinecraftRenderPlatform : RenderPlatform {
             colorTexture.getWidth(0),
             colorTexture.getHeight(0)
         )
+    }
+
+    override fun activeTexture(texture: Int) {
+        GlStateManager._activeTexture(texture)
+    }
+
+    override fun bindTexture2d(textureId: Int) {
+        GlStateManager._bindTexture(textureId)
+    }
+
+    override fun useProgram(programId: Int) {
+        GlStateManager._glUseProgram(programId)
+    }
+
+    override fun bindVertexArray(vertexArrayId: Int) {
+        GlStateManager._glBindVertexArray(vertexArrayId)
+    }
+
+    override fun bindFramebuffer(target: Int, framebufferId: Int) {
+        GlStateManager._glBindFramebuffer(target, framebufferId)
+    }
+
+    override fun viewport(x: Int, y: Int, width: Int, height: Int) {
+        GlStateManager._viewport(x, y, width, height)
     }
 }

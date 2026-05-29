@@ -1,6 +1,8 @@
 package sweetie.evaware.luma
 
 import org.lwjgl.opengl.GL11
+import org.lwjgl.opengl.GL13
+import org.lwjgl.opengl.GL20
 import org.lwjgl.opengl.GL30
 
 interface RenderPlatform {
@@ -13,6 +15,30 @@ interface RenderPlatform {
     fun restoreState(snapshot: Luma.GlStateSnapshot)
     fun getBoundTexture2d(): Int
     fun swapToMainFramebuffer(luma: Luma)
+
+    fun activeTexture(texture: Int) {
+        GL13.glActiveTexture(texture)
+    }
+
+    fun bindTexture2d(textureId: Int) {
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
+    }
+
+    fun useProgram(programId: Int) {
+        GL20.glUseProgram(programId)
+    }
+
+    fun bindVertexArray(vertexArrayId: Int) {
+        GL30.glBindVertexArray(vertexArrayId)
+    }
+
+    fun bindFramebuffer(target: Int, framebufferId: Int) {
+        GL30.glBindFramebuffer(target, framebufferId)
+    }
+
+    fun viewport(x: Int, y: Int, width: Int, height: Int) {
+        GL11.glViewport(x, y, width, height)
+    }
 }
 
 object DefaultRenderPlatform : RenderPlatform {
@@ -48,3 +74,4 @@ object DefaultRenderPlatform : RenderPlatform {
         luma.bindFramebuffer(0, 960, 540)
     }
 }
+
