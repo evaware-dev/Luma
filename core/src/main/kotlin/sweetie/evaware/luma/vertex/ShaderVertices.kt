@@ -66,6 +66,10 @@ class ShaderVertices : ShaderInputApi<ShaderVertices>(), AutoCloseable {
         stream.putAttribute4(layout, layoutPos, first, second, third, fourth)
     }
 
+    fun reserveVertices(count: Int) = apply {
+        stream.reserveVertices(layout, count)
+    }
+
     internal fun upload(vbo: Int, drawMode: Int) = stream.upload(vbo, drawMode)
 
     override fun close() {

@@ -172,6 +172,10 @@ class VertexStream : CloseableResourceBase(), Clearable {
         return capacity
     }
 
+    fun reserveVertices(layouts: VertexLayout, count: Int) {
+        ensureCapacity(count * layouts.strideFloats)
+    }
+
     override fun close() {
         if (!markClosed()) return
         MemoryUtil.memFree(uploadBuffer)

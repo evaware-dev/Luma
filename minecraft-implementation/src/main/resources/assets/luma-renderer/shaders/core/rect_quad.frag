@@ -1,7 +1,5 @@
 #version 330 core
 
-#import<scissor>
-
 in vec2 vLocal;
 in vec2 vSize;
 in vec4 vRadius;
@@ -26,10 +24,6 @@ float roundedDistance(vec2 local, vec2 size, vec4 radius) {
 }
 
 void main() {
-    if (!scissorVisible(vScissor, gl_FragCoord.xy)) {
-        discard;
-    }
-
     float dist = roundedDistance(vLocal, vSize, vRadius);
     float aa = max(fwidth(dist), 0.75);
     float alpha = 1.0 - smoothstep(-aa, aa, dist);

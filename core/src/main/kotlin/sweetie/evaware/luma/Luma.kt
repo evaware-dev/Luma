@@ -293,7 +293,7 @@ object Luma {
 
     fun bindTexture(texture: TextureHandle, unit: Int = 0) = bindTexture(texture.id, unit)
 
-    internal fun bindTexture(textureId: Int, unit: Int = 0) {
+    fun bindTexture(textureId: Int, unit: Int = 0) {
         val activeUnit = GL13.GL_TEXTURE0 + unit
         if (boundTextureUnit != activeUnit) {
             GL13.glActiveTexture(activeUnit)

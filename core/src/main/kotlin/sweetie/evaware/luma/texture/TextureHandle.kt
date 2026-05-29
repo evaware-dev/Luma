@@ -6,7 +6,7 @@ import sweetie.evaware.luma.api.CloseableResourceBase
 import sweetie.evaware.luma.resource.GlResources
 
 class TextureHandle(
-    internal val id: Int,
+    val id: Int,
     val width: Int,
     val height: Int
 ) : CloseableResourceBase() {
