@@ -32,6 +32,7 @@ object Luma {
         var boundTexture2d = 0
         var program = 0
         var vertexArray = 0
+        val samplerBindings = IntArray(8)
     }
 
     class FramebufferSnapshot {
@@ -109,6 +110,9 @@ object Luma {
         snapshot.boundTexture2d = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
         snapshot.program = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM)
         snapshot.vertexArray = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING)
+        for (i in snapshot.samplerBindings.indices) {
+            snapshot.samplerBindings[i] = GL30.glGetIntegeri(GL33.GL_SAMPLER_BINDING, i)
+        }
         return snapshot
     }
 
@@ -124,6 +128,11 @@ object Luma {
         platform.bindTexture2d(snapshot.boundTexture2d)
         platform.useProgram(snapshot.program)
         platform.bindVertexArray(snapshot.vertexArray)
+
+        // Restore sampler objects that bindTexture() stripped via GL33.glBindSampler(unit, 0).
+        for (i in snapshot.samplerBindings.indices) {
+            GL33.glBindSampler(i, snapshot.samplerBindings[i])
+        }
 
         boundTextureUnit = snapshot.activeTexture
         boundTextureId = snapshot.boundTexture2d
@@ -205,6 +214,9 @@ object Luma {
         snapshot.vertexArray = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING)
         snapshot.activeTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)
         snapshot.boundTexture2d = platform.getBoundTexture2d()
+        for (i in snapshot.samplerBindings.indices) {
+            snapshot.samplerBindings[i] = GL30.glGetIntegeri(GL33.GL_SAMPLER_BINDING, i)
+        }
         return snapshot
     }
 
@@ -266,9 +278,13 @@ object Luma {
     }
 
     @PublishedApi internal fun applyGuiState() {
-        GL11.glDisable(GL11.GL_DEPTH_TEST)
-        GL11.glDisable(GL11.GL_CULL_FACE)
-        GL11.glEnable(GL11.GL_BLEND)
+        // Route through platform so that integrations with a GL state cache
+        // (e.g. Minecraft's GlStateManager) stay in sync. Without this, the cache
+        // would still say "enabled" after a direct glDisable(), causing restoreState()
+        // to skip the GL call and leave depth test / cull disabled for the next frame.
+        platform.disableDepthTest()
+        platform.disableCull()
+        platform.enableBlend()
         GL20.glBlendEquationSeparate(GL14.GL_FUNC_ADD, GL14.GL_FUNC_ADD)
         GL14.glBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, GL11.GL_ONE, GL11.GL_ZERO)
     }

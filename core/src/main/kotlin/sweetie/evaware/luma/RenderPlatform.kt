@@ -39,6 +39,13 @@ interface RenderPlatform {
     fun viewport(x: Int, y: Int, width: Int, height: Int) {
         GL11.glViewport(x, y, width, height)
     }
+
+    fun enableBlend() { GL11.glEnable(GL11.GL_BLEND) }
+    fun disableBlend() { GL11.glDisable(GL11.GL_BLEND) }
+    fun enableDepthTest() { GL11.glEnable(GL11.GL_DEPTH_TEST) }
+    fun disableDepthTest() { GL11.glDisable(GL11.GL_DEPTH_TEST) }
+    fun enableCull() { GL11.glEnable(GL11.GL_CULL_FACE) }
+    fun disableCull() { GL11.glDisable(GL11.GL_CULL_FACE) }
 }
 
 object DefaultRenderPlatform : RenderPlatform {
