@@ -9,7 +9,7 @@ tasks.register("release") {
 
     doLast {
         def newVersion = project.findProperty("newVersion")
-        if (newVersion == null) {
+        if (newVersion == null || newVersion.toString().trim().isEmpty()) {
             throw new GradleException("./gradlew release -PnewVersion=<version>")
         }
 
@@ -21,18 +21,16 @@ tasks.register("release") {
         println "Version updated to ${newVersion} in gradle.properties"
 
         def git = { String... args ->
-            def stdout = new ByteArrayOutputStream()
-            def stderr = new ByteArrayOutputStream()
-            def result = exec {
-                commandLine = (['git'] + args.toList())
-                standardOutput = stdout
-                errorOutput = stderr
-                ignoreExitValue = true
+            def process = new ProcessBuilder(["git"] + args.toList())
+                .directory(project.projectDir)
+                .start()
+            def output = process.inputStream.text.trim()
+            def errorOutput = process.errorStream.text.trim()
+            def exitCode = process.waitFor()
+            if (exitCode != 0 && args[0] != "tag") {
+                throw new GradleException("Error: git ${args.join(' ')}\nStdout: ${output}\nStderr: ${errorOutput}")
             }
-            if (result.exitValue != 0 && args[0] != "tag") {
-                throw new GradleException("Error: git ${args.join(' ')}\nStdout: ${stdout}\nStderr: ${stderr}")
-            }
-            return stdout.toString().trim()
+            return output
         }
 
         def status = git("status", "--porcelain")
