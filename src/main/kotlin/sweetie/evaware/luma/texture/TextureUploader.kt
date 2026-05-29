@@ -1,10 +1,13 @@
 package sweetie.evaware.luma.texture
 
 import com.mojang.blaze3d.opengl.GlStateManager
+import org.lwjgl.BufferUtils
 import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL12
+import org.lwjgl.opengl.GL13
 import org.lwjgl.opengl.GL14
 import org.lwjgl.opengl.GL30
+import org.lwjgl.opengl.GL33C
 import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.resource.LumaResources
@@ -18,13 +21,20 @@ object TextureUploader {
     private var byteUploadBuffer: ByteBuffer = MemoryUtil.memAlloc(4)
     private var scratchPixels = IntArray(0)
 
+    private fun getBoundTexture2d(): Int {
+        val textureIndex = GlStateManager.activeTexture
+        if (textureIndex !in GlStateManager.TEXTURES.indices) return 0
+        return GlStateManager.TEXTURES[textureIndex].binding
+    }
+
     fun upload(image: BufferedImage, mipmap: Boolean = true): TextureHandle {
         val textureId = GL11.glGenTextures()
-        val previousUnpackAlignment = GL11.glGetInteger(GL11.GL_UNPACK_ALIGNMENT)
-        val previousUnpackRowLength = GL11.glGetInteger(GL12.GL_UNPACK_ROW_LENGTH)
-        val previousUnpackSkipRows = GL11.glGetInteger(GL12.GL_UNPACK_SKIP_ROWS)
-        val previousUnpackSkipPixels = GL11.glGetInteger(GL12.GL_UNPACK_SKIP_PIXELS)
-        val previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
+        val previousUnpackAlignment = 4
+        val previousUnpackRowLength = 0
+        val previousUnpackSkipRows = 0
+        val previousUnpackSkipPixels = 0
+        val previousTexture = getBoundTexture2d()
+
         val pixelCount = image.width * image.height
         val pixels = pixels(image, pixelCount)
         val buffer = ensureBuffer(pixelCount)
@@ -86,11 +96,12 @@ object TextureUploader {
 
     fun uploadCoverage(image: BufferedImage): TextureHandle {
         val textureId = GL11.glGenTextures()
-        val previousUnpackAlignment = GL11.glGetInteger(GL11.GL_UNPACK_ALIGNMENT)
-        val previousUnpackRowLength = GL11.glGetInteger(GL12.GL_UNPACK_ROW_LENGTH)
-        val previousUnpackSkipRows = GL11.glGetInteger(GL12.GL_UNPACK_SKIP_ROWS)
-        val previousUnpackSkipPixels = GL11.glGetInteger(GL12.GL_UNPACK_SKIP_PIXELS)
-        val previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
+        val previousUnpackAlignment = 4
+        val previousUnpackRowLength = 0
+        val previousUnpackSkipRows = 0
+        val previousUnpackSkipPixels = 0
+        val previousTexture = getBoundTexture2d()
+
         val buffer = coverageBuffer(image)
 
         var uploaded = false
@@ -101,6 +112,15 @@ object TextureUploader {
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE)
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE)
 
+            val swizzle = BufferUtils.createIntBuffer(4).apply {
+                put(GL11.GL_ONE)
+                put(GL11.GL_ONE)
+                put(GL11.GL_ONE)
+                put(GL11.GL_RED)
+                flip()
+            }
+            GL11.glTexParameteriv(GL11.GL_TEXTURE_2D, GL33C.GL_TEXTURE_SWIZZLE_RGBA, swizzle)
+
             GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 1)
             GL11.glPixelStorei(GL12.GL_UNPACK_ROW_LENGTH, 0)
             GL11.glPixelStorei(GL12.GL_UNPACK_SKIP_ROWS, 0)
@@ -108,11 +128,11 @@ object TextureUploader {
             GL11.glTexImage2D(
                 GL11.GL_TEXTURE_2D,
                 0,
-                GL11.GL_RGBA8,
+                GL30.GL_R8,
                 image.width,
                 image.height,
                 0,
-                GL11.GL_RGBA,
+                GL11.GL_RED,
                 GL11.GL_UNSIGNED_BYTE,
                 buffer
             )
@@ -135,11 +155,12 @@ object TextureUploader {
     }
 
     fun updateCoverage(textureId: Int, atlasHeight: Int, x: Int, y: Int, image: BufferedImage) {
-        val previousUnpackAlignment = GL11.glGetInteger(GL11.GL_UNPACK_ALIGNMENT)
-        val previousUnpackRowLength = GL11.glGetInteger(GL12.GL_UNPACK_ROW_LENGTH)
-        val previousUnpackSkipRows = GL11.glGetInteger(GL12.GL_UNPACK_SKIP_ROWS)
-        val previousUnpackSkipPixels = GL11.glGetInteger(GL12.GL_UNPACK_SKIP_PIXELS)
-        val previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
+        val previousUnpackAlignment = 4
+        val previousUnpackRowLength = 0
+        val previousUnpackSkipRows = 0
+        val previousUnpackSkipPixels = 0
+        val previousTexture = getBoundTexture2d()
+
         val buffer = coverageBuffer(image)
 
         try {
@@ -155,7 +176,7 @@ object TextureUploader {
                 atlasHeight - y - image.height,
                 image.width,
                 image.height,
-                GL11.GL_RGBA,
+                GL11.GL_RED,
                 GL11.GL_UNSIGNED_BYTE,
                 buffer
             )
@@ -194,7 +215,7 @@ object TextureUploader {
     }
 
     private fun coverageBuffer(image: BufferedImage): ByteBuffer {
-        val requiredBytes = image.width * image.height * 4
+        val requiredBytes = image.width * image.height
         if (requiredBytes > byteUploadBuffer.capacity()) {
             byteUploadBuffer = MemoryUtil.memRealloc(byteUploadBuffer, nextCapacity(requiredBytes, byteUploadBuffer.capacity().coerceAtLeast(4)))
         }
@@ -207,9 +228,6 @@ object TextureUploader {
             var x = 0
             while (x < image.width) {
                 val coverage = ((pixels[rowOffset + x] ushr 24) and 0xFF).toByte()
-                byteUploadBuffer.put(coverage)
-                byteUploadBuffer.put(coverage)
-                byteUploadBuffer.put(coverage)
                 byteUploadBuffer.put(coverage)
                 x++
             }

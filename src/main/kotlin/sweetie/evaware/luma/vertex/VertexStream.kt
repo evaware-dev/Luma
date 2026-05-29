@@ -146,7 +146,10 @@ class VertexStream : CloseableResourceBase(), Clearable {
     }
 
     private fun ensureGpuCapacity(requiredFloats: Int) {
-        if (requiredFloats <= gpuFloatCapacity) return
+        if (requiredFloats <= gpuFloatCapacity) {
+            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, gpuFloatCapacity.toLong() * Float.SIZE_BYTES.toLong(), GL15.GL_STREAM_DRAW)
+            return
+        }
         gpuFloatCapacity = nextCapacity(requiredFloats, gpuFloatCapacity.coerceAtLeast(1))
         GL15.glBufferData(GL15.GL_ARRAY_BUFFER, gpuFloatCapacity.toLong() * Float.SIZE_BYTES.toLong(), GL15.GL_STREAM_DRAW)
     }

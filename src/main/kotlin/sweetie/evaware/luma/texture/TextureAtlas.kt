@@ -38,11 +38,13 @@ object TextureAtlas {
     private val regions = HashMap<String, Region>()
     private var texture: TextureHandle? = null
 
+    @Synchronized
     fun register(id: String, loader: () -> BufferedImage) {
         if (texture != null) return
         sources[id] = Source(loader)
     }
 
+    @Synchronized
     fun registerResource(id: String, path: String) {
         register(id) {
             javaClass.classLoader.getResourceAsStream(path)?.use { input ->
@@ -95,6 +97,7 @@ object TextureAtlas {
 
     fun whiteRegion() = region(whiteId)
 
+    @Synchronized
     fun close() {
         texture?.close()
         texture = null

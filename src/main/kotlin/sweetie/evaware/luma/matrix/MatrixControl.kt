@@ -22,6 +22,10 @@ object MatrixControl {
     private var tm31 = 0f
     private var projectionVersion = 0
 
+    private var lastProjectionVersion = -1
+    private var lastStackVersion = -1
+    private var stackVersion = 0
+
     fun beginGuiFrame() {
         matrix4fStack.clear()
         unscaledProjection()
@@ -99,7 +103,14 @@ object MatrixControl {
 
     fun projectionVersion() = projectionVersion
 
-    fun current() = combinedMatrix.set(projectionMatrix).mul(matrix4fStack)
+    fun current(): Matrix4f {
+        if (projectionVersion != lastProjectionVersion || stackVersion != lastStackVersion) {
+            combinedMatrix.set(projectionMatrix).mul(matrix4fStack)
+            lastProjectionVersion = projectionVersion
+            lastStackVersion = stackVersion
+        }
+        return combinedMatrix
+    }
 
     fun transformX(x: Float, y: Float) = tm00 * x + tm10 * y + tm30
 
@@ -112,5 +123,6 @@ object MatrixControl {
         tm11 = matrix4fStack.m11()
         tm30 = matrix4fStack.m30()
         tm31 = matrix4fStack.m31()
+        stackVersion++
     }
 }

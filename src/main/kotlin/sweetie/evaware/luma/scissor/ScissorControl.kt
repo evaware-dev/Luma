@@ -20,11 +20,23 @@ object ScissorControl : Clearable {
     private var currentMaxX = 0f
     private var currentMaxY = 0f
 
+    private var glScissorEnabled = false
+    private var glScissorX = -1
+    private var glScissorY = -1
+    private var glScissorWidth = -1
+    private var glScissorHeight = -1
+
     fun beginGuiFrame() {
         val window = Minecraft.getInstance().window
         scale = window.guiScale.toFloat()
         windowHeight = window.height.toFloat()
         clear()
+
+        glScissorEnabled = false
+        glScissorX = -1
+        glScissorY = -1
+        glScissorWidth = -1
+        glScissorHeight = -1
     }
 
     override fun clear() {
@@ -53,30 +65,16 @@ object ScissorControl : Clearable {
         val minY = windowHeight - (y + height) * scale
         val maxX = (x + width) * scale
         val maxY = windowHeight - y * scale
-
-        val nextMinX: Float
-        val nextMinY: Float
-        val nextMaxX: Float
-        val nextMaxY: Float
-
-        if (size == 0) {
-            nextMinX = minX
-            nextMinY = minY
-            nextMaxX = maxX
-            nextMaxY = maxY
-        } else {
-            nextMinX = if (minX > currentMinX) minX else currentMinX
-            nextMinY = if (minY > currentMinY) minY else currentMinY
-            nextMaxX = if (maxX < currentMaxX) maxX else currentMaxX
-            nextMaxY = if (maxY < currentMaxY) maxY else currentMaxY
-        }
-
         ensureCapacity(size + 1)
         val index = size * 4
-        currentMinX = nextMinX
-        currentMinY = nextMinY
-        currentMaxX = if (nextMinX > nextMaxX) nextMinX else nextMaxX
-        currentMaxY = if (nextMinY > nextMaxY) nextMinY else nextMaxY
+        val nextMinX = if (size > 0) stack[index - 4] else 0f
+        val nextMinY = if (size > 0) stack[index - 3] else 0f
+        val nextMaxX = if (size > 0) stack[index - 2] else 0f
+        val nextMaxY = if (size > 0) stack[index - 1] else 0f
+        currentMinX = if (size == 0 || minX > nextMinX) minX else nextMinX
+        currentMinY = if (size == 0 || minY > nextMinY) minY else nextMinY
+        currentMaxX = if (size == 0 || maxX < nextMaxX) maxX else nextMaxX
+        currentMaxY = if (size == 0 || maxY < nextMaxY) maxY else nextMaxY
         stack[index] = currentMinX
         stack[index + 1] = currentMinY
         stack[index + 2] = currentMaxX
@@ -111,12 +109,22 @@ object ScissorControl : Clearable {
         val width = (ceil(currentMaxX) - floor(currentMinX)).toInt().coerceAtLeast(0)
         val height = (ceil(currentMaxY) - floor(currentMinY)).toInt().coerceAtLeast(0)
 
-        GL11.glEnable(GL11.GL_SCISSOR_TEST)
-        GL11.glScissor(x, y, width, height)
+        if (!glScissorEnabled || x != glScissorX || y != glScissorY || width != glScissorWidth || height != glScissorHeight) {
+            GL11.glEnable(GL11.GL_SCISSOR_TEST)
+            GL11.glScissor(x, y, width, height)
+            glScissorEnabled = true
+            glScissorX = x
+            glScissorY = y
+            glScissorWidth = width
+            glScissorHeight = height
+        }
     }
 
     fun disableGlScissor() {
-        GL11.glDisable(GL11.GL_SCISSOR_TEST)
+        if (glScissorEnabled) {
+            GL11.glDisable(GL11.GL_SCISSOR_TEST)
+            glScissorEnabled = false
+        }
     }
 
     private fun restoreCurrent(index: Int) {

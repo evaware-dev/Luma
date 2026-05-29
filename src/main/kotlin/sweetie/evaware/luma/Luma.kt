@@ -69,6 +69,12 @@ object Luma {
         }
     }
 
+    @JvmField
+    var mockRenderTargetWidth: Int? = null
+
+    @JvmField
+    var mockRenderTargetHeight: Int? = null
+
     private val viewportBuffer: IntBuffer = BufferUtils.createIntBuffer(4)
     private val frameSnapshot = GlStateSnapshot()
     private val transientStateSnapshots = ArrayList<GlStateSnapshot>(4).apply {
@@ -164,36 +170,84 @@ object Luma {
     }
 
     private fun captureFramebuffer(snapshot: FramebufferSnapshot): FramebufferSnapshot {
-        viewportBuffer.clear()
-        GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewportBuffer)
+        val colorTexture = try {
+            val mc: Any? = Minecraft.getInstance()
+            if (mc is Minecraft) mc.mainRenderTarget.colorTextureView else null
+        } catch (e: Throwable) {
+            null
+        }
+        if (colorTexture != null) {
+            snapshot.viewportX = 0
+            snapshot.viewportY = 0
+            snapshot.viewportWidth = colorTexture.getWidth(0)
+            snapshot.viewportHeight = colorTexture.getHeight(0)
+        } else {
+            viewportBuffer.clear()
+            GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewportBuffer)
+            snapshot.viewportX = viewportBuffer.get(0)
+            snapshot.viewportY = viewportBuffer.get(1)
+            snapshot.viewportWidth = viewportBuffer.get(2)
+            snapshot.viewportHeight = viewportBuffer.get(3)
+        }
         snapshot.drawFramebuffer = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING)
         snapshot.readFramebuffer = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING)
-        snapshot.viewportX = viewportBuffer.get(0)
-        snapshot.viewportY = viewportBuffer.get(1)
-        snapshot.viewportWidth = viewportBuffer.get(2)
-        snapshot.viewportHeight = viewportBuffer.get(3)
         return snapshot
     }
 
     private fun captureFramebuffer(snapshot: GlStateSnapshot): GlStateSnapshot {
-        viewportBuffer.clear()
-        GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewportBuffer)
+        val colorTexture = try {
+            val mc: Any? = Minecraft.getInstance()
+            if (mc is Minecraft) mc.mainRenderTarget.colorTextureView else null
+        } catch (e: Throwable) {
+            null
+        }
+        if (colorTexture != null) {
+            snapshot.viewportX = 0
+            snapshot.viewportY = 0
+            snapshot.viewportWidth = colorTexture.getWidth(0)
+            snapshot.viewportHeight = colorTexture.getHeight(0)
+        } else {
+            viewportBuffer.clear()
+            GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewportBuffer)
+            snapshot.viewportX = viewportBuffer.get(0)
+            snapshot.viewportY = viewportBuffer.get(1)
+            snapshot.viewportWidth = viewportBuffer.get(2)
+            snapshot.viewportHeight = viewportBuffer.get(3)
+        }
         snapshot.drawFramebuffer = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING)
         snapshot.readFramebuffer = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING)
-        snapshot.viewportX = viewportBuffer.get(0)
-        snapshot.viewportY = viewportBuffer.get(1)
-        snapshot.viewportWidth = viewportBuffer.get(2)
-        snapshot.viewportHeight = viewportBuffer.get(3)
         return snapshot
     }
 
-    private fun captureManagedMainFramebufferState(snapshot: GlStateSnapshot): GlStateSnapshot {
-        viewportBuffer.clear()
-        GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewportBuffer)
-        snapshot.viewportX = viewportBuffer.get(0)
-        snapshot.viewportY = viewportBuffer.get(1)
-        snapshot.viewportWidth = viewportBuffer.get(2)
-        snapshot.viewportHeight = viewportBuffer.get(3)
+    fun captureManagedMainFramebufferState(snapshot: GlStateSnapshot): GlStateSnapshot {
+        val mockW = mockRenderTargetWidth
+        val mockH = mockRenderTargetHeight
+        if (mockW != null && mockH != null) {
+            snapshot.viewportX = 0
+            snapshot.viewportY = 0
+            snapshot.viewportWidth = mockW
+            snapshot.viewportHeight = mockH
+        } else {
+            val colorTexture = try {
+                val mc: Any? = Minecraft.getInstance()
+                if (mc is Minecraft) mc.mainRenderTarget.colorTextureView else null
+            } catch (e: Throwable) {
+                null
+            }
+            if (colorTexture != null) {
+                snapshot.viewportX = 0
+                snapshot.viewportY = 0
+                snapshot.viewportWidth = colorTexture.getWidth(0)
+                snapshot.viewportHeight = colorTexture.getHeight(0)
+            } else {
+                viewportBuffer.clear()
+                GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewportBuffer)
+                snapshot.viewportX = viewportBuffer.get(0)
+                snapshot.viewportY = viewportBuffer.get(1)
+                snapshot.viewportWidth = viewportBuffer.get(2)
+                snapshot.viewportHeight = viewportBuffer.get(3)
+            }
+        }
 
         ManagedStateTracker.capture(snapshot)
         snapshot.arrayBuffer = GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING)
