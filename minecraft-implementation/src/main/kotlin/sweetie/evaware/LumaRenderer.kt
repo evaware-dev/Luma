@@ -1,0 +1,32 @@
+package sweetie.evaware
+
+import net.fabricmc.api.ModInitializer
+import org.slf4j.LoggerFactory
+import sweetie.evaware.luma.shader.GlslLibrary
+import sweetie.evaware.renderutil.RenderUtil
+import java.awt.image.BufferedImage
+
+object LumaRenderer : ModInitializer {
+    val logger = LoggerFactory.getLogger("luma-renderer")
+
+    override fun onInitialize() {
+        sweetie.evaware.luma.Luma.platform = sweetie.evaware.luma.minecraft.MinecraftRenderPlatform
+
+        GlslLibrary
+            .register("scissor", "assets/luma-renderer/shaders/include/scissor.glsl")
+            .attach()
+
+        RenderUtil.registerTexture("demo_icon", "assets/luma-renderer/icon.png")
+        RenderUtil.registerTexture("demo_checker") {
+            val image = BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB)
+            for (x in 0 until 16) {
+                for (y in 0 until 16) {
+                    val checker = ((x / 4) + (y / 4)) and 1
+                    image.setRGB(x, y, if (checker == 0) -0x1 else -0x454546)
+                }
+            }
+            image
+        }
+        logger.info("Luma initialized")
+    }
+}

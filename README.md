@@ -2,7 +2,11 @@
 
 Lightweight OpenGL wrapper written in Kotlin.
 
-It keeps the core rendering pieces explicit: shaders, vertex layouts, uniforms, textures, framebuffers, matrices, and GL state. The project also includes a small GLSL library system.
+## Project Structure
+
+- **[core](core)**: Core OpenGL/GLFW library.
+- **[minecraft-implementation](minecraft-implementation)**: Integration mod example for Minecraft.
+- **[standalone-app](standalone-app)**: Standalone test and demo application.
 
 ## Requirements
 
@@ -11,10 +15,18 @@ It keeps the core rendering pieces explicit: shaders, vertex layouts, uniforms, 
 
 ## Usage
 
-Usage examples are in:
+Add the JitPack repository and the core dependency to your project:
 
-- [Render utility for Minecraft](src/main/kotlin/sweetie/evaware/renderutil)
-- [Standalone app](src/test/kotlin)
+```groovy
+repositories {
+    mavenCentral()
+    maven { url 'https://jitpack.io' }
+}
+
+dependencies {
+    implementation 'com.github.evaware-dev.Luma:core:VERSION'
+}
+```
 
 ## License
 
