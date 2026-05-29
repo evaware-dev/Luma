@@ -25,6 +25,12 @@ dependencies {
     testRuntimeOnly "org.lwjgl:lwjgl::natives-windows"
     testRuntimeOnly "org.lwjgl:lwjgl-glfw::natives-windows"
     testRuntimeOnly "org.lwjgl:lwjgl-opengl::natives-windows"
+    testRuntimeOnly "org.lwjgl:lwjgl::natives-linux"
+    testRuntimeOnly "org.lwjgl:lwjgl-glfw::natives-linux"
+    testRuntimeOnly "org.lwjgl:lwjgl-opengl::natives-linux"
+    testRuntimeOnly "org.lwjgl:lwjgl::natives-macos"
+    testRuntimeOnly "org.lwjgl:lwjgl-glfw::natives-macos"
+    testRuntimeOnly "org.lwjgl:lwjgl-opengl::natives-macos"
 }
 
 tasks.withType(JavaCompile).configureEach {

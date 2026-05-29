@@ -49,7 +49,7 @@ tasks.register("release") {
         println "Pushing to repository..."
         def branch = git("branch", "--show-current")
         git("push", "origin", branch)
-        git("push", "origin", "v${newVersion}")
+        git("push", "-f", "origin", "v${newVersion}")
 
         println "\nRelease completed successfully!"
         println "Upload package will trigger automatically in GitHub Actions."
