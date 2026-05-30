@@ -36,13 +36,17 @@ internal class VertexWriter(private val stream: VertexStream) {
     }
 
     private fun requireVertexSpace(strideFloats: Int, count: Int) {
-        require(strideFloats > 0) { "Shader requires at least one vertex layout" }
         if (writtenFloats == 0) {
+            require(strideFloats > 0) { "Shader requires at least one vertex layout" }
             stream.requireVertexBoundary()
         }
-        check(writtenFloats + count <= strideFloats) {
-            "Vertex stride overflow: ${writtenFloats + count} floats written, stride is $strideFloats"
+        if (writtenFloats + count > strideFloats) {
+            throwStrideOverflow(writtenFloats, count, strideFloats)
         }
+    }
+
+    private fun throwStrideOverflow(written: Int, count: Int, stride: Int): Nothing {
+        error("Vertex stride overflow: ${written + count} floats written, stride is $stride")
     }
 
     private fun advance(strideFloats: Int, count: Int) {

@@ -1,6 +1,5 @@
 package sweetie.evaware.luma
 
-import org.lwjgl.BufferUtils
 import org.lwjgl.glfw.GLFW
 import org.lwjgl.opengl.*
 import sweetie.evaware.luma.matrix.MatrixControl
@@ -8,17 +7,25 @@ import sweetie.evaware.luma.shader.Shader
 import sweetie.evaware.luma.texture.TextureHandle
 import sweetie.evaware.luma.uniform.Mat4Uniform
 import sweetie.evaware.luma.uniform.ShaderUniforms
-import java.nio.IntBuffer
 
 object Luma {
-    class GlStateSnapshot {
-        var drawFramebuffer = 0
-        var readFramebuffer = 0
+    interface IFramebufferState {
+        var drawFramebuffer: Int
+        var readFramebuffer: Int
+        var viewportX: Int
+        var viewportY: Int
+        var viewportWidth: Int
+        var viewportHeight: Int
+    }
+
+    class GlStateSnapshot : IFramebufferState {
+        override var drawFramebuffer = 0
+        override var readFramebuffer = 0
         var arrayBuffer = 0
-        var viewportX = 0
-        var viewportY = 0
-        var viewportWidth = 0
-        var viewportHeight = 0
+        override var viewportX = 0
+        override var viewportY = 0
+        override var viewportWidth = 0
+        override var viewportHeight = 0
         var blendEnabled = false
         var depthEnabled = false
         var cullEnabled = false
@@ -28,20 +35,20 @@ object Luma {
         var blendDstAlpha = 0
         var blendEquationRgb = 0
         var blendEquationAlpha = 0
-        var activeTexture = 0
-        var boundTexture2d = 0
         var program = 0
         var vertexArray = 0
-        val samplerBindings = IntArray(8)
+        var activeTexture = 0
+        val boundTextures = IntArray(2)
+        val samplerBindings = IntArray(2)
     }
 
-    class FramebufferSnapshot {
-        var drawFramebuffer = 0
-        var readFramebuffer = 0
-        var viewportX = 0
-        var viewportY = 0
-        var viewportWidth = 0
-        var viewportHeight = 0
+    class FramebufferSnapshot : IFramebufferState {
+        override var drawFramebuffer = 0
+        override var readFramebuffer = 0
+        override var viewportX = 0
+        override var viewportY = 0
+        override var viewportWidth = 0
+        override var viewportHeight = 0
     }
 
     @JvmField
@@ -53,7 +60,7 @@ object Luma {
     @JvmField
     var mockRenderTargetHeight: Int? = null
 
-    private val viewportBuffer: IntBuffer = BufferUtils.createIntBuffer(4)
+    private val cachedViewportArray = IntArray(4)
     private val frameSnapshot = GlStateSnapshot()
     private val transientStateSnapshots = ArrayList<GlStateSnapshot>(4).apply {
         repeat(4) { add(GlStateSnapshot()) }
@@ -96,85 +103,65 @@ object Luma {
 
     @PublishedApi internal fun captureState(snapshot: GlStateSnapshot): GlStateSnapshot {
         captureFramebuffer(snapshot)
-        snapshot.arrayBuffer = GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING)
-        snapshot.blendEnabled = GL11.glIsEnabled(GL11.GL_BLEND)
-        snapshot.depthEnabled = GL11.glIsEnabled(GL11.GL_DEPTH_TEST)
-        snapshot.cullEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE)
-        snapshot.blendSrcRgb = GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB)
-        snapshot.blendDstRgb = GL11.glGetInteger(GL14.GL_BLEND_DST_RGB)
-        snapshot.blendSrcAlpha = GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA)
-        snapshot.blendDstAlpha = GL11.glGetInteger(GL14.GL_BLEND_DST_ALPHA)
-        snapshot.blendEquationRgb = GL11.glGetInteger(GL20.GL_BLEND_EQUATION_RGB)
-        snapshot.blendEquationAlpha = GL11.glGetInteger(GL20.GL_BLEND_EQUATION_ALPHA)
-        snapshot.activeTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)
-        snapshot.boundTexture2d = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
-        snapshot.program = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM)
-        snapshot.vertexArray = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING)
-        for (i in snapshot.samplerBindings.indices) {
-            snapshot.samplerBindings[i] = GL30.glGetIntegeri(GL33.GL_SAMPLER_BINDING, i)
+        platform.captureState(snapshot)
+
+        snapshot.arrayBuffer = platform.getActiveArrayBuffer()
+        snapshot.blendEquationRgb = platform.getBlendEquationRgb()
+        snapshot.blendEquationAlpha = platform.getBlendEquationAlpha()
+        snapshot.program = platform.getActiveProgram()
+        snapshot.vertexArray = platform.getActiveVertexArray()
+        snapshot.activeTexture = platform.getActiveTextureUnit()
+
+        for (i in 0..1) {
+            snapshot.boundTextures[i] = platform.getBoundTextureForUnit(i)
+            snapshot.samplerBindings[i] = platform.getSamplerForUnit(i)
         }
+
         return snapshot
     }
 
     @PublishedApi internal fun restoreState(snapshot: GlStateSnapshot) {
         restoreFramebuffer(snapshot)
-        bindArrayBuffer(snapshot.arrayBuffer)
+
+        if (boundArrayBufferId != snapshot.arrayBuffer) {
+            platform.bindArrayBuffer(snapshot.arrayBuffer)
+            boundArrayBufferId = snapshot.arrayBuffer
+        }
 
         platform.restoreState(snapshot)
-
         GL20.glBlendEquationSeparate(snapshot.blendEquationRgb, snapshot.blendEquationAlpha)
 
-        platform.activeTexture(snapshot.activeTexture)
-        platform.bindTexture2d(snapshot.boundTexture2d)
-        platform.useProgram(snapshot.program)
-        platform.bindVertexArray(snapshot.vertexArray)
+        if (boundProgramId != snapshot.program) {
+            platform.useProgram(snapshot.program)
+            boundProgramId = snapshot.program
+        }
 
-        // Restore sampler objects that bindTexture() stripped via GL33.glBindSampler(unit, 0).
-        for (i in snapshot.samplerBindings.indices) {
+        if (boundVertexArrayId != snapshot.vertexArray) {
+            platform.bindVertexArray(snapshot.vertexArray)
+            boundVertexArrayId = snapshot.vertexArray
+        }
+
+        for (i in 0..1) {
+            platform.activeTexture(GL13.GL_TEXTURE0 + i)
+            platform.bindTexture2d(snapshot.boundTextures[i])
             GL33.glBindSampler(i, snapshot.samplerBindings[i])
         }
 
+        platform.activeTexture(snapshot.activeTexture)
+
         boundTextureUnit = snapshot.activeTexture
-        boundTextureId = snapshot.boundTexture2d
-        boundProgramId = snapshot.program
-        boundVertexArrayId = snapshot.vertexArray
-        boundArrayBufferId = snapshot.arrayBuffer
+        boundTextureId = -1
     }
 
-    private fun captureFramebuffer(snapshot: FramebufferSnapshot): FramebufferSnapshot {
-        val viewport = IntArray(4)
+    private fun captureFramebuffer(snapshot: IFramebufferState): IFramebufferState {
+        val viewport = cachedViewportArray
         if (platform.getViewport(viewport)) {
-            snapshot.viewportX = viewport[0]
-            snapshot.viewportY = viewport[1]
-            snapshot.viewportWidth = viewport[2]
-            snapshot.viewportHeight = viewport[3]
+            snapshot.viewportX = viewport[0]; snapshot.viewportY = viewport[1]
+            snapshot.viewportWidth = viewport[2]; snapshot.viewportHeight = viewport[3]
         } else {
-            viewportBuffer.clear()
-            GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewportBuffer)
-            snapshot.viewportX = viewportBuffer.get(0)
-            snapshot.viewportY = viewportBuffer.get(1)
-            snapshot.viewportWidth = viewportBuffer.get(2)
-            snapshot.viewportHeight = viewportBuffer.get(3)
-        }
-        snapshot.drawFramebuffer = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING)
-        snapshot.readFramebuffer = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING)
-        return snapshot
-    }
-
-    private fun captureFramebuffer(snapshot: GlStateSnapshot): GlStateSnapshot {
-        val viewport = IntArray(4)
-        if (platform.getViewport(viewport)) {
-            snapshot.viewportX = viewport[0]
-            snapshot.viewportY = viewport[1]
-            snapshot.viewportWidth = viewport[2]
-            snapshot.viewportHeight = viewport[3]
-        } else {
-            viewportBuffer.clear()
-            GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewportBuffer)
-            snapshot.viewportX = viewportBuffer.get(0)
-            snapshot.viewportY = viewportBuffer.get(1)
-            snapshot.viewportWidth = viewportBuffer.get(2)
-            snapshot.viewportHeight = viewportBuffer.get(3)
+            GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport)
+            snapshot.viewportX = viewport[0]; snapshot.viewportY = viewport[1]
+            snapshot.viewportWidth = viewport[2]; snapshot.viewportHeight = viewport[3]
         }
         snapshot.drawFramebuffer = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING)
         snapshot.readFramebuffer = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING)
@@ -185,59 +172,44 @@ object Luma {
         val mockW = mockRenderTargetWidth
         val mockH = mockRenderTargetHeight
         if (mockW != null && mockH != null) {
-            snapshot.viewportX = 0
-            snapshot.viewportY = 0
-            snapshot.viewportWidth = mockW
-            snapshot.viewportHeight = mockH
+            snapshot.viewportX = 0; snapshot.viewportY = 0
+            snapshot.viewportWidth = mockW; snapshot.viewportHeight = mockH
         } else {
-            val viewport = IntArray(4)
+            val viewport = cachedViewportArray
             if (platform.getViewport(viewport)) {
-                snapshot.viewportX = viewport[0]
-                snapshot.viewportY = viewport[1]
-                snapshot.viewportWidth = viewport[2]
-                snapshot.viewportHeight = viewport[3]
+                snapshot.viewportX = viewport[0]; snapshot.viewportY = viewport[1]
+                snapshot.viewportWidth = viewport[2]; snapshot.viewportHeight = viewport[3]
             } else {
-                viewportBuffer.clear()
-                GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewportBuffer)
-                snapshot.viewportX = viewportBuffer.get(0)
-                snapshot.viewportY = viewportBuffer.get(1)
-                snapshot.viewportWidth = viewportBuffer.get(2)
-                snapshot.viewportHeight = viewportBuffer.get(3)
+                GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport)
+                snapshot.viewportX = viewport[0]; snapshot.viewportY = viewport[1]
+                snapshot.viewportWidth = viewport[2]; snapshot.viewportHeight = viewport[3]
             }
         }
 
         platform.captureState(snapshot)
-        snapshot.arrayBuffer = GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING)
-        snapshot.blendEquationRgb = GL11.glGetInteger(GL20.GL_BLEND_EQUATION_RGB)
-        snapshot.blendEquationAlpha = GL11.glGetInteger(GL20.GL_BLEND_EQUATION_ALPHA)
-        snapshot.program = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM)
-        snapshot.vertexArray = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING)
-        snapshot.activeTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)
-        snapshot.boundTexture2d = platform.getBoundTexture2d()
-        for (i in snapshot.samplerBindings.indices) {
-            snapshot.samplerBindings[i] = GL30.glGetIntegeri(GL33.GL_SAMPLER_BINDING, i)
+        snapshot.arrayBuffer = platform.getActiveArrayBuffer()
+        snapshot.blendEquationRgb = platform.getBlendEquationRgb()
+        snapshot.blendEquationAlpha = platform.getBlendEquationAlpha()
+        snapshot.program = platform.getActiveProgram()
+        snapshot.vertexArray = platform.getActiveVertexArray()
+        snapshot.activeTexture = platform.getActiveTextureUnit()
+
+        for (i in 0..1) {
+            snapshot.boundTextures[i] = platform.getBoundTextureForUnit(i)
+            snapshot.samplerBindings[i] = platform.getSamplerForUnit(i)
         }
+
         return snapshot
     }
 
-    private fun restoreFramebuffer(snapshot: FramebufferSnapshot) {
-        platform.bindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, snapshot.drawFramebuffer)
-        platform.bindFramebuffer(GL30.GL_READ_FRAMEBUFFER, snapshot.readFramebuffer)
-        platform.viewport(snapshot.viewportX, snapshot.viewportY, snapshot.viewportWidth, snapshot.viewportHeight)
-    }
-
-    private fun restoreFramebuffer(snapshot: GlStateSnapshot) {
+    private fun restoreFramebuffer(snapshot: IFramebufferState) {
         platform.bindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, snapshot.drawFramebuffer)
         platform.bindFramebuffer(GL30.GL_READ_FRAMEBUFFER, snapshot.readFramebuffer)
         platform.viewport(snapshot.viewportX, snapshot.viewportY, snapshot.viewportWidth, snapshot.viewportHeight)
     }
 
     inline fun render(action: () -> Unit) {
-        if (frameActive) {
-            action()
-            return
-        }
-
+        if (frameActive) { action(); return }
         val snapshot = acquireTransientStateSnapshot()
         var captured = false
         try {
@@ -247,19 +219,13 @@ object Luma {
             invalidateBindingCache()
             action()
         } finally {
-            if (captured) {
-                restoreState(snapshot)
-            }
+            if (captured) restoreState(snapshot)
             releaseTransientStateSnapshot()
         }
     }
 
     inline fun renderToMainFramebuffer(action: () -> Unit) {
-        if (frameActive) {
-            action()
-            return
-        }
-
+        if (frameActive) { action(); return }
         val snapshot = acquireTransientStateSnapshot()
         var captured = false
         try {
@@ -270,18 +236,12 @@ object Luma {
             invalidateBindingCache()
             action()
         } finally {
-            if (captured) {
-                restoreState(snapshot)
-            }
+            if (captured) restoreState(snapshot)
             releaseTransientStateSnapshot()
         }
     }
 
     @PublishedApi internal fun applyGuiState() {
-        // Route through platform so that integrations with a GL state cache
-        // (e.g. Minecraft's GlStateManager) stay in sync. Without this, the cache
-        // would still say "enabled" after a direct glDisable(), causing restoreState()
-        // to skip the GL call and leave depth test / cull disabled for the next frame.
         platform.disableDepthTest()
         platform.disableCull()
         platform.enableBlend()
@@ -303,7 +263,7 @@ object Luma {
 
     internal fun bindArrayBuffer(bufferId: Int) {
         if (boundArrayBufferId == bufferId) return
-        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, bufferId)
+        platform.bindArrayBuffer(bufferId)
         boundArrayBufferId = bufferId
     }
 
@@ -322,38 +282,13 @@ object Luma {
         boundTextureId = textureId
     }
 
-    internal fun onTextureDeleted(textureId: Int) {
-        if (boundTextureId == textureId) {
-            boundTextureId = -1
-        }
-    }
+    internal fun onTextureDeleted(textureId: Int) { if (boundTextureId == textureId) boundTextureId = -1 }
+    internal fun onProgramDeleted(programId: Int) { if (boundProgramId == programId) boundProgramId = -1 }
+    internal fun onVertexArrayDeleted(vertexArrayId: Int) { if (boundVertexArrayId == vertexArrayId) boundVertexArrayId = -1 }
+    internal fun onArrayBufferDeleted(bufferId: Int) { if (boundArrayBufferId == bufferId) boundArrayBufferId = -1 }
 
-    internal fun onProgramDeleted(programId: Int) {
-        if (boundProgramId == programId) {
-            boundProgramId = -1
-        }
-    }
-
-    internal fun onVertexArrayDeleted(vertexArrayId: Int) {
-        if (boundVertexArrayId == vertexArrayId) {
-            boundVertexArrayId = -1
-        }
-    }
-
-    internal fun onArrayBufferDeleted(bufferId: Int) {
-        if (boundArrayBufferId == bufferId) {
-            boundArrayBufferId = -1
-        }
-    }
-
-    internal fun invalidateBindings() {
-        invalidateBindingCache()
-    }
-
-    fun applyGameMatrix(uniforms: ShaderUniforms, uniform: Mat4Uniform) {
-        uniforms.projectionMat4(uniform, MatrixControl.projection(), MatrixControl.projectionVersion())
-    }
-
+    internal fun invalidateBindings() { invalidateBindingCache() }
+    fun applyGameMatrix(uniforms: ShaderUniforms, uniform: Mat4Uniform) { uniforms.projectionMat4(uniform, MatrixControl.projection(), MatrixControl.projectionVersion()) }
     fun drawShader(shader: Shader): Int = shader.draw()
 
     @PublishedApi internal fun invalidateBindingCache() {
@@ -370,15 +305,11 @@ object Luma {
     }
 
     @PublishedApi internal fun acquireTransientStateSnapshot(): GlStateSnapshot {
-        if (transientStateDepth == transientStateSnapshots.size) {
-            transientStateSnapshots.add(GlStateSnapshot())
-        }
+        if (transientStateDepth == transientStateSnapshots.size) transientStateSnapshots.add(GlStateSnapshot())
         return transientStateSnapshots[transientStateDepth++]
     }
 
     @PublishedApi internal fun releaseTransientStateSnapshot() {
-        if (transientStateDepth > 0) {
-            transientStateDepth--
-        }
+        if (transientStateDepth > 0) transientStateDepth--
     }
 }

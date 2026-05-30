@@ -101,15 +101,30 @@ object RenderTestApp {
         snapshot.drawFramebuffer = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING)
         snapshot.readFramebuffer = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING)
         snapshot.arrayBuffer = GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING)
-        snapshot.blendEquationRgb = GL11.glGetInteger(GL20.GL_BLEND_EQUATION_RGB)
-        snapshot.blendEquationAlpha = GL11.glGetInteger(GL20.GL_BLEND_EQUATION_ALPHA)
-        snapshot.program = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM)
-        snapshot.vertexArray = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING)
+
         snapshot.blendEnabled = GL11.glIsEnabled(GL11.GL_BLEND)
         snapshot.depthEnabled = GL11.glIsEnabled(GL11.GL_DEPTH_TEST)
         snapshot.cullEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE)
-        snapshot.activeTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)
-        snapshot.boundTexture2d = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
+
+        snapshot.blendSrcRgb = GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB)
+        snapshot.blendDstRgb = GL11.glGetInteger(GL14.GL_BLEND_DST_RGB)
+        snapshot.blendSrcAlpha = GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA)
+        snapshot.blendDstAlpha = GL11.glGetInteger(GL14.GL_BLEND_DST_ALPHA)
+        snapshot.blendEquationRgb = GL11.glGetInteger(GL20.GL_BLEND_EQUATION_RGB)
+        snapshot.blendEquationAlpha = GL11.glGetInteger(GL20.GL_BLEND_EQUATION_ALPHA)
+
+        snapshot.program = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM)
+        snapshot.vertexArray = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING)
+
+        val currentActive = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)
+        snapshot.activeTexture = currentActive
+        for (i in 0..1) {
+            GL13.glActiveTexture(GL13.GL_TEXTURE0 + i)
+            snapshot.boundTextures[i] = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
+            snapshot.samplerBindings[i] = GL30.glGetIntegeri(GL33.GL_SAMPLER_BINDING, i)
+        }
+        GL13.glActiveTexture(currentActive)
+
         return snapshot
     }
 

@@ -33,13 +33,7 @@ class ShaderVertices : ShaderInputApi<ShaderVertices>(), AutoCloseable {
 
     fun hasVertices() = stream.hasVertices()
 
-    @Deprecated(
-        message = "Avoid boxing and vararg allocation in hot paths; prefer vec2/vec4 or attribute2/attribute4 fast paths"
-    )
-    fun vert(layoutPos: Int, type: ShaderVertType, count: Int, vararg args: Number) {
-        writer.requireIdle()
-        stream.put(layout, layoutPos, type, count, args)
-    }
+
 
     override fun onWriteFloat(count: Int, first: Float, second: Float, third: Float, fourth: Float) {
         when (count) {

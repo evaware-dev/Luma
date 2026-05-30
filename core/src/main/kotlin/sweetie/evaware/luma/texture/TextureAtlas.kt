@@ -116,12 +116,10 @@ object TextureAtlas {
     private fun ensureArgb(image: BufferedImage): BufferedImage {
         if (image.type == BufferedImage.TYPE_INT_ARGB) return image
 
-        val width = image.width
-        val height = image.height
-        val converted = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
-        val pixels = IntArray(width * height)
-        image.getRGB(0, 0, width, height, pixels, 0, width)
-        converted.setRGB(0, 0, width, height, pixels, 0, width)
+        val converted = BufferedImage(image.width, image.height, BufferedImage.TYPE_INT_ARGB)
+        val g2d = converted.createGraphics()
+        g2d.drawImage(image, 0, 0, null)
+        g2d.dispose()
         return converted
     }
 

@@ -21,32 +21,26 @@ class VertexStream : CloseableResourceBase(), Clearable {
 
     fun hasVertices() = vertexCount > 0
 
-    fun put(layouts: VertexLayout, layoutPos: Int, type: ShaderVertType, count: Int, args: Array<out Number>) {
-        requireNextLayout(layouts, layoutPos, type, count)
-        require(args.size == count) { "Expected $count args, got ${args.size}" }
-
-        ensureCapacity(floatCount + count)
-        for (arg in args) {
-            uploadBuffer.put(floatCount++, arg.toFloat())
-        }
-
-        advance(layouts)
-    }
-
     fun putAttribute2(layouts: VertexLayout, layoutPos: Int, first: Float, second: Float) {
         requireNextLayout(layouts, layoutPos, ShaderVertType.FLOAT, 2)
         ensureCapacity(floatCount + 2)
-        uploadBuffer.put(floatCount++, first)
-        uploadBuffer.put(floatCount++, second)
+        val buffer = uploadBuffer
+        var offset = floatCount
+        buffer.put(offset++, first)
+        buffer.put(offset++, second)
+        floatCount = offset
         advance(layouts)
     }
 
     fun putAttribute3(layouts: VertexLayout, layoutPos: Int, first: Float, second: Float, third: Float) {
         requireNextLayout(layouts, layoutPos, ShaderVertType.FLOAT, 3)
         ensureCapacity(floatCount + 3)
-        uploadBuffer.put(floatCount++, first)
-        uploadBuffer.put(floatCount++, second)
-        uploadBuffer.put(floatCount++, third)
+        val buffer = uploadBuffer
+        var offset = floatCount
+        buffer.put(offset++, first)
+        buffer.put(offset++, second)
+        buffer.put(offset++, third)
+        floatCount = offset
         advance(layouts)
     }
 
@@ -96,10 +90,13 @@ class VertexStream : CloseableResourceBase(), Clearable {
     fun putAttribute4(layouts: VertexLayout, layoutPos: Int, first: Float, second: Float, third: Float, fourth: Float) {
         requireNextLayout(layouts, layoutPos, ShaderVertType.FLOAT, 4)
         ensureCapacity(floatCount + 4)
-        uploadBuffer.put(floatCount++, first)
-        uploadBuffer.put(floatCount++, second)
-        uploadBuffer.put(floatCount++, third)
-        uploadBuffer.put(floatCount++, fourth)
+        val buffer = uploadBuffer
+        var offset = floatCount
+        buffer.put(offset++, first)
+        buffer.put(offset++, second)
+        buffer.put(offset++, third)
+        buffer.put(offset++, fourth)
+        floatCount = offset
         advance(layouts)
     }
 
@@ -146,10 +143,7 @@ class VertexStream : CloseableResourceBase(), Clearable {
     }
 
     private fun ensureGpuCapacity(requiredFloats: Int) {
-        if (requiredFloats <= gpuFloatCapacity) {
-            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, gpuFloatCapacity.toLong() * Float.SIZE_BYTES.toLong(), GL15.GL_STREAM_DRAW)
-            return
-        }
+        if (requiredFloats <= gpuFloatCapacity) return
         gpuFloatCapacity = nextCapacity(requiredFloats, gpuFloatCapacity.coerceAtLeast(1))
         GL15.glBufferData(GL15.GL_ARRAY_BUFFER, gpuFloatCapacity.toLong() * Float.SIZE_BYTES.toLong(), GL15.GL_STREAM_DRAW)
     }
