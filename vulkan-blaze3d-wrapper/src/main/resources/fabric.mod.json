@@ -1,0 +1,17 @@
+{
+	"schemaVersion": 1,
+	"id": "luma-vulkan-blaze3d-wrapper",
+	"version": "${version}",
+	"name": "Luma Vulkan Blaze3D Wrapper",
+	"description": "Vulkan Blaze3D Wrapper for Luma",
+	"authors": [
+		"Remila"
+	],
+	"license": "MIT",
+	"environment": "*",
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~26.2",
+		"java": ">=25"
+	}
+}

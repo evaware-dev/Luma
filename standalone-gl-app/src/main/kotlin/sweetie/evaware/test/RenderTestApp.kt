@@ -15,6 +15,7 @@ import sweetie.evaware.test.ColorUtil
 import sweetie.evaware.luma.matrix.MatrixControl
 import sweetie.evaware.luma.texture.Texture
 import sweetie.evaware.luma.backend.gl.GlStateSnapshot
+import sweetie.evaware.luma.shader.EasyShader
 import sweetie.evaware.luma.shader.translator.DefaultShaderTranslator
 import java.awt.image.BufferedImage
 
@@ -41,10 +42,7 @@ object RenderTestApp {
     }
 
     private fun initShader() {
-        shader = Shader(
-            "assets/luma-renderer/shaders/core/rect_triangle.frag",
-            "assets/luma-renderer/shaders/core/rect_triangle.vert"
-        )
+        shader = EasyShader("rect_triangle")
         with(shader) {
             vertices.float(2, 0)
             vertices.float(4, 1)

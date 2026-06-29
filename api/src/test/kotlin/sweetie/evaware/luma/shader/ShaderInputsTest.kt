@@ -29,10 +29,7 @@ class ShaderInputsTest {
 
     @Test
     fun `shader exposes compatible input views`() {
-        val shader = Shader(
-            "assets/luma-renderer/shaders/core/rect_triangle.frag",
-            "assets/luma-renderer/shaders/core/rect_triangle.vert"
-        )
+        val shader = EasyShader("rect_triangle")
 
         assertSame(shader.inputs.vertices, shader.vertices)
         assertSame(shader.inputs.uniforms, shader.uniforms)

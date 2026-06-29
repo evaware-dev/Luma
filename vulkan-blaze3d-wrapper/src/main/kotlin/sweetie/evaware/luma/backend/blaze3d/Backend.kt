@@ -35,7 +35,7 @@ interface GroupConsumer {
         cullEnabled: Boolean
     )
     fun onUboChanged(offset: Long, size: Long)
-    fun onTextureChanged(program: Program, texture: TextureHandle?)
+    fun onTextureChanged(program: Program, textures: Array<TextureHandle?>)
     fun onDraw(topology: PrimitiveTopology, vertexStart: Long, vertexBytes: Long, vertexCount: Int)
 }
 
@@ -44,6 +44,7 @@ class Backend : RenderBackend {
     
     private val vertexBuffer = VulkanBuffer({ LumaNames.VERTEX_BUFFER }, GpuBuffer.USAGE_VERTEX or GpuBuffer.USAGE_COPY_DST, 1024)
     private val uboBuffer = VulkanBuffer({ LumaNames.UBO_BUFFER }, GpuBuffer.USAGE_UNIFORM or GpuBuffer.USAGE_COPY_DST, 256)
+    private val boundTextures = arrayOfNulls<TextureHandle>(16)
 
     private object MAIN_MARKER
 
@@ -54,7 +55,7 @@ class Backend : RenderBackend {
         var vertexCount: Int = 0
         var uboOffset: Long = 0
         var uboBytes: Long = 0
-        var texture: TextureHandle? = null
+        val textures = arrayOfNulls<TextureHandle>(16)
         var primitiveType: Int = 0
         var depthEnabled: Boolean = false
         var depthWrite: Boolean = false
@@ -103,7 +104,9 @@ class Backend : RenderBackend {
         for (i in 0 until drawCallPool.size) {
             val draw = drawCallPool[i]
             draw.program = null
-            draw.texture = null
+            for (j in draw.textures.indices) {
+                draw.textures[j] = null
+            }
             draw.target = null
             draw.clearColor = null
         }
@@ -194,11 +197,13 @@ class Backend : RenderBackend {
                 pass.setUniform(LumaNames.UNIFORMS_BLOCK, uboBuffer.slice(offset, size))
             }
 
-            override fun onTextureChanged(program: Program, texture: TextureHandle?) {
+            override fun onTextureChanged(program: Program, textures: Array<TextureHandle?>) {
                 val pass = currentPass ?: return
-                if (texture != null) {
-                    val tex = texture as VulkanTexture
-                    for (sampler in program.samplers) {
+                for (sampler in program.samplers) {
+                    val unit = sampler.removePrefix("Sampler").toIntOrNull() ?: 0
+                    val texture = if (unit in textures.indices) textures[unit] else null
+                    if (texture != null) {
+                        val tex = texture as VulkanTexture
                         pass.bindTexture(sampler, tex.view, tex.sampler)
                     }
                 }
@@ -250,7 +255,11 @@ class Backend : RenderBackend {
         (texture as VulkanTexture).update(x, y, image)
     }
 
-    override fun bindTexture(texture: TextureHandle, unit: Int) {}
+    override fun bindTexture(texture: TextureHandle, unit: Int) {
+        if (unit in boundTextures.indices) {
+            boundTextures[unit] = texture
+        }
+    }
 
     override fun createRenderTarget(
         width: Int,
@@ -328,7 +337,7 @@ class Backend : RenderBackend {
                 for (i in vulkanUniforms.indices) {
                     vulkanUniforms[i].clearDirty(uniforms)
                 }
-                lastUboSlice[prog] = (uboOffset.toLong() shl 32) or (uboBytes.toLong() and 0xFFFFFFFFL)
+                lastUboSlice[prog] = (uboOffset shl 32) or (uboBytes.toLong() and 0xFFFFFFFFL)
             }
         }
 
@@ -340,7 +349,7 @@ class Backend : RenderBackend {
         draw.vertexCount = vertexCount
         draw.uboOffset = uboOffset
         draw.uboBytes = uboBytes.toLong()
-        draw.texture = texture
+        System.arraycopy(boundTextures, 0, draw.textures, 0, boundTextures.size)
         draw.primitiveType = primitiveType
         draw.depthEnabled = GlStateQuery.depthEnabled
         draw.depthWrite = GlStateQuery.depthWrite
@@ -377,7 +386,7 @@ class Backend : RenderBackend {
         draw.vertexCount = vertexCount
         draw.uboOffset = uboOffset
         draw.uboBytes = uboBytes
-        draw.texture = texture
+        draw.textures[0] = texture
         draw.primitiveType = primitiveType
         draw.depthEnabled = depthEnabled
         draw.depthWrite = depthWrite
@@ -396,7 +405,7 @@ class Backend : RenderBackend {
         var currentDepthWrite = false
         var currentDepthFunc = CompareOp.ALWAYS_PASS
         var currentCullEnabled = false
-        var currentTexture: TextureHandle? = null
+        val currentTextures = arrayOfNulls<TextureHandle>(16)
         var currentUboOffset = -1L
         var currentUboBytes = -1L
         var currentVertexOffset = -1L
@@ -414,7 +423,7 @@ class Backend : RenderBackend {
 
             val targetKey: Any = draw.target ?: MAIN_MARKER
 
-            if (targetKey != currentTarget || draw.clearColor != currentClearColor) {
+            if (targetKey != currentTarget || !draw.clearColor.contentEquals(currentClearColor)) {
                 if (currentVertexCount > 0 && currentTopology != null) {
                     consumer.onDraw(currentTopology, currentVertexOffset, currentVertexBytes, currentVertexCount)
                 }
@@ -425,9 +434,19 @@ class Backend : RenderBackend {
                 currentClearColor = draw.clearColor
                 currentProgram = null
                 currentTopology = null
-                currentTexture = null
+                for (j in currentTextures.indices) {
+                    currentTextures[j] = null
+                }
                 currentUboOffset = -1L
                 currentUboBytes = -1L
+            }
+
+            var texturesEqual = true
+            for (j in draw.textures.indices) {
+                if (draw.textures[j] != currentTextures[j]) {
+                    texturesEqual = false
+                    break
+                }
             }
 
             val canMerge = currentProgram == program &&
@@ -436,7 +455,7 @@ class Backend : RenderBackend {
                 currentDepthWrite == draw.depthWrite &&
                 currentDepthFunc == draw.depthFunc &&
                 currentCullEnabled == draw.cullEnabled &&
-                currentTexture == draw.texture &&
+                texturesEqual &&
                 currentUboOffset == draw.uboOffset &&
                 currentUboBytes == draw.uboBytes &&
                 draw.vertexOffset == currentVertexOffset + currentVertexBytes
@@ -473,8 +492,15 @@ class Backend : RenderBackend {
                     }
                 }
 
-                if (draw.texture != null && draw.texture != currentTexture) {
-                    consumer.onTextureChanged(program, draw.texture)
+                var texturesChanged = false
+                for (j in draw.textures.indices) {
+                    if (draw.textures[j] != currentTextures[j]) {
+                        texturesChanged = true
+                        break
+                    }
+                }
+                if (texturesChanged) {
+                    consumer.onTextureChanged(program, draw.textures)
                 }
 
                 currentProgram = program
@@ -483,7 +509,7 @@ class Backend : RenderBackend {
                 currentDepthWrite = draw.depthWrite
                 currentDepthFunc = draw.depthFunc
                 currentCullEnabled = draw.cullEnabled
-                currentTexture = draw.texture
+                System.arraycopy(draw.textures, 0, currentTextures, 0, draw.textures.size)
                 currentUboOffset = draw.uboOffset
                 currentUboBytes = draw.uboBytes
                 currentVertexOffset = draw.vertexOffset

@@ -5,17 +5,14 @@ import org.lwjgl.opengl.GL11
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.matrix.MatrixControl
 import sweetie.evaware.luma.scissor.ScissorControl
-import sweetie.evaware.luma.shader.Shader
+import sweetie.evaware.luma.shader.EasyShader
 import sweetie.evaware.luma.uniform.Mat4Uniform
 import sweetie.evaware.renderutil.RenderStats
 import sweetie.evaware.renderutil.api.BatchRenderer
 import sweetie.evaware.renderutil.helper.ColorUtil
 
 internal class RectQuadsRenderer : BatchRenderer, AutoCloseable {
-    private val shader = Shader(
-        "assets/luma-renderer/shaders/core/rect_quad.frag",
-        "assets/luma-renderer/shaders/core/rect_quad.vert"
-    ).drawMode(GL11.GL_TRIANGLES)
+    private val shader = EasyShader("rect_quad").drawMode(GL11.GL_TRIANGLES)
 
     private val uMatrix: Mat4Uniform
     private var scissorVersion = Int.MIN_VALUE

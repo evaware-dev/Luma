@@ -20,8 +20,8 @@ For detailed shader preprocessor syntax, see [Shader preprocessor syntax](docs/s
 
 ```kotlin
 val shader = Shader(
-    "assets/luma-renderer/shaders/core/rect_quad.frag",
-    "assets/luma-renderer/shaders/core/rect_quad.vert"
+    "assets/luma/shaders/core/rect_quad.frag",
+    "assets/luma/shaders/core/rect_quad.vert"
 ).drawMode(GL11.GL_TRIANGLES)
 
 with(shader) {

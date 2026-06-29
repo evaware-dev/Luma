@@ -4,7 +4,7 @@ import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.resource.GlResources
 
-class Shader(
+open class Shader(
     private val fragmentPath: String,
     private val vertexPath: String
 ) : AutoCloseable {

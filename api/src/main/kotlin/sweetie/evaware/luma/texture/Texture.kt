@@ -9,7 +9,7 @@ class Texture(
     val image: BufferedImage,
     val mipmap: Boolean = true
 ) : AutoCloseable {
-    @PublishedApi internal var handle: TextureHandle? = null
+    var handle: TextureHandle? = null
     private var loaded = false
 
     val width: Int get() = handle?.width ?: image.width

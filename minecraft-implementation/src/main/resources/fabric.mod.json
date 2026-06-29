@@ -1,15 +1,14 @@
 {
 	"schemaVersion": 1,
-	"id": "luma-renderer",
+	"id": "luma",
 	"version": "${version}",
 	"name": "Luma Renderer",
 	"description": "OpenGL wrapper",
-	"accessWidener": "luma-renderer.accesswidener",
 	"authors": [
 		"Remila"
 	],
 	"license": "MIT",
-	"icon": "assets/luma-renderer/icon.png",
+	"icon": "assets/luma/icon.png",
 	"environment": "*",
 	"entrypoints": {
 		"main": [
@@ -20,7 +19,7 @@
 		]
 	},
 	"mixins": [
-		"luma-renderer.mixins.json"
+		"luma.mixins.json"
 	],
 	"depends": {
 		"fabricloader": ">=0.19.3",

@@ -8,16 +8,16 @@ import sweetie.evaware.renderutil.RenderUtil
 import java.awt.image.BufferedImage
 
 object LumaRenderer : ModInitializer {
-    val logger = LoggerFactory.getLogger("luma-renderer")
+    val logger = LoggerFactory.getLogger("luma")
 
     override fun onInitialize() {
         LumaMinecraft.install()
 
         GlslLibrary
-            .register("scissor", "assets/luma-renderer/shaders/include/scissor.glsl")
+            .register("scissor", "assets/luma/shaders/include/scissor.glsl")
             .attach()
 
-        RenderUtil.registerTexture("demo_icon", "assets/luma-renderer/icon.png")
+        RenderUtil.registerTexture("demo_icon", "assets/luma/icon.png")
         RenderUtil.registerTexture("demo_checker") {
             val image = BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB)
             for (x in 0 until 16) {

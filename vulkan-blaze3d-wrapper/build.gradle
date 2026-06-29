@@ -25,6 +25,14 @@ dependencies {
     testImplementation "junit:junit:4.13.2"
 }
 
+processResources {
+    inputs.property "version", project.version
+
+    filesMatching("fabric.mod.json") {
+        expand "version": inputs.properties.version
+    }
+}
+
 tasks.withType(JavaCompile).configureEach {
     it.options.release = 25
 }

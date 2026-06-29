@@ -3,7 +3,7 @@ package sweetie.evaware.renderutil.renderers
 import org.lwjgl.opengl.GL11
 import sweetie.evaware.luma.matrix.MatrixControl
 import sweetie.evaware.luma.scissor.ScissorControl
-import sweetie.evaware.luma.shader.Shader
+import sweetie.evaware.luma.shader.EasyShader
 import sweetie.evaware.luma.texture.TextureAtlas
 import sweetie.evaware.luma.uniform.Int1Uniform
 import sweetie.evaware.luma.uniform.Mat4Uniform
@@ -12,10 +12,7 @@ import sweetie.evaware.renderutil.api.BatchRenderer
 import sweetie.evaware.renderutil.helper.ColorUtil
 
 internal class UberBatch : BatchRenderer, AutoCloseable {
-    private val shader = Shader(
-        "assets/luma-renderer/shaders/core/uber.frag",
-        "assets/luma-renderer/shaders/core/uber.vert"
-    ).drawMode(GL11.GL_TRIANGLES)
+    private val shader = EasyShader("uber").drawMode(GL11.GL_TRIANGLES)
 
     private val uMatrix: Mat4Uniform
     private val uTexture: Int1Uniform

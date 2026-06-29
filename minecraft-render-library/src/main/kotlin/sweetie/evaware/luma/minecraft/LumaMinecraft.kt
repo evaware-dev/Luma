@@ -24,7 +24,7 @@ object LumaMinecraft {
 }
 
 class LazyBackend : RenderBackend {
-    private val lazyDelegate = lazy<RenderBackend> {
+    private val lazyDelegate = lazy {
         if (MinecraftRenderPlatform.activeBackend == GraphicsBackend.OPENGL) {
             GlBackend()
         } else {

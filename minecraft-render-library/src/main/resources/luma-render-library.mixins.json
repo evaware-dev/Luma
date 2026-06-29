@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "sweetie.evaware.luma.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "accessor.GpuDeviceAccessor",
+    "accessor.GlDeviceAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

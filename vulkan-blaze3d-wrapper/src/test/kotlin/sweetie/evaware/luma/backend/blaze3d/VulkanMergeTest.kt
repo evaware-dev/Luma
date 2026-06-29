@@ -94,8 +94,8 @@ class VulkanMergeTest {
             uboChanges.add(offset to size)
         }
 
-        override fun onTextureChanged(program: Program, texture: TextureHandle?) {
-            textureChanges.add(program to texture)
+        override fun onTextureChanged(program: Program, textures: Array<TextureHandle?>) {
+            textureChanges.add(program to textures[0])
         }
 
         override fun onDraw(topology: PrimitiveTopology, vertexStart: Long, vertexBytes: Long, vertexCount: Int) {

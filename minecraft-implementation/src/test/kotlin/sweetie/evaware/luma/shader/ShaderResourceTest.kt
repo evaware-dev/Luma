@@ -18,7 +18,7 @@ import java.io.File
 class ShaderResourceTest {
     @BeforeTest
     fun setUp() {
-        GlslLibrary.register("scissor", "assets/luma-renderer/shaders/include/scissor.glsl")
+        GlslLibrary.register("scissor", "assets/luma/shaders/include/scissor.glsl")
     }
 
     @Test
@@ -43,8 +43,8 @@ class ShaderResourceTest {
                 add(ShaderVertType.FLOAT, 4, 4)
                 add(ShaderVertType.FLOAT, 4, 5)
             }
-            val vert = resourceText("assets/luma-renderer/shaders/core/rect_quad.vert")
-            val frag = resourceText("assets/luma-renderer/shaders/core/rect_quad.frag")
+            val vert = resourceText("assets/luma/shaders/core/rect_quad.vert")
+            val frag = resourceText("assets/luma/shaders/core/rect_quad.frag")
             val result = translator.translate(vert, frag, layout)
             val info = Program(
                 Identifier.fromNamespaceAndPath("luma", "test"),
@@ -113,8 +113,8 @@ class ShaderResourceTest {
                 add(ShaderVertType.FLOAT, 4, 4)
                 add(ShaderVertType.FLOAT, 4, 5)
             }
-            val vert = resourceText("assets/luma-renderer/shaders/core/rect_quad.vert")
-            val frag = resourceText("assets/luma-renderer/shaders/core/rect_quad.frag")
+            val vert = resourceText("assets/luma/shaders/core/rect_quad.vert")
+            val frag = resourceText("assets/luma/shaders/core/rect_quad.frag")
             val result = translator.translate(vert, frag, layout)
             println("--- TRANSLATED VERTEX SHADER ---")
             println(result.vertexSource)
@@ -126,10 +126,10 @@ class ShaderResourceTest {
     }
     @Test
     fun `scissor is vertex payload for batching`() {
-        val uberVertex = resourceText("assets/luma-renderer/shaders/core/uber.vert")
-        val uberFragment = resourceText("assets/luma-renderer/shaders/core/uber.frag")
-        val roundedVertex = resourceText("assets/luma-renderer/shaders/core/rect_quad.vert")
-        val roundedFragment = resourceText("assets/luma-renderer/shaders/core/rect_quad.frag")
+        val uberVertex = resourceText("assets/luma/shaders/core/uber.vert")
+        val uberFragment = resourceText("assets/luma/shaders/core/uber.frag")
+        val roundedVertex = resourceText("assets/luma/shaders/core/rect_quad.vert")
+        val roundedFragment = resourceText("assets/luma/shaders/core/rect_quad.frag")
 
         assertContains(uberVertex, "@in 3 vec4 a3 Scissor")
         assertContains(roundedVertex, "@in 5 vec4 a5 a5")
