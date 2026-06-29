@@ -1,10 +1,11 @@
 {
   "required": true,
   "package": "sweetie.evaware.luma.mixin",
-  "compatibilityLevel": "JAVA_21",
+  "compatibilityLevel": "JAVA_25",
   "client": [
     "client.MixinGameRenderer",
-    "client.MixinMinecraft"
+    "client.MixinMinecraft",
+    "client.MixinVulkanDevice"
   ],
   "injectors": {
     "defaultRequire": 1

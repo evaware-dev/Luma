@@ -1,7 +1,6 @@
 package sweetie.evaware.renderutil.renderers
 
 import org.lwjgl.opengl.GL11
-import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.matrix.MatrixControl
 import sweetie.evaware.luma.scissor.ScissorControl
 import sweetie.evaware.luma.shader.Shader
@@ -58,19 +57,19 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
 
         shader.attach()
         shader.uniforms.int1(uTexture, 0)
-        Luma.applyGameMatrix(shader.uniforms, uMatrix)
-        Luma.bindTexture(TextureAtlas.texture())
+        shader.uniforms.mat4(uMatrix, MatrixControl.current())
+        TextureAtlas.texture().bind(0)
         RenderStats.markBatch()
-        Luma.drawShader(shader)
+        shader.draw()
         RenderStats.markDrawCall()
-        shader.detach()
     }
 
     override fun close() {
         shader.close()
     }
 
-    private fun quad(
+    @Suppress("NOTHING_TO_INLINE")
+    private inline fun quad(
         region: TextureAtlas.Region,
         x: Float,
         y: Float,
@@ -78,10 +77,6 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
         height: Float,
         color: Int
     ) {
-        val red = ColorUtil.redf(color)
-        val green = ColorUtil.greenf(color)
-        val blue = ColorUtil.bluef(color)
-        val alpha = ColorUtil.alphaf(color)
         putQuad(
             x,
             y,
@@ -91,44 +86,36 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
             region.vOffset,
             region.uOffset + region.uScale,
             region.vOffset + region.vScale,
-            red,
-            green,
-            blue,
-            alpha
+            color
         )
     }
 
     private fun putQuad(
-        minX: Float,
-        minY: Float,
-        maxX: Float,
-        maxY: Float,
-        minU: Float,
-        minV: Float,
-        maxU: Float,
-        maxV: Float,
-        red: Float,
-        green: Float,
-        blue: Float,
-        alpha: Float
+        minX: Float, minY: Float,
+        maxX: Float, maxY: Float,
+        minU: Float, minV: Float,
+        maxU: Float, maxV: Float,
+        color: Int
     ) {
-        putVertex(minX, minY, minU, minV, red, green, blue, alpha)
-        putVertex(minX, maxY, minU, maxV, red, green, blue, alpha)
-        putVertex(maxX, maxY, maxU, maxV, red, green, blue, alpha)
-        putVertex(minX, minY, minU, minV, red, green, blue, alpha)
-        putVertex(maxX, maxY, maxU, maxV, red, green, blue, alpha)
-        putVertex(maxX, minY, maxU, minV, red, green, blue, alpha)
+        val r = ColorUtil.redf(color)
+        val g = ColorUtil.greenf(color)
+        val b = ColorUtil.bluef(color)
+        val a = ColorUtil.alphaf(color)
+
+        putVertex(minX, minY, minU, minV, r, g, b, a)
+        putVertex(minX, maxY, minU, maxV, r, g, b, a)
+        putVertex(maxX, maxY, maxU, maxV, r, g, b, a)
+
+        putVertex(minX, minY, minU, minV, r, g, b, a)
+        putVertex(maxX, maxY, maxU, maxV, r, g, b, a)
+        putVertex(maxX, minY, maxU, minV, r, g, b, a)
     }
 
-    private fun putVertex(
-        x: Float,
-        y: Float,
-        u: Float,
-        v: Float,
-        red: Float,
-        green: Float,
-        blue: Float,
-        alpha: Float
+    @Suppress("NOTHING_TO_INLINE")
+    private inline fun putVertex(
+        x: Float, y: Float,
+        u: Float, v: Float,
+        red: Float, green: Float, blue: Float, alpha: Float
     ) {
         shader.vertices
             .vec2(MatrixControl.transformX(x, y), MatrixControl.transformY(x, y))
@@ -137,13 +124,19 @@ internal class UberBatch : BatchRenderer, AutoCloseable {
             .vec4(scissorMinX, scissorMinY, scissorMaxX, scissorMaxY)
     }
 
-    private fun cacheScissor() {
-        val version = ScissorControl.version()
+    @Suppress("NOTHING_TO_INLINE")
+    private inline fun cacheScissor() {
+        val version = ScissorControl.version
         if (version == scissorVersion) return
+
+        if (hasPending()) {
+            flush()
+        }
+
         scissorVersion = version
-        scissorMinX = ScissorControl.minX()
-        scissorMinY = ScissorControl.minY()
-        scissorMaxX = ScissorControl.maxX()
-        scissorMaxY = ScissorControl.maxY()
+        scissorMinX = ScissorControl.minX
+        scissorMinY = ScissorControl.minY
+        scissorMaxX = ScissorControl.maxX
+        scissorMaxY = ScissorControl.maxY
     }
 }

@@ -1,11 +1,13 @@
 package sweetie.evaware.renderutil
 
+import sweetie.evaware.LumaRenderer
+import sweetie.evaware.luma.GraphicsBackend
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.CloseableResourceBase
+import sweetie.evaware.luma.matrix.MatrixControl
 import sweetie.evaware.luma.resource.GlResources
 import sweetie.evaware.luma.scissor.ScissorControl
 import sweetie.evaware.luma.texture.TextureAtlas
-import sweetie.evaware.luma.texture.TextureUploader
 import sweetie.evaware.renderutil.api.IBatch
 import sweetie.evaware.renderutil.api.RenderApi
 import sweetie.evaware.renderutil.api.RenderPipeline
@@ -52,7 +54,6 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
         uberRenderer.close()
         roundedRectRenderer.close()
         TextureAtlas.close()
-        TextureUploader.close()
         GlResources.closeAll()
 
         activeBatch = null
@@ -160,8 +161,9 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
 
     fun flushAll() {
         flushActiveBatch()
-        for (pipeline in RenderPipeline.entries) {
-            flushPipeline(pipeline)
+        val pipelines = RenderPipeline.entries
+        for (i in pipelines.indices) {
+            flushPipeline(pipelines[i])
         }
     }
 
@@ -191,7 +193,7 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
     private fun flushPipeline(pipeline: RenderPipeline) {
         if (!uberRenderer.hasPending(pipeline) && !roundedRectRenderer.hasPending(pipeline)) return
 
-        if (frameActive || Luma.isFrameActive()) {
+        if (frameActive || Luma.frameActive) {
             uberRenderer.flush(pipeline)
             roundedRectRenderer.flush(pipeline)
             return

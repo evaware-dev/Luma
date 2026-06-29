@@ -7,7 +7,7 @@ in vec4 vColor;
 in vec4 vScissor;
 out vec4 fragColor;
 
-uniform sampler2D uTexture;
+@sampler sampler2D uTexture 0
 
 void main() {
     if (!scissorVisible(vScissor, gl_FragCoord.xy)) {

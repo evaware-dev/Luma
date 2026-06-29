@@ -84,11 +84,10 @@ internal class RectQuadsRenderer : BatchRenderer, AutoCloseable {
     override fun flush() {
         if (!hasPending()) return
         shader.attach()
-        Luma.applyGameMatrix(shader.uniforms, uMatrix)
+        shader.uniforms.mat4(uMatrix, MatrixControl.current())
         RenderStats.markBatch()
-        Luma.drawShader(shader)
+        shader.draw()
         RenderStats.markDrawCall()
-        shader.detach()
     }
 
     override fun close() {
@@ -121,12 +120,17 @@ internal class RectQuadsRenderer : BatchRenderer, AutoCloseable {
     }
 
     private fun cacheScissor() {
-        val version = ScissorControl.version()
+        val version = ScissorControl.version
         if (version == scissorVersion) return
+
+        if (hasPending()) {
+            flush()
+        }
+
         scissorVersion = version
-        scissorMinX = ScissorControl.minX()
-        scissorMinY = ScissorControl.minY()
-        scissorMaxX = ScissorControl.maxX()
-        scissorMaxY = ScissorControl.maxY()
+        scissorMinX = ScissorControl.minX
+        scissorMinY = ScissorControl.minY
+        scissorMaxX = ScissorControl.maxX
+        scissorMaxY = ScissorControl.maxY
     }
 }

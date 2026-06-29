@@ -1,0 +1,47 @@
+plugins {
+    id 'org.jetbrains.kotlin.jvm'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation project(":api")
+    implementation project(":core-gl")
+    implementation project(":shader-translator")
+    
+    implementation "org.joml:joml:${project.joml_version}"
+
+    implementation platform("org.lwjgl:lwjgl-bom:${project.lwjgl_version}")
+    implementation "org.lwjgl:lwjgl"
+    implementation "org.lwjgl:lwjgl-glfw"
+    implementation "org.lwjgl:lwjgl-opengl"
+
+    runtimeOnly "org.lwjgl:lwjgl::natives-windows"
+    runtimeOnly "org.lwjgl:lwjgl-glfw::natives-windows"
+    runtimeOnly "org.lwjgl:lwjgl-opengl::natives-windows"
+    runtimeOnly "org.lwjgl:lwjgl::natives-linux"
+    runtimeOnly "org.lwjgl:lwjgl-glfw::natives-linux"
+    runtimeOnly "org.lwjgl:lwjgl-opengl::natives-linux"
+    runtimeOnly "org.lwjgl:lwjgl::natives-macos"
+    runtimeOnly "org.lwjgl:lwjgl-glfw::natives-macos"
+    runtimeOnly "org.lwjgl:lwjgl-opengl::natives-macos"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 25
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_25
+    }
+}
+
+tasks.register("runRenderTestApp", JavaExec) {
+    group = "application"
+    description = "Runs the standalone render test app"
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = "sweetie.evaware.test.RenderTestApp"
+}

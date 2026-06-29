@@ -1,23 +1,55 @@
 package sweetie.evaware.renderutil
 
-import org.lwjgl.glfw.GLFW
 import sweetie.evaware.luma.Luma
+import sweetie.evaware.luma.api.ProgramHandle
+import sweetie.evaware.luma.api.RenderBackend
+import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.uniform.ShaderUniforms
+import sweetie.evaware.luma.vertex.VertexLayout
 import sweetie.evaware.luma.scissor.ScissorControl
+import java.awt.image.BufferedImage
+import java.nio.FloatBuffer
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class RenderUtilCloseTest {
+    private class MockBackend(var context: Boolean) : RenderBackend {
+        override fun beginFrame() {}
+        override fun endFrame() {}
+        override fun createProgram(vertexSource: String, fragmentSource: String, layout: VertexLayout): ProgramHandle = error("mock")
+        override fun bindProgram(program: ProgramHandle) {}
+        override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle = error("mock")
+        override fun updateTexture(texture: TextureHandle, x: Int, y: Int, image: BufferedImage) {}
+        override fun bindTexture(texture: TextureHandle, unit: Int) {}
+        override fun draw(
+            program: ProgramHandle,
+            vertices: FloatBuffer,
+            vertexCount: Int,
+            uniforms: ShaderUniforms,
+            texture: TextureHandle?,
+            primitiveType: Int
+        ) {}
+        override fun close() {}
+        override fun hasContext(): Boolean = context
+    }
+
+    private var originalBackend: RenderBackend? = null
+
     @AfterTest
     fun resetContextProvider() {
-        Luma.contextProvider = { GLFW.glfwGetCurrentContext() != 0L }
-        ScissorControl.clear()
+        originalBackend?.let { Luma.backend = it }
+        ScissorControl.pop()
     }
 
     @Test
     fun `close is idempotent without gl context`() {
-        Luma.contextProvider = { false }
+        try {
+            originalBackend = Luma.backend
+        } catch (_: Throwable) {}
+
+        Luma.backend = MockBackend(false)
 
         RenderUtil.close()
         RenderUtil.close()
@@ -25,7 +57,7 @@ class RenderUtilCloseTest {
 
     @Test
     fun `scissor block pops after exception`() {
-        ScissorControl.clear()
+        ScissorControl.pop()
 
         assertFailsWith<IllegalStateException> {
             RenderUtil.scissor(0f, -10f, 10f, 10f) {

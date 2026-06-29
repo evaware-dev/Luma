@@ -5,8 +5,7 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.ItemInHandRenderer;
-import net.minecraft.client.renderer.RenderBuffers;
-import net.minecraft.client.renderer.block.BlockRenderDispatcher;
+import net.minecraft.client.resources.model.ModelManager;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -20,8 +19,7 @@ public class MixinGameRenderer {
     private void luma$loadRenderUtils(
         Minecraft minecraft,
         ItemInHandRenderer itemInHandRenderer,
-        RenderBuffers renderBuffers,
-        BlockRenderDispatcher blockRenderDispatcher,
+        ModelManager modelManager,
         CallbackInfo callbackInfo
     ) {
         RenderUtil.INSTANCE.load();
@@ -31,7 +29,7 @@ public class MixinGameRenderer {
         method = "render",
         at = @At(
             value = "INVOKE",
-            target = "Lnet/minecraft/client/gui/render/GuiRenderer;render(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;)V",
+            target = "Lnet/minecraft/client/gui/render/GuiRenderer;render()V",
             shift = At.Shift.AFTER
         )
     )
