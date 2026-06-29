@@ -56,7 +56,7 @@ publishing {
         mavenJava(MavenPublication) {
             from components.java
             groupId = project.maven_group
-            artifactId = "luma-core-gl"
+            artifactId = "core-gl"
             version = project.mod_version
         }
     }

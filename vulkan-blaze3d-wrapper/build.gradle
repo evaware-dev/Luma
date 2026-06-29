@@ -1,6 +1,7 @@
 plugins {
     id 'net.fabricmc.fabric-loom'
     id 'org.jetbrains.kotlin.jvm'
+    id 'maven-publish'
 }
 
 version = project.mod_version
@@ -9,8 +10,6 @@ group = project.maven_group
 base {
     archivesName = "luma-vulkan-blaze3d-wrapper"
 }
-
-
 
 repositories {
     mavenCentral()
@@ -40,4 +39,15 @@ java {
     withSourcesJar()
     sourceCompatibility = JavaVersion.VERSION_25
     targetCompatibility = JavaVersion.VERSION_25
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+            groupId = project.maven_group
+            artifactId = "vulkan-blaze3d-wrapper"
+            version = project.mod_version
+        }
+    }
 }

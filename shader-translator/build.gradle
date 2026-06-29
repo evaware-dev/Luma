@@ -37,7 +37,7 @@ publishing {
         mavenJava(MavenPublication) {
             from components.java
             groupId = project.maven_group
-            artifactId = "luma-shader-translator"
+            artifactId = "shader-translator"
             version = project.mod_version
         }
     }
