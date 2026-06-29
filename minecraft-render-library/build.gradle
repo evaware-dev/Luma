@@ -10,9 +10,7 @@ base {
     archivesName = "luma-minecraft-render-library"
 }
 
-loom {
-    accessWidenerPath = file("src/main/resources/luma-renderer.accesswidener")
-}
+
 
 repositories {
     mavenCentral()

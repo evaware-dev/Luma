@@ -5,7 +5,13 @@
   "client": [
     "client.MixinGameRenderer",
     "client.MixinMinecraft",
-    "client.MixinVulkanDevice"
+    "client.MixinVulkanDevice",
+    "accessor.GpuDeviceAccessor",
+    "accessor.GlDeviceAccessor",
+    "accessor.GlStateManagerAccessor",
+    "accessor.DepthStateAccessor",
+    "accessor.CullStateAccessor",
+    "accessor.BooleanStateAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

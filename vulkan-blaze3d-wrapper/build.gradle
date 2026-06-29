@@ -10,9 +10,7 @@ base {
     archivesName = "luma-vulkan-blaze3d-wrapper"
 }
 
-loom {
-    accessWidenerPath = file("src/main/resources/luma-renderer.accesswidener")
-}
+
 
 repositories {
     mavenCentral()
