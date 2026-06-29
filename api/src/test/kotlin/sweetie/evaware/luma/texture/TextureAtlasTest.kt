@@ -11,6 +11,8 @@ import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.api.RenderTargetHandle
+import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.uniform.ShaderUniforms
 import sweetie.evaware.luma.vertex.VertexLayout
 
@@ -44,6 +46,14 @@ class TextureAtlasTest {
             texture: TextureHandle?,
             primitiveType: Int
         ) {}
+        override fun createRenderTarget(
+            width: Int,
+            height: Int,
+            useDepth: Boolean,
+            format: RenderTargetFormat
+        ): RenderTargetHandle = error("mock")
+        override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) {}
+        override fun endRenderTarget() {}
         override fun close() {}
         override fun hasContext() = true
     }

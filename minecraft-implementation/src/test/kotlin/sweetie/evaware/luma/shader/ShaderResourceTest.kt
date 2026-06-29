@@ -1,6 +1,7 @@
 package sweetie.evaware.luma.shader
 
 import kotlin.test.Test
+import kotlin.test.BeforeTest
 import kotlin.test.assertContains
 import kotlin.test.assertFalse
 import sweetie.evaware.luma.shader.translator.DefaultShaderTranslator
@@ -8,7 +9,6 @@ import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.GraphicsBackend
 import sweetie.evaware.luma.RenderPlatform
 import sweetie.evaware.luma.vertex.VertexLayout
-
 import sweetie.evaware.luma.vertex.ShaderVertType
 import sweetie.evaware.luma.backend.blaze3d.Program
 import net.minecraft.resources.Identifier
@@ -16,6 +16,11 @@ import org.lwjgl.util.shaderc.Shaderc
 import java.io.File
 
 class ShaderResourceTest {
+    @BeforeTest
+    fun setUp() {
+        GlslLibrary.register("scissor", "assets/luma-renderer/shaders/include/scissor.glsl")
+    }
+
     @Test
     fun testProgramInfoParsingForVulkan() {
         val originalPlatform = Luma.platform

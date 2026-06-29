@@ -9,49 +9,49 @@ import kotlin.test.assertTrue
 class ScissorControlTest {
     @AfterTest
     fun resetScissor() {
-        ScissorControl.pop()
+        ScissorControl.clear()
     }
 
     @Test
     fun `push intersects with current scissor`() {
-        ScissorControl.pop()
+        ScissorControl.clear()
 
         ScissorControl.push(0f, -100f, 100f, 100f)
         ScissorControl.push(25f, -75f, 100f, 50f)
 
-        assertEquals(25f, ScissorControl.minX())
-        assertEquals(25f, ScissorControl.minY())
-        assertEquals(100f, ScissorControl.maxX())
-        assertEquals(75f, ScissorControl.maxY())
+        assertEquals(25f, ScissorControl.minX)
+        assertEquals(25f, ScissorControl.minY)
+        assertEquals(100f, ScissorControl.maxX)
+        assertEquals(75f, ScissorControl.maxY)
     }
 
     @Test
     fun `pop restores previous scissor and empty state`() {
-        ScissorControl.pop()
+        ScissorControl.clear()
 
         ScissorControl.push(0f, -100f, 100f, 100f)
-        val rootVersion = ScissorControl.version()
+        val rootVersion = ScissorControl.version
         ScissorControl.push(25f, -75f, 50f, 50f)
 
         ScissorControl.pop()
 
-        assertTrue(ScissorControl.version() > rootVersion)
-        assertEquals(0f, ScissorControl.minX())
-        assertEquals(0f, ScissorControl.minY())
-        assertEquals(100f, ScissorControl.maxX())
-        assertEquals(100f, ScissorControl.maxY())
+        assertTrue(ScissorControl.version > rootVersion)
+        assertEquals(0f, ScissorControl.minX)
+        assertEquals(0f, ScissorControl.minY)
+        assertEquals(100f, ScissorControl.maxX)
+        assertEquals(100f, ScissorControl.maxY)
 
         ScissorControl.pop()
 
-        assertEquals(0f, ScissorControl.minX())
-        assertEquals(0f, ScissorControl.minY())
-        assertEquals(0f, ScissorControl.maxX())
-        assertEquals(0f, ScissorControl.maxY())
+        assertEquals(0f, ScissorControl.minX)
+        assertEquals(0f, ScissorControl.minY)
+        assertEquals(0f, ScissorControl.maxX)
+        assertEquals(0f, ScissorControl.maxY)
     }
 
     @Test
     fun `pop without push fails`() {
-        ScissorControl.pop()
+        ScissorControl.clear()
 
         assertFailsWith<IllegalArgumentException> {
             ScissorControl.pop()
@@ -60,7 +60,7 @@ class ScissorControlTest {
 
     @Test
     fun `push pop stays inside cpu budget`() {
-        ScissorControl.pop()
+        ScissorControl.clear()
         val iterations = 120_000
 
         repeat(5_000) {

@@ -4,6 +4,8 @@ import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.api.RenderTargetHandle
+import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.uniform.ShaderUniforms
 import sweetie.evaware.luma.vertex.VertexLayout
 import sweetie.evaware.luma.scissor.ScissorControl
@@ -31,6 +33,14 @@ class RenderUtilCloseTest {
             texture: TextureHandle?,
             primitiveType: Int
         ) {}
+        override fun createRenderTarget(
+            width: Int,
+            height: Int,
+            useDepth: Boolean,
+            format: RenderTargetFormat
+        ): RenderTargetHandle = error("mock")
+        override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) {}
+        override fun endRenderTarget() {}
         override fun close() {}
         override fun hasContext(): Boolean = context
     }
@@ -40,7 +50,7 @@ class RenderUtilCloseTest {
     @AfterTest
     fun resetContextProvider() {
         originalBackend?.let { Luma.backend = it }
-        ScissorControl.pop()
+        ScissorControl.clear()
     }
 
     @Test
@@ -57,7 +67,7 @@ class RenderUtilCloseTest {
 
     @Test
     fun `scissor block pops after exception`() {
-        ScissorControl.pop()
+        ScissorControl.clear()
 
         assertFailsWith<IllegalStateException> {
             RenderUtil.scissor(0f, -10f, 10f, 10f) {
@@ -65,9 +75,9 @@ class RenderUtilCloseTest {
             }
         }
 
-        assertEquals(0f, ScissorControl.minX())
-        assertEquals(0f, ScissorControl.minY())
-        assertEquals(0f, ScissorControl.maxX())
-        assertEquals(0f, ScissorControl.maxY())
+        assertEquals(0f, ScissorControl.minX)
+        assertEquals(0f, ScissorControl.minY)
+        assertEquals(0f, ScissorControl.maxX)
+        assertEquals(0f, ScissorControl.maxY)
     }
 }
