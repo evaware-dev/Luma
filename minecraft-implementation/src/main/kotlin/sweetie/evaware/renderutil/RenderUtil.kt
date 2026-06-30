@@ -15,18 +15,15 @@ import sweetie.evaware.renderutil.renderers.*
 import java.awt.image.BufferedImage
 
 object RenderUtil : CloseableResourceBase(), RenderApi {
-    private var uberRenderer = UberRenderer()
+    private var textureRectRenderer = TextureRectRenderer()
     private var roundedRectRenderer = RoundedRectRenderer()
-    private var rectRenderer = RectRenderer(uberRenderer)
-    private var textureRenderer = TextureRenderer(uberRenderer)
 
     private var activeBatch: IBatch? = null
     private var activePipeline: RenderPipeline? = null
     private var loaded = false
     private var frameActive = false
 
-    val RECT get() = rectRenderer.reset()
-    val TEXTURE get() = textureRenderer.reset()
+    val TEXTURE get() = textureRectRenderer.reset()
     val ROUNDED_RECT get() = roundedRectRenderer.reset()
 
     fun load() {
@@ -37,7 +34,7 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
         if (loaded) return
 
         TextureAtlas.prepare()
-        uberRenderer.load()
+        textureRectRenderer.load()
         roundedRectRenderer.load()
         loaded = true
     }
@@ -51,7 +48,7 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
 
         frameActive = false
 
-        uberRenderer.close()
+        textureRectRenderer.close()
         roundedRectRenderer.close()
         TextureAtlas.close()
         GlResources.closeAll()
@@ -70,9 +67,10 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
     }
 
     override fun rect(x: Float, y: Float, width: Float, height: Float, color: Int, pipeline: RenderPipeline) {
-        RECT
+        ROUNDED_RECT
             .priority(pipeline)
             .color(color)
+            .radius(0f)
             .draw(x, y, width, height)
     }
 
@@ -118,7 +116,6 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
 
     fun beginFrame() {
         load()
-        RenderStats.beginFrame()
         Luma.beginMainFramebufferFrame()
         frameActive = true
     }
@@ -167,8 +164,8 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
         }
     }
 
-    internal fun useUberBatch(pipeline: RenderPipeline) {
-        switchTo(uberRenderer, pipeline)
+    internal fun useTextureBatch(pipeline: RenderPipeline) {
+        switchTo(textureRectRenderer, pipeline)
     }
 
     internal fun useRoundedBatch(pipeline: RenderPipeline) {
@@ -191,24 +188,22 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
     }
 
     private fun flushPipeline(pipeline: RenderPipeline) {
-        if (!uberRenderer.hasPending(pipeline) && !roundedRectRenderer.hasPending(pipeline)) return
+        if (!textureRectRenderer.hasPending(pipeline) && !roundedRectRenderer.hasPending(pipeline)) return
 
         if (frameActive || Luma.frameActive) {
-            uberRenderer.flush(pipeline)
+            textureRectRenderer.flush(pipeline)
             roundedRectRenderer.flush(pipeline)
             return
         }
 
         Luma.renderToMainFramebuffer {
-            uberRenderer.flush(pipeline)
+            textureRectRenderer.flush(pipeline)
             roundedRectRenderer.flush(pipeline)
         }
     }
 
     private fun rebuildRenderers() {
-        uberRenderer = UberRenderer()
+        textureRectRenderer = TextureRectRenderer()
         roundedRectRenderer = RoundedRectRenderer()
-        rectRenderer = RectRenderer(uberRenderer)
-        textureRenderer = TextureRenderer(uberRenderer)
     }
 }

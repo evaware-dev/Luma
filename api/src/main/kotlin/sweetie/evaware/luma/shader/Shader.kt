@@ -20,7 +20,7 @@ open class Shader(
         this.drawMode = mode
     }
 
-    fun load() {
+    open fun load() {
         if (loaded) return
         inputs.requireConfigured()
 

@@ -1,37 +1,37 @@
 package sweetie.evaware.renderutil.renderers
 
 import kotlin.math.min
-import org.lwjgl.opengl.GL11
-import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.matrix.MatrixControl
 import sweetie.evaware.luma.scissor.ScissorControl
-import sweetie.evaware.luma.shader.EasyShader
+import sweetie.evaware.luma.shader.BaseShader
 import sweetie.evaware.luma.uniform.Mat4Uniform
-import sweetie.evaware.renderutil.RenderStats
 import sweetie.evaware.renderutil.api.BatchRenderer
 import sweetie.evaware.renderutil.helper.ColorUtil
+import org.lwjgl.opengl.GL11
 
-internal class RectQuadsRenderer : BatchRenderer, AutoCloseable {
-    private val shader = EasyShader("rect_quad").drawMode(GL11.GL_TRIANGLES)
+class RoundedRectShader : BaseShader("rounded_rect.frag", "rounded_rect.vert") {
+    lateinit var uMatrix: Mat4Uniform
 
-    private val uMatrix: Mat4Uniform
+    override fun setupLayout() {
+        drawMode(GL11.GL_TRIANGLES)
+        vertices.float(2, 0)
+        vertices.float(2, 1)
+        vertices.float(2, 2)
+        vertices.float(4, 3)
+        vertices.float(4, 4)
+        vertices.float(4, 5)
+        uMatrix = uniforms.mat4("uMatrix")
+    }
+}
+
+class RoundedRectBatch : BatchRenderer, AutoCloseable {
+    private val shader = RoundedRectShader()
+
     private var scissorVersion = Int.MIN_VALUE
     private var scissorMinX = 0f
     private var scissorMinY = 0f
     private var scissorMaxX = 0f
     private var scissorMaxY = 0f
-
-    init {
-        with(shader) {
-            vertices.float(2, 0)
-            vertices.float(2, 1)
-            vertices.float(2, 2)
-            vertices.float(4, 3)
-            vertices.float(4, 4)
-            vertices.float(4, 5)
-            uMatrix = uniforms.mat4("uMatrix")
-        }
-    }
 
     override fun load() {
         shader.load()
@@ -81,10 +81,8 @@ internal class RectQuadsRenderer : BatchRenderer, AutoCloseable {
     override fun flush() {
         if (!hasPending()) return
         shader.attach()
-        shader.uniforms.mat4(uMatrix, MatrixControl.current())
-        RenderStats.markBatch()
+        shader.uniforms.mat4(shader.uMatrix, MatrixControl.current())
         shader.draw()
-        RenderStats.markDrawCall()
     }
 
     override fun close() {

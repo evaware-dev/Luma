@@ -15,6 +15,7 @@ object LumaRenderer : ModInitializer {
 
         GlslLibrary
             .register("scissor", "assets/luma/shaders/include/scissor.glsl")
+            .register("matrix", "assets/luma/shaders/include/matrix.glsl")
             .attach()
 
         RenderUtil.registerTexture("demo_icon", "assets/luma/icon.png")
