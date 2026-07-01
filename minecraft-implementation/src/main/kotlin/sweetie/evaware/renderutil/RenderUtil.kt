@@ -54,6 +54,7 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
         roundedRectRenderer.close()
         TextureAtlas.close()
         GlResources.closeAll()
+        OffscreenDemo.reset()
 
         activeBatch = null
         activePipeline = null

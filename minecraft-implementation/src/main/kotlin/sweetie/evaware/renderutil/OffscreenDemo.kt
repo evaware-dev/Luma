@@ -24,8 +24,8 @@ class BlitShader : BaseShader("blit.frag", "blit.vert") {
 
 object OffscreenDemo {
     private val transparent = floatArrayOf(0f, 0f, 0f, 0f)
-    private val blit = BlitShader()
 
+    private var blit: BlitShader? = null
     private var target: RenderTargetHandle? = null
     private var width = 0
     private var height = 0
@@ -34,23 +34,36 @@ object OffscreenDemo {
         val w = Luma.platform.getGuiScaledWidth().toInt().coerceAtLeast(1)
         val h = Luma.platform.getGuiScaledHeight().toInt().coerceAtLeast(1)
         val renderTarget = ensureTarget(w, h)
+        val shader = ensureBlit()
 
         RenderUtil.renderToTarget(renderTarget, transparent) {
             RenderTest.renderGui()
         }
 
-        present(renderTarget, w.toFloat(), h.toFloat())
-    }
-
-    private fun present(renderTarget: RenderTargetHandle, w: Float, h: Float) {
-        blit.attach()
-        blit.uniforms.mat4(blit.uMatrix, MatrixControl.current())
-        blit.uniforms.int1(blit.uTexture, 0)
+        shader.attach()
+        shader.uniforms.mat4(shader.uMatrix, MatrixControl.current())
+        shader.uniforms.int1(shader.uTexture, 0)
         Luma.bindTexture(renderTarget.colorTexture, 0)
         repeat(4) {
-            blit.vertices.vec2(0f, 0f).vec2(w, h)
+            shader.vertices.vec2(0f, 0f).vec2(w.toFloat(), h.toFloat())
         }
-        blit.draw()
+        shader.draw()
+    }
+
+    fun reset() {
+        target = null
+        blit = null
+        width = 0
+        height = 0
+    }
+
+    private fun ensureBlit(): BlitShader {
+        var shader = blit
+        if (shader == null) {
+            shader = BlitShader()
+            blit = shader
+        }
+        return shader
     }
 
     private fun ensureTarget(w: Int, h: Int): RenderTargetHandle {
