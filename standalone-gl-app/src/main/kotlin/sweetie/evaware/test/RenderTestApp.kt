@@ -14,6 +14,8 @@ import sweetie.evaware.luma.uniform.Mat4Uniform
 import sweetie.evaware.luma.matrix.MatrixControl
 import sweetie.evaware.luma.texture.Texture
 import sweetie.evaware.luma.backend.gl.GlStateSnapshot
+import sweetie.evaware.luma.backend.gl.GlRenderTarget
+import sweetie.evaware.luma.api.RenderTargetFormat
 
 import sweetie.evaware.luma.shader.translator.DefaultShaderTranslator
 import java.awt.image.BufferedImage
@@ -64,6 +66,38 @@ object RenderTestApp {
         instancedShader.load()
     }
 
+    private fun runOffscreenTest() {
+        val size = 64
+        val rt = Luma.backend.createRenderTarget(size, size, false, RenderTargetFormat.RGBA8)
+        val rtProjection = Matrix4f().ortho(0f, size.toFloat(), size.toFloat(), 0f, -1f, 1f)
+
+        Luma.render {
+            Luma.backend.beginRenderTarget(rt, floatArrayOf(1f, 0f, 0f, 1f))
+            shader.attach()
+            shader.uniforms.mat4(uMatrix, rtProjection)
+            drawRect(16f, 16f, 32f, 32f, ColorUtil.WHITE)
+            shader.draw()
+            Luma.backend.endRenderTarget()
+        }
+
+        val glTarget = rt as GlRenderTarget
+        val pixels = BufferUtils.createByteBuffer(size * size * 4)
+        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, glTarget.fbo)
+        GL11.glReadPixels(0, 0, size, size, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, pixels)
+        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0)
+
+        fun channel(x: Int, y: Int, c: Int) = pixels.get((y * size + x) * 4 + c).toInt() and 0xFF
+        val centerWhite = channel(32, 32, 0) > 200 && channel(32, 32, 1) > 200 && channel(32, 32, 2) > 200
+        val cornerRed = channel(2, 2, 0) > 200 && channel(2, 2, 1) < 60 && channel(2, 2, 2) < 60
+        val result = if (centerWhite && cornerRed) "PASS" else "FAIL"
+        log(
+            LogPrefix.INFO,
+            "Offscreen readback: center=(${channel(32, 32, 0)},${channel(32, 32, 1)},${channel(32, 32, 2)}) " +
+                "corner=(${channel(2, 2, 0)},${channel(2, 2, 1)},${channel(2, 2, 2)}) => $result"
+        )
+        rt.close()
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
         GLFWErrorCallback.createPrint(System.err).set()
@@ -94,6 +128,7 @@ object RenderTestApp {
 
             initInstancedShader()
 
+            runOffscreenTest()
             runBenchmark()
 
             if (args.contains("--benchmark-only")) return
