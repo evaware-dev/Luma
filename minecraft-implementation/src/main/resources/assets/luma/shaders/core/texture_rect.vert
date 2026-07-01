@@ -15,7 +15,7 @@ out vec4 vColor;
 out vec4 vScissor;
 
 void main() {
-    vec2 corner = RECT_VERTICES[gl_VertexID % 4];
+    vec2 corner = RECT_TRIANGLES[gl_VertexID];
     gl_Position = uMatrix * vec4(a0 + corner * a1, 0.0, 1.0);
     vUv = a2 + corner * a3;
     vColor = a4;

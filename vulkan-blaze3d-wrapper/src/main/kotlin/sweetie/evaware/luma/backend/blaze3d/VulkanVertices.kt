@@ -5,7 +5,7 @@ import com.mojang.blaze3d.vertex.VertexFormat
 import sweetie.evaware.luma.vertex.VertexLayout
 
 fun convertLayout(layout: VertexLayout, attributeNames: Map<Int, String>): VertexFormat {
-    val builder = VertexFormat.builder(0)
+    val builder = VertexFormat.builder(if (layout.instanced) 1 else 0)
     for (i in 0 until layout.size()) {
         val layoutPos = layout.layoutPos(i)
         val name = attributeNames[layoutPos] ?: "a$layoutPos"

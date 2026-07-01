@@ -4,6 +4,7 @@ import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL15
 import org.lwjgl.opengl.GL20
 import org.lwjgl.opengl.GL30
+import org.lwjgl.opengl.GL33
 import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.vertex.ShaderVertType
 import sweetie.evaware.luma.vertex.VertexLayout
@@ -85,6 +86,9 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
                 strideBytes,
                 offset
             )
+            if (layout.instanced) {
+                GL33.glVertexAttribDivisor(layoutPos, 1)
+            }
             offset += layout.byteSize(index).toLong()
         }
     }

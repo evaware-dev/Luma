@@ -5,7 +5,6 @@ import sweetie.evaware.luma.shader.BaseShader
 import sweetie.evaware.luma.texture.TextureAtlas
 import sweetie.evaware.luma.uniform.Mat4Uniform
 import sweetie.evaware.luma.uniform.Int1Uniform
-import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.renderutil.api.BatchRenderer
 import sweetie.evaware.renderutil.helper.ColorUtil
 import sweetie.evaware.renderutil.helper.ScissorCache
@@ -15,7 +14,7 @@ class TextureRectShader : BaseShader("texture_rect.frag", "texture_rect.vert") {
     lateinit var uTexture: Int1Uniform
 
     override fun setupLayout() {
-        drawMode(PrimitiveType.QUADS)
+        instanced()
         vertices.float(2, 0)
         vertices.float(2, 1)
         vertices.float(2, 2)
@@ -46,15 +45,13 @@ class TextureRectBatch : BatchRenderer, AutoCloseable {
         val b = ColorUtil.bluef(color)
         val a = ColorUtil.alphaf(color)
 
-        repeat(4) {
-            shader.vertices
-                .vec2(x, y)
-                .vec2(width, height)
-                .vec2(region.uOffset, region.vOffset)
-                .vec2(region.uScale, region.vScale)
-                .vec4(r, g, b, a)
-                .vec4(scissor.minX, scissor.minY, scissor.maxX, scissor.maxY)
-        }
+        shader.vertices
+            .vec2(x, y)
+            .vec2(width, height)
+            .vec2(region.uOffset, region.vOffset)
+            .vec2(region.uScale, region.vScale)
+            .vec4(r, g, b, a)
+            .vec4(scissor.minX, scissor.minY, scissor.maxX, scissor.maxY)
     }
 
     override fun flush() {

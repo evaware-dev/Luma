@@ -11,6 +11,10 @@ class ShaderVertices : ShaderInputApi<ShaderVertices>(), AutoCloseable {
         this.layout.add(layout)
     }
 
+    fun instanced(baseVertexCount: Int = 6) = apply {
+        layout.markInstanced(baseVertexCount)
+    }
+
     override fun onDefineFloat(count: Int, layoutPos: Int, normalized: Boolean) {
         layout.add(ShaderVertType.FLOAT, count, layoutPos, normalized)
     }

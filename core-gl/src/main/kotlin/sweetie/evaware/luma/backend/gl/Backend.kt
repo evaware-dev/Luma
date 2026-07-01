@@ -151,13 +151,18 @@ class Backend : RenderBackend {
             }
         }
 
-        when (primitiveType) {
-            PrimitiveType.QUADS -> {
+        when {
+            glProgram.vertexBuffer.layout.instanced -> {
+                GL31.glDrawArraysInstanced(
+                    GL11.GL_TRIANGLES, 0, glProgram.vertexBuffer.layout.baseVertexCount, vertexCount
+                )
+            }
+            primitiveType == PrimitiveType.QUADS -> {
                 val indexCount = glProgram.vertexBuffer.bindQuadIndices(vertexCount)
                 GL11.glDrawElements(GL11.GL_TRIANGLES, indexCount, GL11.GL_UNSIGNED_INT, 0L)
             }
-            PrimitiveType.LINES -> GL11.glDrawArrays(GL11.GL_LINES, 0, vertexCount)
-            PrimitiveType.TRIANGLES -> GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, vertexCount)
+            primitiveType == PrimitiveType.LINES -> GL11.glDrawArrays(GL11.GL_LINES, 0, vertexCount)
+            else -> GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, vertexCount)
         }
     }
 

@@ -15,6 +15,17 @@ class VertexLayout {
     var strideFloats = 0
         private set
 
+    var instanced = false
+        private set
+
+    var baseVertexCount = 6
+        private set
+
+    fun markInstanced(baseVertexCount: Int) {
+        instanced = true
+        this.baseVertexCount = baseVertexCount
+    }
+
     fun add(layout: ShaderVert) {
         add(layout.type, layout.count, layout.layoutPos, layout.normalized)
     }

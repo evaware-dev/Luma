@@ -21,6 +21,11 @@ open class Shader(
         this.drawMode = mode
     }
 
+    fun instanced(baseVertexCount: Int = 6) = apply {
+        vertices.instanced(baseVertexCount)
+        this.drawMode = PrimitiveType.TRIANGLES
+    }
+
     open fun load() {
         if (loaded) return
         inputs.requireConfigured()

@@ -30,6 +30,9 @@ object RenderTestApp {
     private val heightBuffer = BufferUtils.createIntBuffer(1)
     private lateinit var uMatrix: Mat4Uniform
 
+    private lateinit var instancedShader: Shader
+    private lateinit var iMatrix: Mat4Uniform
+
     enum class LogPrefix(val value: String) {
         BENCHMARK("[Benchmark]"),
         INFO("[Info]"),
@@ -47,6 +50,18 @@ object RenderTestApp {
             vertices.float(4, 1)
             uMatrix = uniforms.mat4("uMatrix")
         }
+    }
+
+    private fun initInstancedShader() {
+        instancedShader = Shader("assets/luma-renderer/shaders/core/rect_instanced.frag", "assets/luma-renderer/shaders/core/rect_instanced.vert")
+        with(instancedShader) {
+            instanced()
+            vertices.float(2, 0)
+            vertices.float(2, 1)
+            vertices.float(4, 2)
+            iMatrix = uniforms.mat4("uMatrix")
+        }
+        instancedShader.load()
     }
 
     @JvmStatic
@@ -76,6 +91,8 @@ object RenderTestApp {
 
             initShader()
             shader.load()
+
+            initInstancedShader()
 
             runBenchmark()
 
@@ -240,6 +257,27 @@ object RenderTestApp {
         ms = (System.nanoTime() - start) / 1_000_000.0
         val totalRects = batchFrames.toLong() * perFrameRects
         log(LogPrefix.BENCHMARK, "Batched rects: %d in %.1fms (%.2fM rects/s)".format(totalRects, ms, totalRects / ms / 1000.0))
+
+        repeat(15) { submitInstanced(perFrameRects) }
+        GL11.glFinish()
+        start = System.nanoTime()
+        repeat(batchFrames) { submitInstanced(perFrameRects) }
+        GL11.glFinish()
+        ms = (System.nanoTime() - start) / 1_000_000.0
+        log(LogPrefix.BENCHMARK, "Instanced rects: %d in %.1fms (%.2fM rects/s)".format(totalRects, ms, totalRects / ms / 1000.0))
+    }
+
+    private fun submitInstanced(count: Int) {
+        Luma.render {
+            instancedShader.attach()
+            instancedShader.uniforms.mat4(iMatrix, projectionMatrix)
+            var i = 0
+            while (i < count) {
+                instancedShader.vertices.vec2(8f, 8f).vec2(40f, 40f).vec4(1f, 1f, 1f, 1f)
+                i++
+            }
+            instancedShader.draw()
+        }
     }
 
     private fun submitManyDraws(count: Int) {

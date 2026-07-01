@@ -22,10 +22,12 @@ internal class RenderPassEncoder(
 ) : GroupConsumer {
 
     private var currentPass: RenderPass? = null
+    private var currentProgram: Program? = null
 
     override fun onTargetChanged(target: VulkanRenderTarget?, clearColor: FloatArray?) {
         currentPass?.close()
         currentPass = null
+        currentProgram = null
 
         val colorView: GpuTextureView
         val depthView: GpuTextureView?
@@ -68,6 +70,7 @@ internal class RenderPassEncoder(
         val pass = currentPass ?: return
         val key = PipelineKey(topology, depthEnabled, depthWrite, depthFunc, cullEnabled)
         pass.setPipeline(program.getOrCreatePipeline(device, key))
+        currentProgram = program
     }
 
     override fun onUboChanged(offset: Long, size: Long) {
@@ -86,6 +89,13 @@ internal class RenderPassEncoder(
     override fun onDraw(topology: PrimitiveTopology, vertexStart: Long, vertexBytes: Long, vertexCount: Int) {
         val pass = currentPass ?: return
         pass.setVertexBuffer(0, vertexBuffer.slice(vertexStart, vertexBytes))
+
+        val program = currentProgram
+        if (program != null && program.layout.instanced) {
+            pass.draw(program.layout.baseVertexCount, vertexCount, 0, 0)
+            return
+        }
+
         if (topology == PrimitiveTopology.QUADS) {
             val indexCount = (vertexCount / 4) * 6
             val sequential = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS)
