@@ -42,13 +42,13 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
 
         if (floatCount > capacityFloats) {
             capacityFloats = nextCapacity(floatCount, capacityFloats)
-            GL15.glBufferData(
-                GL15.GL_ARRAY_BUFFER,
-                capacityFloats.toLong() * Float.SIZE_BYTES.toLong(),
-                GL15.GL_STREAM_DRAW
-            )
         }
 
+        GL15.glBufferData(
+            GL15.GL_ARRAY_BUFFER,
+            capacityFloats.toLong() * Float.SIZE_BYTES.toLong(),
+            GL15.GL_STREAM_DRAW
+        )
         GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, 0, vertices)
     }
 
