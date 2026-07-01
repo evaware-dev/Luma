@@ -36,16 +36,24 @@ object OffscreenDemo {
         val renderTarget = ensureTarget(w, h)
         val shader = ensureBlit()
 
-        RenderUtil.renderToTarget(renderTarget, transparent) {
-            RenderTest.renderGui()
+        RenderUtil.renderFrame {
+            RenderUtil.renderToTarget(renderTarget, transparent) {
+                RenderTest.renderGui()
+            }
         }
 
+        RenderUtil.renderFrame {
+            present(shader, renderTarget, w.toFloat(), h.toFloat())
+        }
+    }
+
+    private fun present(shader: BlitShader, renderTarget: RenderTargetHandle, w: Float, h: Float) {
         shader.attach()
         shader.uniforms.mat4(shader.uMatrix, MatrixControl.current())
         shader.uniforms.int1(shader.uTexture, 0)
         Luma.bindTexture(renderTarget.colorTexture, 0)
         repeat(4) {
-            shader.vertices.vec2(0f, 0f).vec2(w.toFloat(), h.toFloat())
+            shader.vertices.vec2(0f, 0f).vec2(w, h)
         }
         shader.draw()
     }

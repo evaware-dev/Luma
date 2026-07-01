@@ -1,6 +1,5 @@
 package sweetie.evaware.luma.mixin.client;
 
-import kotlin.Unit;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
@@ -34,9 +33,6 @@ public class MixinGameRenderer {
         )
     )
     private void luma$renderGuiRects(DeltaTracker deltaTracker, boolean tick, CallbackInfo callbackInfo) {
-        RenderUtil.INSTANCE.renderFrame(() -> {
-            OffscreenDemo.INSTANCE.render();
-            return Unit.INSTANCE;
-        });
+        OffscreenDemo.INSTANCE.render();
     }
 }
