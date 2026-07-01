@@ -37,19 +37,9 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
     }
 
     fun upload(vertices: FloatBuffer) {
-        val floatCount = vertices.limit()
         vertices.position(0)
-
-        if (floatCount > capacityFloats) {
-            capacityFloats = nextCapacity(floatCount, capacityFloats)
-        }
-
-        GL15.glBufferData(
-            GL15.GL_ARRAY_BUFFER,
-            capacityFloats.toLong() * Float.SIZE_BYTES.toLong(),
-            GL15.GL_STREAM_DRAW
-        )
-        GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, 0, vertices)
+        GL15.glBufferData(GL15.GL_ARRAY_BUFFER, vertices, GL15.GL_STREAM_DRAW)
+        capacityFloats = vertices.limit()
     }
 
     fun bindQuadIndices(vertexCount: Int): Int {
@@ -97,14 +87,6 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
             )
             offset += layout.byteSize(index).toLong()
         }
-    }
-
-    private fun nextCapacity(required: Int, current: Int): Int {
-        var cap = current.coerceAtLeast(1024)
-        while (cap < required) {
-            cap = cap shl 1
-        }
-        return cap
     }
 
     private fun nextIndexCapacity(required: Int): Int {
