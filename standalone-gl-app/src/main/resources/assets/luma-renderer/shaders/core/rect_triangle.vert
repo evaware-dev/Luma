@@ -1,11 +1,11 @@
 #version 330 core
 
-#luma-in 0 vec2 a0 Position
-#luma-in 1 vec4 a1 Color
+@in 0 vec2 a0 Position
+@in 1 vec4 a1 Color
 
-#luma-uniforms
+@uniforms
 uniform mat4 uMatrix;
-#luma-end
+@end
 
 out vec4 vColor;
 

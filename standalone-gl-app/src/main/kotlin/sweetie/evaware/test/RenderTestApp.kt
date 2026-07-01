@@ -212,6 +212,60 @@ object RenderTestApp {
         log(LogPrefix.BENCHMARK, "State Capture Legacy (20k): %.2fms".format(d0))
         log(LogPrefix.BENCHMARK, "Matrix Mult (500k): Legacy=%.2fms, Cached=%.2fms (Speedup: %.1f%%)".format(d2, d3, (d2 - d3) / d2 * 100))
         log(LogPrefix.BENCHMARK, "Tex Upload (300): Legacy=%.2fms, Optimized=%.2fms (Speedup: %.1f%%)".format(d4, d5, (d4 - d5) / d4 * 100))
+
+        runDrawBenchmark()
+    }
+
+    private fun runDrawBenchmark() {
+        projectionMatrix.identity().ortho(0f, WIDTH.toFloat(), HEIGHT.toFloat(), 0f, -1f, 1f)
+
+        val perFrameDraws = 2000
+        val drawFrames = 200
+        repeat(30) { submitManyDraws(perFrameDraws) }
+        GL11.glFinish()
+        var start = System.nanoTime()
+        repeat(drawFrames) { submitManyDraws(perFrameDraws) }
+        GL11.glFinish()
+        var ms = (System.nanoTime() - start) / 1_000_000.0
+        val totalDraws = drawFrames.toLong() * perFrameDraws
+        log(LogPrefix.BENCHMARK, "Draw calls: %d in %.1fms (%.2fM draws/s)".format(totalDraws, ms, totalDraws / ms / 1000.0))
+
+        val perFrameRects = 20_000
+        val batchFrames = 100
+        repeat(15) { submitBatch(perFrameRects) }
+        GL11.glFinish()
+        start = System.nanoTime()
+        repeat(batchFrames) { submitBatch(perFrameRects) }
+        GL11.glFinish()
+        ms = (System.nanoTime() - start) / 1_000_000.0
+        val totalRects = batchFrames.toLong() * perFrameRects
+        log(LogPrefix.BENCHMARK, "Batched rects: %d in %.1fms (%.2fM rects/s)".format(totalRects, ms, totalRects / ms / 1000.0))
+    }
+
+    private fun submitManyDraws(count: Int) {
+        Luma.render {
+            shader.attach()
+            shader.uniforms.mat4(uMatrix, projectionMatrix)
+            var i = 0
+            while (i < count) {
+                drawRect(8f, 8f, 40f, 40f, ColorUtil.WHITE)
+                shader.draw()
+                i++
+            }
+        }
+    }
+
+    private fun submitBatch(count: Int) {
+        Luma.render {
+            shader.attach()
+            shader.uniforms.mat4(uMatrix, projectionMatrix)
+            var i = 0
+            while (i < count) {
+                drawRect(8f, 8f, 40f, 40f, ColorUtil.WHITE)
+                i++
+            }
+            shader.draw()
+        }
     }
 
     private fun renderFrame(window: Long) {
