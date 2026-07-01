@@ -41,3 +41,8 @@ bin/
 
 ### Fabric ###
 run/
+
+### Logs ###
+logs/
+*.log
+hs_err_pid*.log

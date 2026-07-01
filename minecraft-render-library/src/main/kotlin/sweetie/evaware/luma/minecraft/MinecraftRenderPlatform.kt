@@ -9,9 +9,10 @@ import sweetie.evaware.luma.RenderPlatform
 import sweetie.evaware.luma.framebuffer.FramebufferHandle
 
 object MinecraftRenderPlatform : RenderPlatform {
+    private const val OPENGL_BACKEND_NAME = "OpenGL"
 
     override val activeBackend: GraphicsBackend
-        get() = if (Minecraft.getInstance().window.backend().name == "OpenGL") GraphicsBackend.OPENGL
+        get() = if (Minecraft.getInstance().window.backend().name == OPENGL_BACKEND_NAME) GraphicsBackend.OPENGL
         else GraphicsBackend.OTHER
 
     override fun getGuiScaledWidth(): Float = Minecraft.getInstance().window.guiScaledWidth.toFloat()
@@ -22,7 +23,7 @@ object MinecraftRenderPlatform : RenderPlatform {
     override fun getViewport(viewport: IntArray): Boolean {
         val colorTexture = try {
             Minecraft.getInstance().gameRenderer.mainRenderTarget().colorTextureView
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
             null
         }
         if (colorTexture != null) {
@@ -36,13 +37,12 @@ object MinecraftRenderPlatform : RenderPlatform {
     }
 
     override fun swapToMainFramebuffer(luma: Luma) {
-        val target = Minecraft.getInstance().gameRenderer.mainRenderTarget()
-        val colorTexture = target.colorTextureView ?: return
-        val fbo = FramebufferHandle.resolve(colorTexture, target.depthTextureView)
-        val w = colorTexture.getWidth(0)
-        val h = colorTexture.getHeight(0)
-        
         if (activeBackend == GraphicsBackend.OPENGL) {
+            val target = Minecraft.getInstance().gameRenderer.mainRenderTarget()
+            val colorTexture = target.colorTextureView ?: return
+            val fbo = FramebufferHandle.resolve(colorTexture, target.depthTextureView)
+            val w = colorTexture.getWidth(0)
+            val h = colorTexture.getHeight(0)
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo)
             GL11.glViewport(0, 0, w, h)
         }

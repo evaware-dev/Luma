@@ -2,36 +2,30 @@ package sweetie.evaware.renderutil.renderers
 
 import kotlin.math.min
 import sweetie.evaware.luma.matrix.MatrixControl
-import sweetie.evaware.luma.scissor.ScissorControl
 import sweetie.evaware.luma.shader.BaseShader
 import sweetie.evaware.luma.uniform.Mat4Uniform
+import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.renderutil.api.BatchRenderer
 import sweetie.evaware.renderutil.helper.ColorUtil
-import org.lwjgl.opengl.GL11
+import sweetie.evaware.renderutil.helper.ScissorCache
 
 class RoundedRectShader : BaseShader("rounded_rect.frag", "rounded_rect.vert") {
     lateinit var uMatrix: Mat4Uniform
 
     override fun setupLayout() {
-        drawMode(GL11.GL_TRIANGLES)
+        drawMode(PrimitiveType.QUADS)
         vertices.float(2, 0)
         vertices.float(2, 1)
-        vertices.float(2, 2)
+        vertices.float(4, 2)
         vertices.float(4, 3)
         vertices.float(4, 4)
-        vertices.float(4, 5)
         uMatrix = uniforms.mat4("uMatrix")
     }
 }
 
 class RoundedRectBatch : BatchRenderer, AutoCloseable {
     private val shader = RoundedRectShader()
-
-    private var scissorVersion = Int.MIN_VALUE
-    private var scissorMinX = 0f
-    private var scissorMinY = 0f
-    private var scissorMaxX = 0f
-    private var scissorMaxY = 0f
+    private val scissor = ScissorCache()
 
     override fun load() {
         shader.load()
@@ -55,10 +49,6 @@ class RoundedRectBatch : BatchRenderer, AutoCloseable {
         bottomLeftRadius: Float
     ) {
         val maxRadius = min(width, height) * 0.5f
-        val minX = x
-        val minY = y
-        val maxX = x + width
-        val maxY = y + height
         val topLeft = topLeftRadius.coerceIn(0f, maxRadius)
         val topRight = topRightRadius.coerceIn(0f, maxRadius)
         val bottomRight = bottomRightRadius.coerceIn(0f, maxRadius)
@@ -68,14 +58,16 @@ class RoundedRectBatch : BatchRenderer, AutoCloseable {
         val blue = ColorUtil.bluef(color)
         val alpha = ColorUtil.alphaf(color)
 
-        cacheScissor()
+        scissor.update(this)
 
-        putVertex(minX, minY, 0f, 0f, width, height, topLeft, topRight, bottomRight, bottomLeft, red, green, blue, alpha)
-        putVertex(minX, maxY, 0f, height, width, height, topLeft, topRight, bottomRight, bottomLeft, red, green, blue, alpha)
-        putVertex(maxX, maxY, width, height, width, height, topLeft, topRight, bottomRight, bottomLeft, red, green, blue, alpha)
-        putVertex(minX, minY, 0f, 0f, width, height, topLeft, topRight, bottomRight, bottomLeft, red, green, blue, alpha)
-        putVertex(maxX, maxY, width, height, width, height, topLeft, topRight, bottomRight, bottomLeft, red, green, blue, alpha)
-        putVertex(maxX, minY, width, 0f, width, height, topLeft, topRight, bottomRight, bottomLeft, red, green, blue, alpha)
+        repeat(4) {
+            shader.vertices
+                .vec2(x, y)
+                .vec2(width, height)
+                .vec4(topLeft, topRight, bottomRight, bottomLeft)
+                .vec4(red, green, blue, alpha)
+                .vec4(scissor.minX, scissor.minY, scissor.maxX, scissor.maxY)
+        }
     }
 
     override fun flush() {
@@ -87,45 +79,5 @@ class RoundedRectBatch : BatchRenderer, AutoCloseable {
 
     override fun close() {
         shader.close()
-    }
-
-    private fun putVertex(
-        x: Float,
-        y: Float,
-        localX: Float,
-        localY: Float,
-        width: Float,
-        height: Float,
-        topLeftRadius: Float,
-        topRightRadius: Float,
-        bottomRightRadius: Float,
-        bottomLeftRadius: Float,
-        red: Float,
-        green: Float,
-        blue: Float,
-        alpha: Float
-    ) {
-        shader.vertices
-            .vec2(MatrixControl.transformX(x, y), MatrixControl.transformY(x, y))
-            .vec2(localX, localY)
-            .vec2(width, height)
-            .vec4(topLeftRadius, topRightRadius, bottomRightRadius, bottomLeftRadius)
-            .vec4(red, green, blue, alpha)
-            .vec4(scissorMinX, scissorMinY, scissorMaxX, scissorMaxY)
-    }
-
-    private fun cacheScissor() {
-        val version = ScissorControl.version
-        if (version == scissorVersion) return
-
-        if (hasPending()) {
-            flush()
-        }
-
-        scissorVersion = version
-        scissorMinX = ScissorControl.minX
-        scissorMinY = ScissorControl.minY
-        scissorMaxX = ScissorControl.maxX
-        scissorMaxY = ScissorControl.maxY
     }
 }

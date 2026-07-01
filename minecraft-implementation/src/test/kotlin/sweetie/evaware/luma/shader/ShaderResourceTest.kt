@@ -20,6 +20,7 @@ class ShaderResourceTest {
     fun setUp() {
         GlslLibrary.register("scissor", "assets/luma/shaders/include/scissor.glsl")
         GlslLibrary.register("matrix", "assets/luma/shaders/include/matrix.glsl")
+        GlslLibrary.register("rect", "assets/luma/shaders/include/rect.glsl")
     }
 
     @Test
@@ -132,8 +133,8 @@ class ShaderResourceTest {
         val roundedVertex = resourceText("assets/luma/shaders/core/rounded_rect.vert")
         val roundedFragment = resourceText("assets/luma/shaders/core/rounded_rect.frag")
 
-        assertContains(uberVertex, "@in 3 vec4 a3 Scissor")
-        assertContains(roundedVertex, "@in 5 vec4 a5 a5")
+        assertContains(uberVertex, "@in 5 vec4 a5 Scissor")
+        assertContains(roundedVertex, "@in 4 vec4 a4 Scissor")
         assertContains(uberVertex, "out vec4 vScissor")
         assertContains(roundedVertex, "out vec4 vScissor")
         assertContains(uberFragment, "scissorVisible(vScissor")

@@ -9,6 +9,7 @@ import java.awt.image.BufferedImage
 import java.nio.FloatBuffer
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.ProgramHandle
+import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.api.RenderTargetHandle
@@ -43,8 +44,7 @@ class TextureAtlasTest {
             vertices: FloatBuffer,
             vertexCount: Int,
             uniforms: ShaderUniforms,
-            texture: TextureHandle?,
-            primitiveType: Int
+            primitiveType: PrimitiveType
         ) {}
         override fun createRenderTarget(
             width: Int,

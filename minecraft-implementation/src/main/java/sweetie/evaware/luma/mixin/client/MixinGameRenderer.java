@@ -10,7 +10,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import sweetie.evaware.renderutil.RenderTest;
+import sweetie.evaware.renderutil.OffscreenDemo;
 import sweetie.evaware.renderutil.RenderUtil;
 
 @Mixin(GameRenderer.class)
@@ -35,7 +35,7 @@ public class MixinGameRenderer {
     )
     private void luma$renderGuiRects(DeltaTracker deltaTracker, boolean tick, CallbackInfo callbackInfo) {
         RenderUtil.INSTANCE.renderFrame(() -> {
-            RenderTest.INSTANCE.renderGui();
+            OffscreenDemo.INSTANCE.render();
             return Unit.INSTANCE;
         });
     }

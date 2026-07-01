@@ -18,8 +18,7 @@ interface RenderBackend {
         vertices: FloatBuffer,
         vertexCount: Int,
         uniforms: ShaderUniforms,
-        texture: TextureHandle?,
-        primitiveType: Int
+        primitiveType: PrimitiveType
     )
     fun createRenderTarget(width: Int, height: Int, useDepth: Boolean, format: RenderTargetFormat): RenderTargetHandle
     fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?)

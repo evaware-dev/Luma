@@ -14,32 +14,8 @@ Lightweight rendering abstraction library for OpenGL and Vulkan (via Mojang Blaz
 
 ## Usage
 
-For detailed shader preprocessor syntax, see [Shader preprocessor syntax](docs/shader_example.md).
-
-### Shaders configuration and rendering
-
-```kotlin
-val shader = Shader(
-    "assets/luma/shaders/core/rect_quad.frag",
-    "assets/luma/shaders/core/rect_quad.vert"
-).drawMode(GL11.GL_TRIANGLES)
-
-with(shader) {
-    vertices.float(2, 0)
-    vertices.float(4, 1)
-    uMatrix = uniforms.mat4("uMatrix")
-}
-
-shader.load()
-
-shader.vertices
-    .vec2(x, y)
-    .vec4(r, g, b, a)
-
-shader.attach()
-shader.uniforms.mat4(uMatrix, matrix)
-shader.draw()
-```
+- [Shader usage](docs/shader_usage.md) — configuring and rendering with a `Shader` from Kotlin.
+- [Shader preprocessor syntax](docs/shader_example.md) — the `@`-directive shader source syntax.
 
 ### Dependency
 

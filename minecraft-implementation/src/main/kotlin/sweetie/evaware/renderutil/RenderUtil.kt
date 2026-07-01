@@ -4,6 +4,8 @@ import sweetie.evaware.LumaRenderer
 import sweetie.evaware.luma.GraphicsBackend
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.CloseableResourceBase
+import sweetie.evaware.luma.api.RenderTargetFormat
+import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.matrix.MatrixControl
 import sweetie.evaware.luma.resource.GlResources
 import sweetie.evaware.luma.scissor.ScissorControl
@@ -161,6 +163,28 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
         val pipelines = RenderPipeline.entries
         for (i in pipelines.indices) {
             flushPipeline(pipelines[i])
+        }
+    }
+
+    fun createRenderTarget(
+        width: Int,
+        height: Int,
+        useDepth: Boolean = false,
+        format: RenderTargetFormat = RenderTargetFormat.RGBA8
+    ): RenderTargetHandle {
+        load()
+        return Luma.backend.createRenderTarget(width, height, useDepth, format)
+    }
+
+    fun renderToTarget(target: RenderTargetHandle, clearColor: FloatArray? = null, action: () -> Unit) {
+        load()
+        flushAll()
+        Luma.backend.beginRenderTarget(target, clearColor)
+        try {
+            action()
+            flushAll()
+        } finally {
+            Luma.backend.endRenderTarget()
         }
     }
 

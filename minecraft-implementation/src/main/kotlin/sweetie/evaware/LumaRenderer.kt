@@ -2,6 +2,7 @@ package sweetie.evaware
 
 import net.fabricmc.api.ModInitializer
 import org.slf4j.LoggerFactory
+import sweetie.evaware.luma.LumaAssets
 import sweetie.evaware.luma.minecraft.LumaMinecraft
 import sweetie.evaware.luma.shader.GlslLibrary
 import sweetie.evaware.renderutil.RenderUtil
@@ -14,11 +15,12 @@ object LumaRenderer : ModInitializer {
         LumaMinecraft.install()
 
         GlslLibrary
-            .register("scissor", "assets/luma/shaders/include/scissor.glsl")
-            .register("matrix", "assets/luma/shaders/include/matrix.glsl")
+            .register("scissor", LumaAssets.SCISSOR_INCLUDE)
+            .register("matrix", LumaAssets.MATRIX_INCLUDE)
+            .register("rect", LumaAssets.RECT_INCLUDE)
             .attach()
 
-        RenderUtil.registerTexture("demo_icon", "assets/luma/icon.png")
+        RenderUtil.registerTexture("demo_icon", LumaAssets.DEMO_ICON)
         RenderUtil.registerTexture("demo_checker") {
             val image = BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB)
             for (x in 0 until 16) {

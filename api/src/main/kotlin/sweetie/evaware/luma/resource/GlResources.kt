@@ -26,7 +26,7 @@ object GlResources {
         for (index in snapshot.lastIndex downTo 0) {
             try {
                 snapshot[index].close()
-            } catch (_: Throwable) {
+            } catch (_: Exception) {
             }
         }
     }

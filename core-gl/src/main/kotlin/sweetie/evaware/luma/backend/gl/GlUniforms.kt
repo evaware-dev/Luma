@@ -5,28 +5,7 @@ import org.lwjgl.BufferUtils
 import org.lwjgl.opengl.GL20
 import sweetie.evaware.luma.uniform.*
 
-abstract class GlUniform(val name: String) {
-    private var cachedIndex = -1
-
-    fun getHandle(uniforms: ShaderUniforms): UniformHandle? {
-        val entries = uniforms.registry.entries
-        val idx = cachedIndex
-        if (idx in entries.indices) {
-            val entry = entries[idx]
-            if (entry.name == name) {
-                return entry.handle
-            }
-        }
-        for (i in entries.indices) {
-            val entry = entries[i]
-            if (entry.name == name) {
-                cachedIndex = i
-                return entry.handle
-            }
-        }
-        return null
-    }
-
+abstract class GlUniform(name: String) : UniformBinding(name) {
     abstract fun upload(location: Int, uniforms: ShaderUniforms)
 }
 

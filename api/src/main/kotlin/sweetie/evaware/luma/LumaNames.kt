@@ -6,6 +6,11 @@ object LumaNames {
     const val RENDER_PASS = "luma_draw"
     const val UNIFORMS_BLOCK = "LumaUniforms"
     const val TEXTURE = "luma_texture"
+    const val DEPTH_TEXTURE = "luma_depth_texture"
     const val SHADER_NAMESPACE = "luma-dynamic"
     const val PROGRAM_PREFIX = "program_"
+
+    const val SAMPLER_PREFIX = "Sampler"
+
+    const val BLAZE3D_GLSL_VERSION = "#version 450"
 }

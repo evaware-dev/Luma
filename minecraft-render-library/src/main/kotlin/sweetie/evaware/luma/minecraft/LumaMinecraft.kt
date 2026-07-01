@@ -3,6 +3,7 @@ package sweetie.evaware.luma.minecraft
 import sweetie.evaware.luma.GraphicsBackend
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.ProgramHandle
+import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.api.RenderTargetHandle
@@ -41,8 +42,8 @@ class LazyBackend : RenderBackend {
     override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle = delegate.createTexture(image, mipmap)
     override fun updateTexture(texture: TextureHandle, x: Int, y: Int, image: BufferedImage) = delegate.updateTexture(texture, x, y, image)
     override fun bindTexture(texture: TextureHandle, unit: Int) = delegate.bindTexture(texture, unit)
-    override fun draw(program: ProgramHandle, vertices: FloatBuffer, vertexCount: Int, uniforms: ShaderUniforms, texture: TextureHandle?, primitiveType: Int) =
-        delegate.draw(program, vertices, vertexCount, uniforms, texture, primitiveType)
+    override fun draw(program: ProgramHandle, vertices: FloatBuffer, vertexCount: Int, uniforms: ShaderUniforms, primitiveType: PrimitiveType) =
+        delegate.draw(program, vertices, vertexCount, uniforms, primitiveType)
     override fun createRenderTarget(width: Int, height: Int, useDepth: Boolean, format: RenderTargetFormat): RenderTargetHandle =
         delegate.createRenderTarget(width, height, useDepth, format)
     override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) =

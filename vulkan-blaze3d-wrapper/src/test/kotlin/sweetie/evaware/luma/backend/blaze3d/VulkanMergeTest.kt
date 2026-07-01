@@ -3,6 +3,7 @@ package sweetie.evaware.luma.backend.blaze3d
 import com.mojang.blaze3d.PrimitiveTopology
 import com.mojang.blaze3d.platform.CompareOp
 import net.minecraft.resources.Identifier
+import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.vertex.VertexLayout
 import sun.misc.Unsafe
@@ -48,6 +49,49 @@ class VulkanMergeTest {
 
     private fun createMockRenderTarget(): VulkanRenderTarget {
         return unsafe.allocateInstance(VulkanRenderTarget::class.java) as VulkanRenderTarget
+    }
+
+    private fun DrawCallRecorder.record(
+        program: Program,
+        vertexOffset: Long,
+        vertexBytes: Long,
+        vertexCount: Int,
+        uboOffset: Long,
+        uboBytes: Long,
+        texture: TextureHandle?,
+        primitiveType: PrimitiveType,
+        depthEnabled: Boolean = false,
+        depthWrite: Boolean = false,
+        depthFunc: CompareOp = CompareOp.ALWAYS_PASS,
+        cullEnabled: Boolean = false,
+        target: VulkanRenderTarget? = null,
+        clearColor: FloatArray? = null
+    ) {
+        val draw = obtain()
+        draw.program = program
+        draw.vertexOffset = vertexOffset
+        draw.vertexBytes = vertexBytes
+        draw.vertexCount = vertexCount
+        draw.uboOffset = uboOffset
+        draw.uboBytes = uboBytes
+        draw.textures = if (texture == null) {
+            DrawCall.NO_TEXTURES
+        } else {
+            arrayOfNulls<TextureHandle>(DrawCall.TEXTURE_UNITS).also { it[0] = texture }
+        }
+        draw.primitiveType = primitiveType
+        draw.depthEnabled = depthEnabled
+        draw.depthWrite = depthWrite
+        draw.depthFunc = depthFunc
+        draw.cullEnabled = cullEnabled
+        draw.target = target
+        draw.clearColor = clearColor
+    }
+
+    private fun merge(consumer: GroupConsumer, record: DrawCallRecorder.() -> Unit) {
+        val recorder = DrawCallRecorder()
+        recorder.record()
+        DrawCallMerger().run(recorder, consumer)
     }
 
     private class TestGroupConsumer : GroupConsumer {
@@ -105,9 +149,8 @@ class VulkanMergeTest {
 
     @Test
     fun testEmptyFrame() {
-        val backend = unsafe.allocateInstance(Backend::class.java) as Backend
         val consumer = TestGroupConsumer()
-        backend.runMergeLoop(consumer)
+        merge(consumer) {}
 
         assertTrue(consumer.targetChanges.isEmpty())
         assertTrue(consumer.pipelineChanges.isEmpty())
@@ -116,22 +159,10 @@ class VulkanMergeTest {
 
     @Test
     fun testSingleDraw() {
-        val backend = Backend()
-        backend.beginFrame()
-
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 0L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 2
-        )
-
         val consumer = TestGroupConsumer()
-        backend.runMergeLoop(consumer)
+        merge(consumer) {
+            record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS)
+        }
 
         assertEquals(1, consumer.targetChanges.size)
         assertEquals(1, consumer.pipelineChanges.size)
@@ -148,44 +179,12 @@ class VulkanMergeTest {
 
     @Test
     fun testBasicMerge() {
-        val backend = Backend()
-        backend.beginFrame()
-
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 0L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 2
-        )
-
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 64L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 2
-        )
-
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 128L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 2
-        )
-
         val consumer = TestGroupConsumer()
-        backend.runMergeLoop(consumer)
+        merge(consumer) {
+            record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS)
+            record(program1, 64L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS)
+            record(program1, 128L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS)
+        }
 
         assertEquals(1, consumer.targetChanges.size)
         assertEquals(1, consumer.pipelineChanges.size)
@@ -201,35 +200,11 @@ class VulkanMergeTest {
 
     @Test
     fun testSplitByState() {
-        val backend = Backend()
-        backend.beginFrame()
-
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 0L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 2,
-            depthEnabled = false
-        )
-
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 64L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 2,
-            depthEnabled = true
-        )
-
         val consumer = TestGroupConsumer()
-        backend.runMergeLoop(consumer)
+        merge(consumer) {
+            record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS, depthEnabled = false)
+            record(program1, 64L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS, depthEnabled = true)
+        }
 
         assertEquals(2, consumer.pipelineChanges.size)
         assertEquals(2, consumer.draws.size)
@@ -239,33 +214,11 @@ class VulkanMergeTest {
 
     @Test
     fun testSplitByProgram() {
-        val backend = Backend()
-        backend.beginFrame()
-
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 0L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 2
-        )
-
-        backend.addDrawCallForTest(
-            program = program2,
-            vertexOffset = 64L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 2
-        )
-
         val consumer = TestGroupConsumer()
-        backend.runMergeLoop(consumer)
+        merge(consumer) {
+            record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS)
+            record(program2, 64L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS)
+        }
 
         assertEquals(2, consumer.pipelineChanges.size)
         assertEquals(2, consumer.draws.size)
@@ -273,33 +226,11 @@ class VulkanMergeTest {
 
     @Test
     fun testSplitByTexture() {
-        val backend = Backend()
-        backend.beginFrame()
-
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 0L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 2
-        )
-
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 64L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture2,
-            primitiveType = 2
-        )
-
         val consumer = TestGroupConsumer()
-        backend.runMergeLoop(consumer)
+        merge(consumer) {
+            record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS)
+            record(program1, 64L, 64L, 4, 0L, 32L, texture2, PrimitiveType.QUADS)
+        }
 
         assertEquals(2, consumer.textureChanges.size)
         assertEquals(2, consumer.draws.size)
@@ -307,33 +238,11 @@ class VulkanMergeTest {
 
     @Test
     fun testSplitByTopology() {
-        val backend = Backend()
-        backend.beginFrame()
-
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 0L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 2
-        )
-
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 64L,
-            vertexBytes = 48L,
-            vertexCount = 3,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 0
-        )
-
         val consumer = TestGroupConsumer()
-        backend.runMergeLoop(consumer)
+        merge(consumer) {
+            record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS)
+            record(program1, 64L, 48L, 3, 0L, 32L, texture1, PrimitiveType.TRIANGLES)
+        }
 
         assertEquals(2, consumer.pipelineChanges.size)
         assertEquals(2, consumer.draws.size)
@@ -341,33 +250,11 @@ class VulkanMergeTest {
 
     @Test
     fun testSplitByNonContiguousVertices() {
-        val backend = Backend()
-        backend.beginFrame()
-
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 0L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 2
-        )
-
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 128L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 2
-        )
-
         val consumer = TestGroupConsumer()
-        backend.runMergeLoop(consumer)
+        merge(consumer) {
+            record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS)
+            record(program1, 128L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS)
+        }
 
         assertEquals(2, consumer.draws.size)
         assertEquals(0L, consumer.draws[0].vertexStart)
@@ -376,50 +263,15 @@ class VulkanMergeTest {
 
     @Test
     fun testTargetChanges() {
-        val backend = Backend()
-        backend.beginFrame()
-
         val target1 = createMockRenderTarget()
         val target2 = createMockRenderTarget()
 
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 0L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 2,
-            target = target1
-        )
-
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 64L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 2,
-            target = target1
-        )
-
-        backend.addDrawCallForTest(
-            program = program1,
-            vertexOffset = 128L,
-            vertexBytes = 64L,
-            vertexCount = 4,
-            uboOffset = 0L,
-            uboBytes = 32L,
-            texture = texture1,
-            primitiveType = 2,
-            target = target2
-        )
-
         val consumer = TestGroupConsumer()
-        backend.runMergeLoop(consumer)
+        merge(consumer) {
+            record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS, target = target1)
+            record(program1, 64L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS, target = target1)
+            record(program1, 128L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS, target = target2)
+        }
 
         assertEquals(2, consumer.targetChanges.size)
         assertEquals(2, consumer.draws.size)

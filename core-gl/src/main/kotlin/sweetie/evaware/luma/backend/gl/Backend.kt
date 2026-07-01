@@ -3,6 +3,7 @@ package sweetie.evaware.luma.backend.gl
 import org.lwjgl.glfw.GLFW
 import org.lwjgl.opengl.*
 import sweetie.evaware.luma.Luma
+import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.RenderTargetFormat
@@ -130,8 +131,7 @@ class Backend : RenderBackend {
         vertices: FloatBuffer,
         vertexCount: Int,
         uniforms: ShaderUniforms,
-        texture: TextureHandle?,
-        primitiveType: Int
+        primitiveType: PrimitiveType
     ) {
         val glProgram = program as Program
         
@@ -140,10 +140,6 @@ class Backend : RenderBackend {
         bindArrayBuffer(glProgram.vertexBuffer.vbo)
 
         glProgram.vertexBuffer.upload(vertices)
-
-        if (texture != null) {
-            bindTexture(texture, 0)
-        }
 
         val prepared = glProgram.getPreparedUniforms(uniforms)
         for (i in prepared.indices) {
@@ -155,13 +151,14 @@ class Backend : RenderBackend {
             }
         }
 
-        val glMode = when (primitiveType) {
-            0 -> GL11.GL_TRIANGLES
-            1 -> GL11.GL_LINES
-            2 -> GL30.GL_TRIANGLE_FAN
-            else -> GL11.GL_TRIANGLES
+        when (primitiveType) {
+            PrimitiveType.QUADS -> {
+                val indexCount = glProgram.vertexBuffer.bindQuadIndices(vertexCount)
+                GL11.glDrawElements(GL11.GL_TRIANGLES, indexCount, GL11.GL_UNSIGNED_INT, 0L)
+            }
+            PrimitiveType.LINES -> GL11.glDrawArrays(GL11.GL_LINES, 0, vertexCount)
+            PrimitiveType.TRIANGLES -> GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, vertexCount)
         }
-        GL11.glDrawArrays(glMode, 0, vertexCount)
     }
 
     override fun createRenderTarget(
@@ -170,7 +167,7 @@ class Backend : RenderBackend {
         useDepth: Boolean,
         format: RenderTargetFormat
     ): RenderTargetHandle {
-        return GlRenderTarget.create(width, height)
+        return GlRenderTarget.create(width, height, useDepth, format)
     }
 
     override fun beginRenderTarget(

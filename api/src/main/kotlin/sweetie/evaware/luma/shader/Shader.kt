@@ -1,6 +1,7 @@
 package sweetie.evaware.luma.shader
 
 import sweetie.evaware.luma.Luma
+import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.resource.GlResources
 
@@ -12,11 +13,11 @@ open class Shader(
     val vertices get() = inputs.vertices
     val uniforms get() = inputs.uniforms
 
-    private var drawMode = Luma.PRIMITIVE_TRIANGLES
+    private var drawMode = PrimitiveType.TRIANGLES
     private var programHandle: ProgramHandle? = null
     private var loaded = false
 
-    fun drawMode(mode: Int) = apply {
+    fun drawMode(mode: PrimitiveType) = apply {
         this.drawMode = mode
     }
 
@@ -50,7 +51,6 @@ open class Shader(
             vertices = stream.flipForUpload(),
             vertexCount = stream.vertexCount,
             uniforms = uniforms,
-            texture = Luma.activeTextureHandle,
             primitiveType = drawMode
         )
 

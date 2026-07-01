@@ -39,6 +39,7 @@ data class PipelineKey(
     val cullEnabled: Boolean
 )
 
+data class SamplerBinding(val name: String, val unit: Int)
 class Program(
     val id: Identifier,
     val vertexSource: String,
@@ -49,11 +50,19 @@ class Program(
     val uniformInfos = parseUniforms(vertexSource, fragmentSource)
     val attributeNames = parseAttributes(vertexSource)
     val samplers = run {
-        val samplerRegex = Regex("""\bSampler\d+\b""")
+        val samplerRegex = Regex("""\b${LumaNames.SAMPLER_PREFIX}\d+\b""")
         (vertexSource.lines() + fragmentSource.lines())
             .flatMap { samplerRegex.findAll(it).map { m -> m.value } }
             .distinct()
     }
+
+    val samplerBindings: List<SamplerBinding> = samplers.map { name ->
+        SamplerBinding(name, name.removePrefix(LumaNames.SAMPLER_PREFIX).toIntOrNull() ?: 0)
+    }
+
+    var uboCacheFrameId: Long = -1L
+    var uboCacheOffset: Long = 0L
+    var uboCacheBytes: Int = 0
 
     private var vulkanUniforms: List<VulkanUniform>? = null
 

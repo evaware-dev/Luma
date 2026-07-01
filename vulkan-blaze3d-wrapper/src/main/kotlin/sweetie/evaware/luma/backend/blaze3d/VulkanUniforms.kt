@@ -7,29 +7,9 @@ import sweetie.evaware.luma.uniform.*
 data class UniformInfo(val name: String, val type: String)
 
 abstract class VulkanUniform(
-    val name: String,
+    name: String,
     val type: String
-) {
-    private var cachedIndex = -1
-
-    protected fun getHandle(uniforms: ShaderUniforms): UniformHandle? {
-        val entries = uniforms.registry.entries
-        val idx = cachedIndex
-        if (idx in entries.indices) {
-            val entry = entries[idx]
-            if (entry.name == name) {
-                return entry.handle
-            }
-        }
-        for (i in entries.indices) {
-            val entry = entries[i]
-            if (entry.name == name) {
-                cachedIndex = i
-                return entry.handle
-            }
-        }
-        return null
-    }
+) : UniformBinding(name) {
 
     fun isHandleDirty(uniforms: ShaderUniforms): Boolean =
         getHandle(uniforms)?.isDirty ?: false

@@ -32,7 +32,6 @@ class Program(
                         is Float4Uniform -> GlFloat4Uniform(entry.name)
                         is Int1Uniform -> GlInt1Uniform(entry.name)
                         is Mat4Uniform -> GlMat4Uniform(entry.name)
-                        else -> error("Unsupported OpenGL uniform type")
                     }
                     PreparedGlUniform(uniform, loc)
                 } else {

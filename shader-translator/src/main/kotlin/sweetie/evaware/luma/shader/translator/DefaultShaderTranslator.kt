@@ -7,6 +7,7 @@ import sweetie.evaware.luma.vertex.VertexLayout
 import sweetie.evaware.luma.shader.GlslLibrary
 
 class DefaultShaderTranslator : ShaderTranslator {
+
     override fun translate(
         vertexSource: String,
         fragmentSource: String,
@@ -17,42 +18,36 @@ class DefaultShaderTranslator : ShaderTranslator {
 
         val isBlaze3d = try {
             Luma.platform.activeBackend != GraphicsBackend.OPENGL
-        } catch (_: Throwable) {
+        } catch (_: Exception) {
             false
         }
 
-        return if (isBlaze3d) {
-            val sharedUniforms = extractUniformLines(vertResolved).ifEmpty { extractUniformLines(fragResolved) }
-            val vertOutputs = extractShaderOutputs(vertResolved)
-            val vertOutputsMap = vertOutputs.mapIndexed { index, name -> name to index }.toMap()
-            TranslationResult(
-                translateShader(vertResolved, true, sharedUniforms, vertOutputsMap, true),
-                translateShader(fragResolved, true, sharedUniforms, vertOutputsMap, false)
-            )
-        } else {
-            TranslationResult(
+        if (!isBlaze3d) {
+            return TranslationResult(
                 translateShader(vertResolved, false, emptyList(), emptyMap(), true),
                 translateShader(fragResolved, false, emptyList(), emptyMap(), false)
             )
         }
+
+        val sharedUniforms = extractUniformLines(vertResolved).ifEmpty { extractUniformLines(fragResolved) }
+        val vertOutputs = extractShaderOutputs(vertResolved)
+        val vertOutputsMap = vertOutputs.mapIndexed { index, name -> name to index }.toMap()
+
+        return TranslationResult(
+            translateShader(vertResolved, true, sharedUniforms, vertOutputsMap, true),
+            translateShader(fragResolved, true, sharedUniforms, vertOutputsMap, false)
+        )
     }
 
     private fun extractUniformLines(source: String): List<String> {
-        val lines = source.lines()
         val list = ArrayList<String>()
         var inUniforms = false
-        for (line in lines) {
+        for (line in source.lines()) {
             val trimmed = line.trim()
-            if (trimmed == "@uniforms") {
-                inUniforms = true
-                continue
-            }
-            if (trimmed == "@end") {
-                inUniforms = false
-                break
-            }
-            if (inUniforms && trimmed.isNotEmpty()) {
-                list.add(line)
+            when {
+                trimmed == UNIFORMS_OPEN -> inUniforms = true
+                trimmed == UNIFORMS_CLOSE -> return list
+                inUniforms && trimmed.isNotEmpty() -> list.add(line)
             }
         }
         return list
@@ -60,12 +55,8 @@ class DefaultShaderTranslator : ShaderTranslator {
 
     private fun extractShaderOutputs(source: String): List<String> {
         val list = ArrayList<String>()
-        val regex = Regex("""^\s*out\s+[a-zA-Z0-9_]+\s+([a-zA-Z0-9_]+)\s*;""")
         for (line in source.lines()) {
-            val match = regex.find(line)
-            if (match != null) {
-                list.add(match.groupValues[1])
-            }
+            OUT_VARYING.find(line)?.let { list.add(it.groupValues[2]) }
         }
         return list
     }
@@ -78,150 +69,191 @@ class DefaultShaderTranslator : ShaderTranslator {
         isVertex: Boolean
     ): String {
         val lines = source.lines()
-        val result = StringBuilder()
-        
-        var inUniforms = false
+        val result = StringBuilder(source.length + 128)
+
         val uniformLines = ArrayList<String>()
         val renames = ArrayList<Pair<String, String>>()
-        val hasUniformsBlock = source.contains("@uniforms")
-        val hasVersion = lines.any { it.trim().startsWith("#version") }
+        val hasUniformsBlock = source.contains(UNIFORMS_OPEN)
+        val hasVersion = lines.any { it.trim().startsWith(VERSION_DIRECTIVE) }
+        val emitSharedBlock = toBlaze3d && !hasUniformsBlock && sharedUniformLines.isNotEmpty()
 
         if (toBlaze3d && !hasVersion) {
-            result.appendLine("#version 450")
-            if (!hasUniformsBlock && sharedUniformLines.isNotEmpty()) {
-                result.appendLine()
-                result.appendLine("layout(std140, binding = 0) uniform ${LumaNames.UNIFORMS_BLOCK} {")
-                for (uLine in sharedUniformLines) {
-                    val cleanLine = uLine.replace(Regex("""^\s*uniform\s+"""), "    ")
-                    result.appendLine(cleanLine)
-                }
-                result.appendLine("};")
-                result.appendLine()
-            }
+            appendBlaze3dHeader(result, sharedUniformLines, emitSharedBlock, trailingBlank = true)
         }
 
+        var inUniforms = false
         for (line in lines) {
             val trimmed = line.trim()
 
-            if (trimmed.startsWith("#version")) {
+            if (trimmed.startsWith(VERSION_DIRECTIVE)) {
                 if (toBlaze3d) {
-                    result.appendLine("#version 450")
-                    if (!hasUniformsBlock && sharedUniformLines.isNotEmpty()) {
-                        result.appendLine()
-                        result.appendLine("layout(std140, binding = 0) uniform ${LumaNames.UNIFORMS_BLOCK} {")
-                        for (uLine in sharedUniformLines) {
-                            val cleanLine = uLine.replace(Regex("""^\s*uniform\s+"""), "    ")
-                            result.appendLine(cleanLine)
-                        }
-                        result.appendLine("};")
-                    }
+                    appendBlaze3dHeader(result, sharedUniformLines, emitSharedBlock, trailingBlank = false)
                 } else {
                     result.appendLine(line)
                 }
                 continue
             }
 
-            if (trimmed == "@uniforms") {
+            if (trimmed == UNIFORMS_OPEN) {
                 inUniforms = true
                 continue
             }
 
-            if (trimmed == "@end") {
+            if (trimmed == UNIFORMS_CLOSE) {
                 inUniforms = false
                 if (toBlaze3d) {
                     if (sharedUniformLines.isNotEmpty()) {
-                        result.appendLine("layout(std140, binding = 0) uniform ${LumaNames.UNIFORMS_BLOCK} {")
-                        for (uLine in sharedUniformLines) {
-                            val cleanLine = uLine.replace(Regex("""^\s*uniform\s+"""), "    ")
-                            result.appendLine(cleanLine)
-                        }
-                        result.appendLine("};")
+                        appendUniformBlock(result, sharedUniformLines)
                     }
                 } else {
-                    for (uLine in uniformLines) {
-                        result.appendLine(uLine)
-                    }
+                    uniformLines.forEach(result::appendLine)
                 }
                 uniformLines.clear()
                 continue
             }
 
             if (inUniforms) {
-                if (trimmed.isNotEmpty()) {
-                    uniformLines.add(line)
-                }
+                if (trimmed.isNotEmpty()) uniformLines.add(line)
                 continue
             }
 
-            val inMatch = Regex("""^\s*@in\s+(\d+)\s+([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s*$""").matchEntire(line)
-            if (inMatch != null) {
-                val location = inMatch.groupValues[1]
-                val type = inMatch.groupValues[2]
-                val name = inMatch.groupValues[3]
-                val backendName = inMatch.groupValues[4]
-
-                if (toBlaze3d) {
-                    result.appendLine("// @in $location $type $name $backendName")
-                    result.appendLine("layout(location = $location) in $type $backendName;")
-                    renames.add(name to backendName)
-                } else {
-                    result.appendLine("layout(location = $location) in $type $name;")
-                }
-                continue
-            }
-
-            val samplerMatch = Regex("""^\s*@sampler\s+([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s+(\d+)\s*$""").matchEntire(line)
-            if (samplerMatch != null) {
-                val type = samplerMatch.groupValues[1]
-                val name = samplerMatch.groupValues[2]
-                val index = samplerMatch.groupValues[3].toInt()
-
-                if (toBlaze3d) {
-                    val backendName = "Sampler$index"
-                    val binding = if (sharedUniformLines.isNotEmpty()) index + 1 else index
-                    result.appendLine("layout(binding = $binding) uniform $type $backendName;")
-                    renames.add(name to backendName)
-                } else {
-                    result.appendLine("uniform $type $name;")
-                }
-                continue
-            }
-
-            val outMatch = Regex("""^out\s+([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s*;$""").matchEntire(trimmed)
-            if (outMatch != null && toBlaze3d) {
-                val type = outMatch.groupValues[1]
-                val name = outMatch.groupValues[2]
-                if (isVertex) {
-                    val loc = vertOutputsMap[name]
-                    if (loc != null) {
-                        result.appendLine("layout(location = $loc) out $type $name;")
-                        continue
-                    }
-                } else {
-                    result.appendLine("layout(location = 0) out $type $name;")
-                    continue
-                }
-            }
-
-            val inVarMatch = Regex("""^in\s+([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s*;$""").matchEntire(trimmed)
-            if (inVarMatch != null && toBlaze3d && !isVertex) {
-                val type = inVarMatch.groupValues[1]
-                val name = inVarMatch.groupValues[2]
-                val loc = vertOutputsMap[name]
-                if (loc != null) {
-                    result.appendLine("layout(location = $loc) in $type $name;")
-                    continue
-                }
-            }
+            if (appendAttribute(result, line, toBlaze3d, renames)) continue
+            if (appendSampler(result, line, toBlaze3d, sharedUniformLines.isNotEmpty(), renames)) continue
+            if (appendVarying(result, trimmed, toBlaze3d, isVertex, vertOutputsMap)) continue
 
             result.appendLine(line)
         }
 
-        var finalSource = result.toString()
-        for ((oldName, newName) in renames) {
-            finalSource = finalSource.replace(Regex("\\b$oldName\\b"), newName)
+        if (toBlaze3d) {
+            renames.add(VERTEX_ID_GL to VERTEX_ID_VULKAN)
         }
 
-        return finalSource
+        return applyRenames(result.toString(), renames)
+    }
+
+    private fun appendBlaze3dHeader(
+        result: StringBuilder,
+        sharedUniformLines: List<String>,
+        emitBlock: Boolean,
+        trailingBlank: Boolean
+    ) {
+        result.appendLine(LumaNames.BLAZE3D_GLSL_VERSION)
+        if (emitBlock) {
+            result.appendLine()
+            appendUniformBlock(result, sharedUniformLines)
+            if (trailingBlank) result.appendLine()
+        }
+    }
+
+    private fun appendUniformBlock(result: StringBuilder, uniformLines: List<String>) {
+        result.appendLine("layout(std140, binding = 0) uniform ${LumaNames.UNIFORMS_BLOCK} {")
+        for (line in uniformLines) {
+            result.appendLine(line.replace(UNIFORM_KEYWORD, "    "))
+        }
+        result.appendLine("};")
+    }
+
+    private fun appendAttribute(
+        result: StringBuilder,
+        line: String,
+        toBlaze3d: Boolean,
+        renames: MutableList<Pair<String, String>>
+    ): Boolean {
+        val match = ATTRIBUTE.matchEntire(line) ?: return false
+        val (location, type, name, backendName) = match.destructured
+        if (toBlaze3d) {
+            result.appendLine("// @in $location $type $name $backendName")
+            result.appendLine("layout(location = $location) in $type $backendName;")
+            renames.add(name to backendName)
+        } else {
+            result.appendLine("layout(location = $location) in $type $name;")
+        }
+        return true
+    }
+
+    private fun appendSampler(
+        result: StringBuilder,
+        line: String,
+        toBlaze3d: Boolean,
+        hasSharedUniforms: Boolean,
+        renames: MutableList<Pair<String, String>>
+    ): Boolean {
+        val match = SAMPLER.matchEntire(line) ?: return false
+        val type = match.groupValues[1]
+        val name = match.groupValues[2]
+        val index = match.groupValues[3].toInt()
+        if (toBlaze3d) {
+            val backendName = "${LumaNames.SAMPLER_PREFIX}$index"
+            val binding = if (hasSharedUniforms) index + 1 else index
+            result.appendLine("layout(binding = $binding) uniform $type $backendName;")
+            renames.add(name to backendName)
+        } else {
+            result.appendLine("uniform $type $name;")
+        }
+        return true
+    }
+
+    private fun appendVarying(
+        result: StringBuilder,
+        trimmed: String,
+        toBlaze3d: Boolean,
+        isVertex: Boolean,
+        vertOutputsMap: Map<String, Int>
+    ): Boolean {
+        if (!toBlaze3d) return false
+
+        OUT_VARYING.matchEntire(trimmed)?.let { match ->
+            val type = match.groupValues[1]
+            val name = match.groupValues[2]
+            val location = if (isVertex) vertOutputsMap[name] else 0
+            if (location != null) {
+                result.appendLine("layout(location = $location) out $type $name;")
+                return true
+            }
+        }
+
+        if (!isVertex) {
+            IN_VARYING.matchEntire(trimmed)?.let { match ->
+                val type = match.groupValues[1]
+                val name = match.groupValues[2]
+                val location = vertOutputsMap[name]
+                if (location != null) {
+                    result.appendLine("layout(location = $location) in $type $name;")
+                    return true
+                }
+            }
+        }
+
+        return false
+    }
+
+    private fun applyRenames(source: String, renames: List<Pair<String, String>>): String {
+        if (renames.isEmpty()) return source
+
+        val replacements = HashMap<String, String>(renames.size * 2)
+        for ((old, new) in renames) replacements[old] = new
+
+        val alternation = renames
+            .map { Regex.escape(it.first) }
+            .sortedByDescending { it.length }
+            .joinToString("|")
+        val pattern = Regex("""\b(?:$alternation)\b""")
+
+        return pattern.replace(source) { match -> replacements[match.value] ?: match.value }
+    }
+
+    private companion object {
+        const val VERSION_DIRECTIVE = "#version"
+        const val UNIFORMS_OPEN = "@uniforms"
+        const val UNIFORMS_CLOSE = "@end"
+
+        const val VERTEX_ID_GL = "gl_VertexID"
+        const val VERTEX_ID_VULKAN = "gl_VertexIndex"
+
+        val UNIFORM_KEYWORD = Regex("""^\s*uniform\s+""")
+        val ATTRIBUTE = Regex("""^\s*@in\s+(\d+)\s+([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s*$""")
+        val SAMPLER = Regex("""^\s*@sampler\s+([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s+(\d+)\s*$""")
+        val OUT_VARYING = Regex("""^\s*out\s+([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s*;""")
+        val IN_VARYING = Regex("""^in\s+([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s*;$""")
     }
 }
