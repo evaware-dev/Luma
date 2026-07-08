@@ -1,6 +1,9 @@
 package sweetie.evaware.luma.backend.blaze3d
 
 import sweetie.evaware.luma.LumaNames
+import java.awt.image.DataBufferInt
+import java.nio.ByteBuffer
+import com.mojang.blaze3d.systems.GpuDevice
 
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.textures.GpuTexture
@@ -27,7 +30,7 @@ class VulkanTexture(
         val w = image.width
         val h = image.height
 
-        val pixels = (image.raster.dataBuffer as? java.awt.image.DataBufferInt)?.data ?: image.getRGB(0, 0, w, h, null, 0, w)
+        val pixels = (image.raster.dataBuffer as? DataBufferInt)?.data ?: image.getRGB(0, 0, w, h, null, 0, w)
         val buffer = MemoryUtil.memAlloc(w * h * 4)
         try {
             for (p in pixels) {
@@ -54,9 +57,9 @@ class VulkanTexture(
 
     companion object {
         private fun uploadSync(
-            device: com.mojang.blaze3d.systems.GpuDevice,
+            device: GpuDevice,
             target: GpuTexture,
-            buffer: java.nio.ByteBuffer,
+            buffer: ByteBuffer,
             x: Int, y: Int, w: Int, h: Int
         ) {
             val encoder = device.createCommandEncoder()
@@ -88,7 +91,7 @@ class VulkanTexture(
                 )
                 view = device.createTextureView(texture)
 
-                val pixels = (image.raster.dataBuffer as? java.awt.image.DataBufferInt)?.data ?: image.getRGB(0, 0, w, h, null, 0, w)
+                val pixels = (image.raster.dataBuffer as? DataBufferInt)?.data ?: image.getRGB(0, 0, w, h, null, 0, w)
                 val buffer = MemoryUtil.memAlloc(w * h * 4)
                 try {
                     for (p in pixels) {

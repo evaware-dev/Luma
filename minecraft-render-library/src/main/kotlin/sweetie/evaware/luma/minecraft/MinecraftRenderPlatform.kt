@@ -1,5 +1,6 @@
 package sweetie.evaware.luma.minecraft
 
+import com.mojang.blaze3d.opengl.GlStateManager
 import net.minecraft.client.Minecraft
 import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL30
@@ -46,5 +47,29 @@ object MinecraftRenderPlatform : RenderPlatform {
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo)
             GL11.glViewport(0, 0, w, h)
         }
+    }
+
+    override fun enableBlend() {
+        GlStateManager._enableBlend(0)
+    }
+
+    override fun disableBlend() {
+        GlStateManager._disableBlend(0)
+    }
+
+    override fun enableDepthTest() {
+        GlStateManager._enableDepthTest()
+    }
+
+    override fun disableDepthTest() {
+        GlStateManager._disableDepthTest()
+    }
+
+    override fun enableCull() {
+        GlStateManager._enableCull()
+    }
+
+    override fun disableCull() {
+        GlStateManager._disableCull()
     }
 }

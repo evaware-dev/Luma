@@ -9,6 +9,13 @@ interface RenderPlatform {
     fun getWindowHeight(): Float
     fun getViewport(viewport: IntArray): Boolean
     fun swapToMainFramebuffer(luma: Luma)
+
+    fun enableBlend() {}
+    fun disableBlend() {}
+    fun enableDepthTest() {}
+    fun disableDepthTest() {}
+    fun enableCull() {}
+    fun disableCull() {}
 }
 
 object DefaultRenderPlatform : RenderPlatform {

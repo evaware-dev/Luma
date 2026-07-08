@@ -54,4 +54,11 @@ object Luma {
     fun bindTexture(texture: TextureHandle, unit: Int = 0) {
         backend.bindTexture(texture, unit)
     }
+
+    fun enableBlend() = platform.enableBlend()
+    fun disableBlend() = platform.disableBlend()
+    fun enableDepthTest() = platform.enableDepthTest()
+    fun disableDepthTest() = platform.disableDepthTest()
+    fun enableCull() = platform.enableCull()
+    fun disableCull() = platform.disableCull()
 }

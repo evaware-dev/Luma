@@ -1,5 +1,6 @@
 package sweetie.evaware.luma.backend.gl
 
+import java.nio.ByteBuffer
 import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL14
 import org.lwjgl.opengl.GL30
@@ -48,7 +49,7 @@ class GlRenderTarget(
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL14.GL_CLAMP_TO_EDGE)
             GL11.glTexImage2D(
                 GL11.GL_TEXTURE_2D, 0, internalFormat, width, height, 0,
-                GL11.GL_RGBA, pixelType, null as java.nio.ByteBuffer?
+                GL11.GL_RGBA, pixelType, null as ByteBuffer?
             )
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0)
 

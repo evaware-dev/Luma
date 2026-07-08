@@ -58,7 +58,6 @@ class Backend : RenderBackend {
         invalidateBindingCache()
         targetStack.clear()
         targetStack.add(TargetFrame(null, null))
-        Luma.platform.swapToMainFramebuffer(Luma)
     }
 
     override fun endFrame() {
@@ -198,7 +197,8 @@ class Backend : RenderBackend {
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, active.target.fbo)
             GL11.glViewport(0, 0, active.target.width, active.target.height)
         } else {
-            Luma.platform.swapToMainFramebuffer(Luma)
+            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, frameSnapshot.drawFramebuffer)
+            GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, frameSnapshot.readFramebuffer)
             GL11.glViewport(frameSnapshot.viewportX, frameSnapshot.viewportY, frameSnapshot.viewportWidth, frameSnapshot.viewportHeight)
         }
     }
@@ -235,6 +235,7 @@ class Backend : RenderBackend {
         snapshot.blendEnabled = GL11.glIsEnabled(GL11.GL_BLEND)
         snapshot.depthEnabled = GL11.glIsEnabled(GL11.GL_DEPTH_TEST)
         snapshot.cullEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE)
+        snapshot.scissorEnabled = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)
 
         snapshot.blendSrcRgb = GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB)
         snapshot.blendDstRgb = GL11.glGetInteger(GL14.GL_BLEND_DST_RGB)
@@ -245,11 +246,13 @@ class Backend : RenderBackend {
 
         snapshot.program = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM)
         snapshot.vertexArray = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING)
+        snapshot.arrayBuffer = GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING)
 
         snapshot.activeTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)
         for (i in 0..1) {
             GL13.glActiveTexture(GL13.GL_TEXTURE0 + i)
             snapshot.boundTextures[i] = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
+            snapshot.samplerBindings[i] = GL11.glGetInteger(GL33.GL_SAMPLER_BINDING)
         }
         GL13.glActiveTexture(snapshot.activeTexture)
     }
@@ -262,16 +265,19 @@ class Backend : RenderBackend {
         if (snapshot.blendEnabled) GL11.glEnable(GL11.GL_BLEND) else GL11.glDisable(GL11.GL_BLEND)
         if (snapshot.depthEnabled) GL11.glEnable(GL11.GL_DEPTH_TEST) else GL11.glDisable(GL11.GL_DEPTH_TEST)
         if (snapshot.cullEnabled) GL11.glEnable(GL11.GL_CULL_FACE) else GL11.glDisable(GL11.GL_CULL_FACE)
+        if (snapshot.scissorEnabled) GL11.glEnable(GL11.GL_SCISSOR_TEST) else GL11.glDisable(GL11.GL_SCISSOR_TEST)
 
         GL14.glBlendFuncSeparate(snapshot.blendSrcRgb, snapshot.blendDstRgb, snapshot.blendSrcAlpha, snapshot.blendDstAlpha)
         GL20.glBlendEquationSeparate(snapshot.blendEquationRgb, snapshot.blendEquationAlpha)
 
         GL20.glUseProgram(snapshot.program)
         GL30.glBindVertexArray(snapshot.vertexArray)
+        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, snapshot.arrayBuffer)
 
         for (i in 0..1) {
             GL13.glActiveTexture(GL13.GL_TEXTURE0 + i)
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, snapshot.boundTextures[i])
+            GL33.glBindSampler(i, snapshot.samplerBindings[i])
         }
         GL13.glActiveTexture(snapshot.activeTexture)
     }
@@ -279,6 +285,7 @@ class Backend : RenderBackend {
     private fun applyGuiState() {
         GL11.glDisable(GL11.GL_DEPTH_TEST)
         GL11.glDisable(GL11.GL_CULL_FACE)
+        GL11.glDisable(GL11.GL_SCISSOR_TEST)
         GL11.glEnable(GL11.GL_BLEND)
         GL20.glBlendEquationSeparate(GL14.GL_FUNC_ADD, GL14.GL_FUNC_ADD)
         GL14.glBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, GL11.GL_ONE, GL11.GL_ZERO)

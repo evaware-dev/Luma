@@ -5,9 +5,11 @@ import org.lwjgl.opengl.GL12
 import org.lwjgl.opengl.GL13
 import org.lwjgl.opengl.GL14
 import org.lwjgl.opengl.GL30
+import org.lwjgl.opengl.GL33
 import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.api.TextureHandle
 import java.awt.image.BufferedImage
+import java.awt.image.DataBufferInt
 
 class GlTexture(
     val textureId: Int,
@@ -58,6 +60,7 @@ class GlTexture(
         val activeUnit = GL13.GL_TEXTURE0 + unit
         GL13.glActiveTexture(activeUnit)
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
+        GL33.glBindSampler(unit, 0)
     }
 
     override fun close() {
@@ -126,7 +129,7 @@ class GlTexture(
         }
 
         private fun getArgbPixels(image: BufferedImage): IntArray {
-            return (image.raster.dataBuffer as? java.awt.image.DataBufferInt)?.data
+            return (image.raster.dataBuffer as? DataBufferInt)?.data
                 ?: image.getRGB(0, 0, image.width, image.height, null, 0, image.width)
         }
     }

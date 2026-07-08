@@ -22,4 +22,5 @@ class GlStateSnapshot {
     val boundTextures = IntArray(2)
     var arrayBuffer = 0
     val samplerBindings = IntArray(2)
+    var scissorEnabled = false
 }
