@@ -26,24 +26,9 @@ class VulkanTexture(
 ) : TextureHandle {
 
     fun update(x: Int, y: Int, image: BufferedImage) {
-        val device = RenderSystem.getDevice()
         val w = image.width
         val h = image.height
-
-        val pixels = (image.raster.dataBuffer as? DataBufferInt)?.data ?: image.getRGB(0, 0, w, h, null, 0, w)
-        val buffer = MemoryUtil.memAlloc(w * h * 4)
-        try {
-            for (p in pixels) {
-                buffer.put((p ushr 16 and 0xFF).toByte())
-                buffer.put((p ushr 8 and 0xFF).toByte())
-                buffer.put((p and 0xFF).toByte())
-                buffer.put((p ushr 24 and 0xFF).toByte())
-            }
-            buffer.flip()
-            uploadSync(device, gpuTexture, buffer, x, y, w, h)
-        } finally {
-            MemoryUtil.memFree(buffer)
-        }
+        TextureUploadQueue.enqueue(gpuTexture, rgbaBuffer(image), x, y, w, h)
     }
 
     fun bind(unit: Int) {
@@ -56,6 +41,22 @@ class VulkanTexture(
     }
 
     companion object {
+        private fun rgbaBuffer(image: BufferedImage): ByteBuffer {
+            val w = image.width
+            val h = image.height
+            val pixels = (image.raster.dataBuffer as? DataBufferInt)?.data
+                ?: image.getRGB(0, 0, w, h, null, 0, w)
+            return MemoryUtil.memAlloc(w * h * 4).also { buffer ->
+                for (p in pixels) {
+                    buffer.put((p ushr 16 and 0xFF).toByte())
+                    buffer.put((p ushr 8 and 0xFF).toByte())
+                    buffer.put((p and 0xFF).toByte())
+                    buffer.put((p ushr 24 and 0xFF).toByte())
+                }
+                buffer.flip()
+            }
+        }
+
         private fun uploadSync(
             device: GpuDevice,
             target: GpuTexture,
@@ -91,16 +92,8 @@ class VulkanTexture(
                 )
                 view = device.createTextureView(texture)
 
-                val pixels = (image.raster.dataBuffer as? DataBufferInt)?.data ?: image.getRGB(0, 0, w, h, null, 0, w)
-                val buffer = MemoryUtil.memAlloc(w * h * 4)
+                val buffer = rgbaBuffer(image)
                 try {
-                    for (p in pixels) {
-                        buffer.put((p ushr 16 and 0xFF).toByte())
-                        buffer.put((p ushr 8 and 0xFF).toByte())
-                        buffer.put((p and 0xFF).toByte())
-                        buffer.put((p ushr 24 and 0xFF).toByte())
-                    }
-                    buffer.flip()
                     uploadSync(device, texture, buffer, 0, 0, w, h)
                 } finally {
                     MemoryUtil.memFree(buffer)

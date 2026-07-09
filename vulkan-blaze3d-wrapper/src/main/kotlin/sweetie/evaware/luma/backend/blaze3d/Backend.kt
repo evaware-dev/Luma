@@ -54,22 +54,27 @@ class Backend : RenderBackend {
     }
 
     override fun endFrame() {
-        if (recorder.size == 0) return
+        if (recorder.size == 0 && !TextureUploadQueue.hasPending()) return
 
         val device = RenderSystem.getDevice()
         val encoder = device.createCommandEncoder()
 
-        vertexStaging.flip()
-        vertexBuffer.write(encoder, vertexStaging.buffer)
+        TextureUploadQueue.record(encoder)
 
-        uboStaging.flip()
-        uboBuffer.write(encoder, uboStaging.buffer)
+        if (recorder.size > 0) {
+            vertexStaging.flip()
+            vertexBuffer.write(encoder, vertexStaging.buffer)
 
-        val pass = RenderPassEncoder(device, encoder, vertexBuffer, uboBuffer)
-        merger.run(recorder, pass)
-        pass.finish()
+            uboStaging.flip()
+            uboBuffer.write(encoder, uboStaging.buffer)
+
+            val pass = RenderPassEncoder(device, encoder, vertexBuffer, uboBuffer)
+            merger.run(recorder, pass)
+            pass.finish()
+        }
 
         encoder.submit()
+        TextureUploadQueue.freeSubmitted()
     }
 
     override fun hasContext(): Boolean = true
