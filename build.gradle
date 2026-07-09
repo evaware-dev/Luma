@@ -48,8 +48,16 @@ tasks.register("release") {
 
         println "Pushing to repository..."
         def branch = git("branch", "--show-current")
-        git("push", "origin", branch)
-        git("push", "-f", "origin", "v${newVersion}")
+        def gprUser = System.getProperty("gpr.user")
+        def gprToken = System.getProperty("gpr.token")
+        if (gprUser != null && gprToken != null) {
+            def pushUrl = "https://${gprUser}:${gprToken}@github.com/evaware-dev/Luma.git"
+            git("push", pushUrl, branch)
+            git("push", "-f", pushUrl, "v${newVersion}")
+        } else {
+            git("push", "origin", branch)
+            git("push", "-f", "origin", "v${newVersion}")
+        }
 
         println "\nRelease completed successfully!"
         println "Upload package will trigger automatically in GitHub Actions."
