@@ -17,16 +17,13 @@ import java.nio.FloatBuffer
 class Backend : RenderBackend {
     private val frameSnapshot = GlStateSnapshot()
     private val viewportBuffer = IntArray(4)
-
-    private class TargetFrame(
-        val target: GlRenderTarget?,
-        var clearColor: FloatArray?
-    )
-    private val targetStack = ArrayList<TargetFrame>()
+    private val targetStack = ArrayList<GlRenderTarget?>()
 
     private var boundProgramId = -1
     private var boundVertexArrayId = -1
     private var boundArrayBufferId = -1
+    private var boundTextureIds = IntArray(INITIAL_TEXTURE_CACHE_SIZE) { UNKNOWN_BINDING }
+    private var frameActive = false
 
     private fun useProgram(programId: Int) {
         if (boundProgramId == programId) return
@@ -50,19 +47,26 @@ class Backend : RenderBackend {
         boundProgramId = -1
         boundVertexArrayId = -1
         boundArrayBufferId = -1
+        boundTextureIds.fill(UNKNOWN_BINDING)
     }
 
     override fun beginFrame() {
         captureState(frameSnapshot)
-        applyGuiState()
+        applyGuiState(frameSnapshot)
         invalidateBindingCache()
         targetStack.clear()
-        targetStack.add(TargetFrame(null, null))
+        targetStack.add(null)
+        frameActive = true
     }
 
     override fun endFrame() {
-        restoreState(frameSnapshot)
-        invalidateBindingCache()
+        try {
+            restoreState(frameSnapshot)
+        } finally {
+            frameActive = false
+            targetStack.clear()
+            invalidateBindingCache()
+        }
     }
 
     override fun createProgram(
@@ -122,7 +126,14 @@ class Backend : RenderBackend {
     }
 
     override fun bindTexture(texture: TextureHandle, unit: Int) {
-        (texture as GlTexture).bind(unit)
+        require(unit >= 0) { "Texture unit must be non-negative: $unit" }
+        val glTexture = texture as GlTexture
+        ensureTextureCacheCapacity(unit + 1)
+        if (boundTextureIds[unit] == glTexture.textureId) return
+
+        if (frameActive) captureTextureUnit(unit)
+        glTexture.bind(unit)
+        boundTextureIds[unit] = glTexture.textureId
     }
 
     override fun draw(
@@ -179,10 +190,14 @@ class Backend : RenderBackend {
         clearColor: FloatArray?
     ) {
         val glTarget = target as GlRenderTarget
-        targetStack.add(TargetFrame(glTarget, clearColor))
+        targetStack.add(glTarget)
         GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, glTarget.fbo)
         GL11.glViewport(0, 0, glTarget.width, glTarget.height)
         if (clearColor != null) {
+            if (!frameSnapshot.clearColorCaptured) {
+                GL11.glGetFloatv(GL11.GL_COLOR_CLEAR_VALUE, frameSnapshot.clearColor)
+                frameSnapshot.clearColorCaptured = true
+            }
             GL11.glClearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3])
             GL11.glClear(GL11.GL_COLOR_BUFFER_BIT)
         }
@@ -193,9 +208,9 @@ class Backend : RenderBackend {
             targetStack.removeAt(targetStack.size - 1)
         }
         val active = targetStack.last()
-        if (active.target != null) {
-            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, active.target.fbo)
-            GL11.glViewport(0, 0, active.target.width, active.target.height)
+        if (active != null) {
+            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, active.fbo)
+            GL11.glViewport(0, 0, active.width, active.height)
         } else {
             GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, frameSnapshot.drawFramebuffer)
             GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, frameSnapshot.readFramebuffer)
@@ -223,7 +238,9 @@ class Backend : RenderBackend {
 
     private fun captureState(snapshot: GlStateSnapshot) {
         val viewport = viewportBuffer
-        GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport)
+        if (!Luma.platform.getViewport(viewport)) {
+            GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport)
+        }
         snapshot.viewportX = viewport[0]
         snapshot.viewportY = viewport[1]
         snapshot.viewportWidth = viewport[2]
@@ -249,12 +266,8 @@ class Backend : RenderBackend {
         snapshot.arrayBuffer = GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING)
 
         snapshot.activeTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)
-        for (i in 0..1) {
-            GL13.glActiveTexture(GL13.GL_TEXTURE0 + i)
-            snapshot.boundTextures[i] = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
-            snapshot.samplerBindings[i] = GL11.glGetInteger(GL33.GL_SAMPLER_BINDING)
-        }
-        GL13.glActiveTexture(snapshot.activeTexture)
+        snapshot.clearTextureUnits()
+        snapshot.clearColorCaptured = false
     }
 
     private fun restoreState(snapshot: GlStateSnapshot) {
@@ -274,20 +287,68 @@ class Backend : RenderBackend {
         GL30.glBindVertexArray(snapshot.vertexArray)
         GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, snapshot.arrayBuffer)
 
-        for (i in 0..1) {
-            GL13.glActiveTexture(GL13.GL_TEXTURE0 + i)
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, snapshot.boundTextures[i])
-            GL33.glBindSampler(i, snapshot.samplerBindings[i])
+        if (snapshot.clearColorCaptured) {
+            GL11.glClearColor(
+                snapshot.clearColor[0],
+                snapshot.clearColor[1],
+                snapshot.clearColor[2],
+                snapshot.clearColor[3]
+            )
+        }
+
+        for (index in 0 until snapshot.textureUnitCount) {
+            val unit = snapshot.textureUnit(index)
+            GL13.glActiveTexture(GL13.GL_TEXTURE0 + unit)
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, snapshot.boundTexture(index))
+            GL33.glBindSampler(unit, snapshot.samplerBinding(index))
         }
         GL13.glActiveTexture(snapshot.activeTexture)
     }
 
-    private fun applyGuiState() {
-        GL11.glDisable(GL11.GL_DEPTH_TEST)
-        GL11.glDisable(GL11.GL_CULL_FACE)
-        GL11.glDisable(GL11.GL_SCISSOR_TEST)
-        GL11.glEnable(GL11.GL_BLEND)
-        GL20.glBlendEquationSeparate(GL14.GL_FUNC_ADD, GL14.GL_FUNC_ADD)
-        GL14.glBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, GL11.GL_ONE, GL11.GL_ZERO)
+    private fun captureTextureUnit(unit: Int) {
+        if (frameSnapshot.hasTextureUnit(unit)) return
+        GL13.glActiveTexture(GL13.GL_TEXTURE0 + unit)
+        frameSnapshot.addTextureUnit(
+            unit,
+            GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D),
+            GL11.glGetInteger(GL33.GL_SAMPLER_BINDING)
+        )
+    }
+
+    private fun ensureTextureCacheCapacity(required: Int) {
+        if (required <= boundTextureIds.size) return
+        val previousSize = boundTextureIds.size
+        val capacity = maxOf(required, previousSize shl 1)
+        boundTextureIds = boundTextureIds.copyOf(capacity)
+        boundTextureIds.fill(UNKNOWN_BINDING, previousSize, capacity)
+    }
+
+    private fun applyGuiState(snapshot: GlStateSnapshot) {
+        if (snapshot.depthEnabled) GL11.glDisable(GL11.GL_DEPTH_TEST)
+        if (snapshot.cullEnabled) GL11.glDisable(GL11.GL_CULL_FACE)
+        if (snapshot.scissorEnabled) GL11.glDisable(GL11.GL_SCISSOR_TEST)
+        if (!snapshot.blendEnabled) GL11.glEnable(GL11.GL_BLEND)
+
+        if (snapshot.blendEquationRgb != GL14.GL_FUNC_ADD || snapshot.blendEquationAlpha != GL14.GL_FUNC_ADD) {
+            GL20.glBlendEquationSeparate(GL14.GL_FUNC_ADD, GL14.GL_FUNC_ADD)
+        }
+        if (
+            snapshot.blendSrcRgb != GL11.GL_SRC_ALPHA ||
+            snapshot.blendDstRgb != GL11.GL_ONE_MINUS_SRC_ALPHA ||
+            snapshot.blendSrcAlpha != GL11.GL_ONE ||
+            snapshot.blendDstAlpha != GL11.GL_ZERO
+        ) {
+            GL14.glBlendFuncSeparate(
+                GL11.GL_SRC_ALPHA,
+                GL11.GL_ONE_MINUS_SRC_ALPHA,
+                GL11.GL_ONE,
+                GL11.GL_ZERO
+            )
+        }
+    }
+
+    private companion object {
+        const val INITIAL_TEXTURE_CACHE_SIZE = 4
+        const val UNKNOWN_BINDING = -1
     }
 }

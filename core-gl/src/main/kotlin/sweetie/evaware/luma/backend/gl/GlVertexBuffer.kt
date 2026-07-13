@@ -25,11 +25,16 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
     private var quadIndexCapacity = 0
 
     init {
-        GL30.glBindVertexArray(vao)
-        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo)
-        setupVertexAttributes(layout)
-        GL30.glBindVertexArray(0)
-        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0)
+        val previousVertexArray = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING)
+        val previousArrayBuffer = GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING)
+        try {
+            GL30.glBindVertexArray(vao)
+            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo)
+            setupVertexAttributes(layout)
+        } finally {
+            GL30.glBindVertexArray(previousVertexArray)
+            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, previousArrayBuffer)
+        }
     }
 
     fun bind() {
