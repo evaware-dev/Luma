@@ -178,10 +178,14 @@ object RenderTestApp {
 
         val currentActive = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)
         snapshot.activeTexture = currentActive
+        snapshot.clearTextureUnits()
         for (i in 0..1) {
             GL13.glActiveTexture(GL13.GL_TEXTURE0 + i)
-            snapshot.boundTextures[i] = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
-            snapshot.samplerBindings[i] = GL30.glGetIntegeri(GL33.GL_SAMPLER_BINDING, i)
+            snapshot.addTextureUnit(
+                i,
+                GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D),
+                GL30.glGetIntegeri(GL33.GL_SAMPLER_BINDING, i)
+            )
         }
         GL13.glActiveTexture(currentActive)
 
