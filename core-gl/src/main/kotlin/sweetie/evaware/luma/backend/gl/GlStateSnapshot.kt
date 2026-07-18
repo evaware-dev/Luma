@@ -21,6 +21,10 @@ class GlStateSnapshot {
     var activeTexture = 0
     var arrayBuffer = 0
     var scissorEnabled = false
+    var colorMaskRed = true
+    var colorMaskGreen = true
+    var colorMaskBlue = true
+    var colorMaskAlpha = true
     val clearColor = FloatArray(4)
     var clearColorCaptured = false
 

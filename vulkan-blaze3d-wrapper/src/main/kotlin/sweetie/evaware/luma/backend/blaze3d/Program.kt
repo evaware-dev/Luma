@@ -17,6 +17,7 @@ import net.minecraft.resources.Identifier
 
 import com.mojang.blaze3d.shaders.ShaderSource
 import com.mojang.blaze3d.shaders.ShaderType
+import java.util.Optional
 
 class LumaShaderSource(
     val vertexCode: String,
@@ -36,7 +37,8 @@ data class PipelineKey(
     val depthEnabled: Boolean,
     val depthWrite: Boolean,
     val depthFunc: CompareOp,
-    val cullEnabled: Boolean
+    val cullEnabled: Boolean,
+    val hasDepthAttachment: Boolean
 )
 
 data class SamplerBinding(val name: String, val unit: Int)
@@ -109,7 +111,9 @@ class Program(
                 .withVertexBinding(0, fmt)
                 .withBindGroupLayout(bindGroupLayout)
                 .withCull(key.cullEnabled)
-                .withDepthStencilState(depthState)
+                .withDepthStencilState(
+                    if (key.hasDepthAttachment) Optional.of(depthState) else Optional.empty()
+                )
                 .withColorTargetState(ColorTargetState(BlendFunction.TRANSLUCENT))
                 .withPrimitiveTopology(key.topology)
                 .build()
@@ -124,18 +128,24 @@ class Program(
         }
     }
 
-    fun precompile(device: GpuDevice) {
-        val topologies = listOf(PrimitiveTopology.TRIANGLES, PrimitiveTopology.QUADS, PrimitiveTopology.LINES)
-        for (topology in topologies) {
-            getOrCreatePipeline(device, PipelineKey(topology, false, false, CompareOp.ALWAYS_PASS, false))
-            getOrCreatePipeline(device, PipelineKey(topology, false, false, CompareOp.ALWAYS_PASS, true))
-            getOrCreatePipeline(device, PipelineKey(topology, true, true, CompareOp.LESS_THAN_OR_EQUAL, false))
-            getOrCreatePipeline(device, PipelineKey(topology, true, true, CompareOp.LESS_THAN_OR_EQUAL, true))
+    fun precompileDefaults(device: GpuDevice) {
+        for (hasDepthAttachment in booleanArrayOf(false, true)) {
+            getOrCreatePipeline(
+                device,
+                PipelineKey(
+                    topology = PrimitiveTopology.TRIANGLES,
+                    depthEnabled = false,
+                    depthWrite = false,
+                    depthFunc = CompareOp.ALWAYS_PASS,
+                    cullEnabled = false,
+                    hasDepthAttachment = hasDepthAttachment
+                )
+            )
         }
     }
 
     override fun close() {
-        pipelines.values.forEach { it.close() }
+        pipelines.values.forEach(RenderPipeline::close)
         pipelines.clear()
     }
 

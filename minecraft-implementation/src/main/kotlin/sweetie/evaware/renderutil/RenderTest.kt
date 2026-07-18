@@ -1,5 +1,6 @@
 package sweetie.evaware.renderutil
 
+import sweetie.evaware.luma.LumaAssets
 import sweetie.evaware.renderutil.api.RenderPipeline
 import sweetie.evaware.renderutil.helper.ColorUtil
 
@@ -24,5 +25,15 @@ object RenderTest {
                 .radius(radius)
                 .draw(currentX, y, width, height)
         }
+
+        val textureX = startX + 5 * (width + gap)
+        RenderUtil.TEXTURE
+            .priority(pipeline)
+            .draw(LumaAssets.DEMO_CHECKER_ID, textureX, y, width, height)
+
+        RenderUtil.TEXTURE
+            .priority(pipeline)
+            .radius(radius)
+            .draw(LumaAssets.DEMO_ICON_ID, textureX + width + gap, y, width, height)
     }
 }

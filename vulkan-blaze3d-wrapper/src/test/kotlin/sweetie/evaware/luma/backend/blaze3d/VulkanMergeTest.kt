@@ -221,6 +221,7 @@ class VulkanMergeTest {
         }
 
         assertEquals(2, consumer.pipelineChanges.size)
+        assertEquals(2, consumer.textureChanges.size)
         assertEquals(2, consumer.draws.size)
     }
 
@@ -277,5 +278,43 @@ class VulkanMergeTest {
         assertEquals(2, consumer.draws.size)
         assertEquals(8, consumer.draws[0].vertexCount)
         assertEquals(4, consumer.draws[1].vertexCount)
+    }
+
+    @Test
+    fun testClearColorDoesNotSplitTargetPass() {
+        val target = createMockRenderTarget()
+        val clearColor = floatArrayOf(0f, 0f, 0f, 0f)
+        val consumer = TestGroupConsumer()
+
+        merge(consumer) {
+            record(
+                program1,
+                0L,
+                64L,
+                4,
+                0L,
+                32L,
+                texture1,
+                PrimitiveType.QUADS,
+                target = target,
+                clearColor = clearColor
+            )
+            record(
+                program1,
+                64L,
+                64L,
+                4,
+                0L,
+                32L,
+                texture1,
+                PrimitiveType.QUADS,
+                target = target
+            )
+        }
+
+        assertEquals(1, consumer.targetChanges.size)
+        assertTrue(consumer.targetChanges.single().second contentEquals clearColor)
+        assertEquals(1, consumer.draws.size)
+        assertEquals(8, consumer.draws.single().vertexCount)
     }
 }

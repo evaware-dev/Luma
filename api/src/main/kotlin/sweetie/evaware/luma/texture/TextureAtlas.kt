@@ -1,193 +1,251 @@
 package sweetie.evaware.luma.texture
 
+import sweetie.evaware.luma.Luma
+import sweetie.evaware.luma.api.Preparable
 import java.awt.image.BufferedImage
 import java.awt.image.DataBufferInt
 import javax.imageio.ImageIO
 
-object TextureAtlas {
-    private const val whiteId = "luma:white"
-    private const val packPadding = 4
+class TextureAtlas(
+    val config: TextureAtlasConfig = TextureAtlasConfig()
+) : Preparable, AutoCloseable {
+    class Region internal constructor(
+        private val atlas: TextureAtlas,
+        val id: String
+    ) {
+        var x = 0
+            internal set
+        var y = 0
+            internal set
+        var width = 0
+            internal set
+        var height = 0
+            internal set
 
-    data class Region(
-        val uOffset: Float,
-        val vOffset: Float,
-        val uScale: Float,
-        val vScale: Float
+        @Volatile
+        var isReady = false
+            internal set
+
+        val uOffset get() = x / atlas.width.toFloat()
+        val vOffset get() = y / atlas.height.toFloat()
+        val uScale get() = width / atlas.width.toFloat()
+        val vScale get() = height / atlas.height.toFloat()
+    }
+
+    private class PendingSource(
+        val region: Region,
+        val loader: () -> BufferedImage
     )
 
-    private class Source(val loader: () -> BufferedImage)
-
-    private class PreparedSource(
-        val id: String,
+    private class LoadedSource(
+        val region: Region,
         val image: BufferedImage
     )
 
-    private class Packed(
-        val id: String,
-        val image: BufferedImage,
-        val x: Int,
-        val y: Int
+    private class Placement(
+        val allocation: AtlasAllocation,
+        val resized: Boolean
     )
 
-    private class PackedAtlas(
-        val size: Int,
-        val entries: List<Packed>
-    )
+    private val allocator: AtlasAllocator = ShelfAtlasAllocator(config.padding)
+    private val regions = LinkedHashMap<String, Region>()
+    private val pending = ArrayList<PendingSource>()
 
-    private val sources = LinkedHashMap<String, Source>()
-    private val regions = HashMap<String, Region>()
+    private var backingImage: BufferedImage? = null
     private var texture: Texture? = null
 
-    @Synchronized
-    fun register(id: String, loader: () -> BufferedImage) {
-        if (texture != null) return
-        sources[id] = Source(loader)
-    }
+    @Volatile
+    private var hasPending = false
+
+    @Volatile
+    override var isPrepared = false
+        private set
+
+    val width get() = backingImage?.width ?: config.initialSize.width
+    val height get() = backingImage?.height ?: config.initialSize.height
+    val size get() = TextureAtlasSize(width, height)
 
     @Synchronized
-    fun registerResource(id: String, path: String) {
-        register(id) {
-            javaClass.classLoader.getResourceAsStream(path)?.use { input ->
-                val image = ImageIO.read(input) ?: error("Unable to decode texture: $path")
-                ensureArgb(image)
-            } ?: error("Missing texture resource: $path")
+    fun register(id: String, loader: () -> BufferedImage): Region {
+        require(id.isNotBlank()) { "Texture atlas source id must not be blank" }
+        check(id !in regions) { "Texture atlas source is already registered: $id" }
+        return Region(this, id).also { region ->
+            regions[id] = region
+            pending += PendingSource(region, loader)
+            hasPending = true
         }
     }
 
+    fun registerResource(id: String, path: String): Region = register(id) {
+        javaClass.classLoader.getResourceAsStream(path)?.use { input ->
+            ImageIO.read(input)?.let(::ensureArgb) ?: error("Unable to decode texture: $path")
+        } ?: error("Missing texture resource: $path")
+    }
+
+    fun put(id: String, image: BufferedImage): Region = register(id) { image }
+
     @Synchronized
-    fun prepare() {
-        if (texture != null) return
+    override fun prepare() {
+        if (isPrepared) return
         ensureWhiteSource()
-        if (sources.isEmpty()) error("Texture atlas has no sources")
-
-        val prepared = ArrayList<PreparedSource>(sources.size)
-        for ((id, source) in sources) {
-            prepared += PreparedSource(id, ensureArgb(source.loader()))
-        }
-
-        val packedAtlas = pack(prepared)
-        val atlas = BufferedImage(packedAtlas.size, packedAtlas.size, BufferedImage.TYPE_INT_ARGB)
-        val atlasPixels = (atlas.raster.dataBuffer as DataBufferInt).data
-        val atlasStride = atlas.width
-
-        for (entry in packedAtlas.entries) {
-            val image = entry.image
-            val sourcePixels = (image.raster.dataBuffer as DataBufferInt).data
-            val width = image.width
-            val height = image.height
-            var sourceIndex = 0
-            var row = 0
-            var targetIndex = entry.y * atlasStride + entry.x
-
-            while (row < height) {
-                System.arraycopy(sourcePixels, sourceIndex, atlasPixels, targetIndex, width)
-                sourceIndex += width
-                targetIndex += atlasStride
-                row++
-            }
-        }
-
-        val createdTexture = Texture(atlas)
-        createdTexture.load()
-        texture = createdTexture
-        saveRegions(packedAtlas.size, packedAtlas.entries)
+        val work = loadPending(sortByHeight = backingImage == null)
+        apply(work, recreateTexture = true)
+        isPrepared = true
     }
 
-    fun texture() = texture ?: error("Texture atlas is not prepared")
+    fun processPending() {
+        if (!isPrepared || !hasPending) return
+        synchronized(this) {
+            if (!isPrepared || !hasPending) return
+            apply(loadPending(sortByHeight = false), recreateTexture = false)
+        }
+    }
 
-    fun region(id: String) = regions[id] ?: error("Missing texture atlas region: $id")
-
-    fun whiteRegion() = region(whiteId)
+    fun texture(): Texture = texture ?: error("Texture atlas is not prepared")
 
     @Synchronized
-    fun close() {
+    fun region(id: String): Region = regions[id] ?: error("Missing texture atlas region: $id")
+
+    fun whiteRegion(): Region = region(WHITE_ID)
+
+    @Synchronized
+    override fun close() {
         texture?.close()
         texture = null
-        regions.clear()
+        isPrepared = false
+        regions.values.forEach { it.isReady = false }
+    }
+
+    private fun loadPending(sortByHeight: Boolean): List<LoadedSource> {
+        val loaded = pending.map { source ->
+            LoadedSource(source.region, ensureArgb(source.loader()))
+        }
+        pending.clear()
+        hasPending = false
+        return if (sortByHeight) loaded.sortedByDescending { it.image.height } else loaded
+    }
+
+    private fun apply(sources: List<LoadedSource>, recreateTexture: Boolean) {
+        var resized = ensureBackingImage(sources)
+        for (source in sources) {
+            val allocation = allocate(source.image)
+            resized = resized || allocation.resized
+            val position = allocation.allocation
+            copy(source.image, position.x, position.y)
+            source.region.x = position.x
+            source.region.y = position.y
+            source.region.width = source.image.width
+            source.region.height = source.image.height
+        }
+
+        if (recreateTexture || resized) {
+            replaceTexture()
+            regions.values.forEach { region ->
+                if (region.width > 0 && region.height > 0) region.isReady = true
+            }
+            return
+        }
+
+        val handle = texture().handle ?: error("Texture atlas handle is null")
+        for (source in sources) {
+            Luma.backend.updateTexture(handle, source.region.x, source.region.y, source.image)
+            source.region.isReady = true
+        }
+    }
+
+    private fun allocate(image: BufferedImage): Placement {
+        val required = TextureAtlasSize(
+            image.width + config.padding,
+            image.height + config.padding
+        )
+        var resized = false
+        while (true) {
+            allocator.allocate(image.width, image.height, size)?.let { return Placement(it, resized) }
+            val next = config.growthPolicy.next(size, required, config.maximumSize)
+                ?: error(
+                    "Texture atlas is full: ${size.width}x${size.height}, " +
+                        "maximum ${config.maximumSize.width}x${config.maximumSize.height}"
+                )
+            resizeBackingImage(next)
+            resized = true
+        }
+    }
+
+    private fun ensureBackingImage(sources: List<LoadedSource>): Boolean {
+        if (backingImage != null) return false
+        var target = config.initialSize
+        val required = TextureAtlasSize(
+            maxOf(target.width, sources.maxOfOrNull { it.image.width + config.padding } ?: 1),
+            maxOf(target.height, sources.maxOfOrNull { it.image.height + config.padding } ?: 1)
+        )
+        val requiredArea = sources.sumOf { source ->
+            (source.image.width + config.padding).toLong() *
+                (source.image.height + config.padding).toLong()
+        }
+        while (
+            target.width < required.width ||
+            target.height < required.height ||
+            target.width.toLong() * target.height < requiredArea
+        ) {
+            target = config.growthPolicy.next(target, required, config.maximumSize)
+                ?: error("Texture atlas sources exceed the configured maximum size")
+        }
+        backingImage = BufferedImage(
+            target.width,
+            target.height,
+            BufferedImage.TYPE_INT_ARGB
+        )
+        return true
+    }
+
+    private fun resizeBackingImage(next: TextureAtlasSize) {
+        val current = requireNotNull(backingImage)
+        val resized = BufferedImage(next.width, next.height, BufferedImage.TYPE_INT_ARGB)
+        val source = (current.raster.dataBuffer as DataBufferInt).data
+        val target = (resized.raster.dataBuffer as DataBufferInt).data
+        repeat(current.height) { row ->
+            System.arraycopy(source, row * current.width, target, row * next.width, current.width)
+        }
+        backingImage = resized
+    }
+
+    private fun replaceTexture() {
+        val next = Texture(requireNotNull(backingImage), config.mipmap)
+        next.load()
+        val previous = texture
+        texture = next
+        previous?.close()
+    }
+
+    private fun copy(image: BufferedImage, x: Int, y: Int) {
+        val source = (image.raster.dataBuffer as DataBufferInt).data
+        val targetImage = requireNotNull(backingImage)
+        val target = (targetImage.raster.dataBuffer as DataBufferInt).data
+        repeat(image.height) { row ->
+            System.arraycopy(source, row * image.width, target, (y + row) * targetImage.width + x, image.width)
+        }
     }
 
     private fun ensureWhiteSource() {
-        if (sources.containsKey(whiteId)) return
-        register(whiteId) {
-            val image = BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
-            image.setRGB(0, 0, -0x1)
-            image
+        if (WHITE_ID in regions) return
+        register(WHITE_ID) {
+            BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB).apply { setRGB(0, 0, -0x1) }
         }
     }
 
     private fun ensureArgb(image: BufferedImage): BufferedImage {
-        val converted = BufferedImage(image.width, image.height, BufferedImage.TYPE_INT_ARGB)
-        val g2d = converted.createGraphics()
-        g2d.drawImage(image, 0, 0, null)
-        g2d.dispose()
-        return converted
-    }
-
-    private fun pack(images: List<PreparedSource>): PackedAtlas {
-        val sorted = ArrayList(images)
-        sorted.sortByDescending { it.image.height }
-
-        val maxDimension = sorted.fold(1) { current, entry ->
-            maxOf(current, entry.image.width, entry.image.height)
-        }
-        val totalArea = sorted.fold(0L) { current, entry ->
-            current + entry.image.width.toLong() * entry.image.height.toLong()
-        }
-
-        var size = 1
-        while (size < maxDimension) size = size shl 1
-        while (size.toLong() * size < totalArea + totalArea / 4L) size = size shl 1
-
-        while (size <= 16384) {
-            val packed = tryPack(sorted, size)
-            if (packed != null) {
-                return PackedAtlas(size, packed)
-            }
-            size = size shl 1
-        }
-
-        error("Unable to pack texture atlas")
-    }
-
-    private fun tryPack(images: List<PreparedSource>, size: Int): List<Packed>? {
-        val packed = ArrayList<Packed>(images.size)
-        var x = 0
-        var y = 0
-        var rowHeight = 0
-
-        for (entry in images) {
-            val image = entry.image
-            val paddedWidth = image.width + packPadding
-            val paddedHeight = image.height + packPadding
-            if (paddedWidth > size || paddedHeight > size) return null
-            if (x + paddedWidth > size) {
-                x = 0
-                y += rowHeight
-                rowHeight = 0
-            }
-            if (y + paddedHeight > size) return null
-
-            packed += Packed(entry.id, image, x, y)
-            x += paddedWidth
-            if (paddedHeight > rowHeight) {
-                rowHeight = paddedHeight
+        if (image.type == BufferedImage.TYPE_INT_ARGB && image.raster.dataBuffer is DataBufferInt) return image
+        return BufferedImage(image.width, image.height, BufferedImage.TYPE_INT_ARGB).also { converted ->
+            val graphics = converted.createGraphics()
+            try {
+                graphics.drawImage(image, 0, 0, null)
+            } finally {
+                graphics.dispose()
             }
         }
-
-        return packed
     }
 
-    private fun saveRegions(size: Int, packed: List<Packed>) {
-        regions.clear()
-        val inverse = 1f / size.toFloat()
-
-        for (entry in packed) {
-            regions[entry.id] = Region(
-                entry.x * inverse,
-                entry.y * inverse,
-                entry.image.width * inverse,
-                entry.image.height * inverse
-            )
-        }
+    companion object {
+        private const val WHITE_ID = "luma:white"
     }
 }

@@ -23,8 +23,8 @@ internal class StagingBuffer(initialCapacity: Int) {
         val required = buffer.position() + additionalBytes
         if (required <= buffer.capacity()) return
 
-        var newCapacity = buffer.capacity() * 2
-        while (newCapacity < required) newCapacity *= 2
+        var newCapacity = Math.multiplyExact(buffer.capacity(), 2)
+        while (newCapacity < required) newCapacity = Math.multiplyExact(newCapacity, 2)
 
         val grown = allocate(newCapacity)
         val keptPosition = buffer.position()

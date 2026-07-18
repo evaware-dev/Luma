@@ -23,6 +23,8 @@ interface RenderBackend {
     fun createRenderTarget(width: Int, height: Int, useDepth: Boolean, format: RenderTargetFormat): RenderTargetHandle
     fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?)
     fun endRenderTarget()
+    fun depthTest(enabled: Boolean) {}
+    fun cull(enabled: Boolean) {}
     fun close()
     fun hasContext(): Boolean
 }

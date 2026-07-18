@@ -23,6 +23,7 @@ internal class RenderPassEncoder(
 
     private var currentPass: RenderPass? = null
     private var currentProgram: Program? = null
+    private var currentTargetHasDepth = false
 
     override fun onTargetChanged(target: VulkanRenderTarget?, clearColor: FloatArray?) {
         currentPass?.close()
@@ -56,6 +57,7 @@ internal class RenderPassEncoder(
         )
 
         currentPass = pass
+        currentTargetHasDepth = depthView != null
         RenderSystem.bindDefaultUniforms(pass)
     }
 
@@ -68,7 +70,14 @@ internal class RenderPassEncoder(
         cullEnabled: Boolean
     ) {
         val pass = currentPass ?: return
-        val key = PipelineKey(topology, depthEnabled, depthWrite, depthFunc, cullEnabled)
+        val key = PipelineKey(
+            topology,
+            depthEnabled,
+            depthWrite,
+            depthFunc,
+            cullEnabled,
+            currentTargetHasDepth
+        )
         pass.setPipeline(program.getOrCreatePipeline(device, key))
         currentProgram = program
     }

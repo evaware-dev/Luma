@@ -9,16 +9,18 @@ import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.matrix.MatrixControl
 import sweetie.evaware.luma.resource.GlResources
 import sweetie.evaware.luma.scissor.ScissorControl
-import sweetie.evaware.luma.texture.TextureAtlas
+import sweetie.evaware.luma.texture.TextureAtlasManager
 import sweetie.evaware.renderutil.api.IBatch
 import sweetie.evaware.renderutil.api.RenderApi
 import sweetie.evaware.renderutil.api.RenderPipeline
 import sweetie.evaware.renderutil.renderers.*
 import java.awt.image.BufferedImage
 
+internal const val TEXTURE_ATLAS_ID = "luma:minecraft-render"
+
 object RenderUtil : CloseableResourceBase(), RenderApi {
-    private var textureRectRenderer = TextureRectRenderer()
-    private var roundedRectRenderer = RoundedRectRenderer()
+    private var roundedRectRenderer = RoundedRectRenderer(textureAtlas())
+    private var textureRectRenderer = TextureRectRenderer(roundedRectRenderer)
 
     private var activeBatch: IBatch? = null
     private var activePipeline: RenderPipeline? = null
@@ -35,8 +37,7 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
         }
         if (loaded) return
 
-        TextureAtlas.prepare()
-        textureRectRenderer.load()
+        textureAtlas().prepare()
         roundedRectRenderer.load()
         loaded = true
     }
@@ -50,9 +51,8 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
 
         frameActive = false
 
-        textureRectRenderer.close()
         roundedRectRenderer.close()
-        TextureAtlas.close()
+        textureAtlas().close()
         GlResources.closeAll()
         OffscreenDemo.reset()
 
@@ -62,12 +62,14 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
     }
 
     fun registerTexture(id: String, path: String) {
-        TextureAtlas.registerResource(id, path)
+        textureAtlas().registerResource(id, path)
     }
 
     fun registerTexture(id: String, loader: () -> BufferedImage) {
-        TextureAtlas.register(id, loader)
+        textureAtlas().register(id, loader)
     }
+
+    private fun textureAtlas() = TextureAtlasManager.getOrCreate(TEXTURE_ATLAS_ID)
 
     override fun rect(x: Float, y: Float, width: Float, height: Float, color: Int, pipeline: RenderPipeline) {
         ROUNDED_RECT
@@ -190,7 +192,7 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
     }
 
     internal fun useTextureBatch(pipeline: RenderPipeline) {
-        switchTo(textureRectRenderer, pipeline)
+        switchTo(roundedRectRenderer, pipeline)
     }
 
     internal fun useRoundedBatch(pipeline: RenderPipeline) {
@@ -213,22 +215,20 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
     }
 
     private fun flushPipeline(pipeline: RenderPipeline) {
-        if (!textureRectRenderer.hasPending(pipeline) && !roundedRectRenderer.hasPending(pipeline)) return
+        if (!roundedRectRenderer.hasPending(pipeline)) return
 
         if (frameActive || Luma.frameActive) {
-            textureRectRenderer.flush(pipeline)
             roundedRectRenderer.flush(pipeline)
             return
         }
 
         Luma.renderToMainFramebuffer {
-            textureRectRenderer.flush(pipeline)
             roundedRectRenderer.flush(pipeline)
         }
     }
 
     private fun rebuildRenderers() {
-        textureRectRenderer = TextureRectRenderer()
-        roundedRectRenderer = RoundedRectRenderer()
+        roundedRectRenderer = RoundedRectRenderer(textureAtlas())
+        textureRectRenderer = TextureRectRenderer(roundedRectRenderer)
     }
 }

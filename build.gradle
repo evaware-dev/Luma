@@ -3,6 +3,16 @@ plugins {
     id "org.jetbrains.kotlin.jvm" version "2.4.0" apply false
 }
 
+def jitPackBuild = System.getenv("JITPACK") == "true"
+def publishedGroup = jitPackBuild && System.getenv("GROUP") != null
+    ? System.getenv("GROUP")
+    : project.maven_group
+def githubRepository = System.getenv("GITHUB_REPOSITORY")
+
+allprojects {
+    ext.maven_group = publishedGroup
+}
+
 tasks.register("release") {
     group = "publishing"
     description = "Upload new version: update version, commit, tag, push"
@@ -48,16 +58,8 @@ tasks.register("release") {
 
         println "Pushing to repository..."
         def branch = git("branch", "--show-current")
-        def gprUser = System.getProperty("gpr.user")
-        def gprToken = System.getProperty("gpr.token")
-        if (gprUser != null && gprToken != null) {
-            def pushUrl = "https://${gprUser}:${gprToken}@github.com/evaware-dev/Luma.git"
-            git("push", pushUrl, branch)
-            git("push", "-f", pushUrl, "v${newVersion}")
-        } else {
-            git("push", "origin", branch)
-            git("push", "-f", "origin", "v${newVersion}")
-        }
+        git("push", "origin", branch)
+        git("push", "-f", "origin", "v${newVersion}")
 
         println "\nRelease completed successfully!"
         println "Upload package will trigger automatically in GitHub Actions."
@@ -65,6 +67,23 @@ tasks.register("release") {
 }
 
 subprojects {
+    plugins.withId("maven-publish") {
+        if (githubRepository != null) {
+            publishing {
+                repositories {
+                    maven {
+                        name = "GitHubPackages"
+                        url = uri("https://maven.pkg.github.com/${githubRepository}")
+                        credentials {
+                            username = System.getenv("GITHUB_ACTOR") ?: System.getProperty("gpr.user")
+                            password = System.getenv("GITHUB_TOKEN") ?: System.getProperty("gpr.token")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     plugins.withType(JavaPlugin) {
         java {
             toolchain {
@@ -73,4 +92,3 @@ subprojects {
         }
     }
 }
-

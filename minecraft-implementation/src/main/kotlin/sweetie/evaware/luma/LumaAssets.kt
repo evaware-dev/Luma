@@ -1,6 +1,9 @@
 package sweetie.evaware.luma
 
 object LumaAssets {
+    const val DEMO_ICON_ID = "demo_icon"
+    const val DEMO_CHECKER_ID = "demo_checker"
+
     const val CORE_SHADER_DIR = "assets/luma/shaders/core/"
     const val INCLUDE_DIR = "assets/luma/shaders/include/"
 

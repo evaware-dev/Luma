@@ -7,8 +7,11 @@ in vec2 vLocal;
 in vec2 vSize;
 in vec4 vRadius;
 in vec4 vColor;
+in vec4 vUvRect;
 in vec4 vScissor;
 out vec4 fragColor;
+
+@sampler sampler2D uTexture 0
 
 float roundedDistance(vec2 local, vec2 size, vec4 radius) {
     float corner = radius.x;
@@ -34,5 +37,10 @@ void main() {
     float dist = roundedDistance(vLocal, vSize, vRadius);
     float aa = max(fwidth(dist), 0.75);
     float alpha = 1.0 - smoothstep(-aa, aa, dist);
-    fragColor = vec4(vColor.rgb, vColor.a * alpha);
+    vec4 color = vColor;
+    if (vUvRect.w >= 0.0) {
+        vec2 uv = vUvRect.xy + (vLocal / vSize) * vUvRect.zw;
+        color *= texture(uTexture, uv);
+    }
+    fragColor = vec4(color.rgb, color.a * alpha);
 }

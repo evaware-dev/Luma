@@ -1,12 +1,15 @@
 package sweetie.evaware.renderutil.renderers
 
+import sweetie.evaware.luma.texture.TextureAtlas
 import sweetie.evaware.renderutil.RenderUtil
 import sweetie.evaware.renderutil.api.BatchRenderer
 import sweetie.evaware.renderutil.api.RenderPipeline
 import sweetie.evaware.renderutil.helper.ColorUtil
 
-class RoundedRectRenderer : BatchRenderer, AutoCloseable {
-    private val renderers = Array(RenderPipeline.entries.size) { RoundedRectBatch() }
+class RoundedRectRenderer(
+    atlas: TextureAtlas
+) : BatchRenderer, AutoCloseable {
+    private val renderers = Array(RenderPipeline.entries.size) { RoundedRectBatch(atlas) }
     private var pendingMask = 0
 
     private var pipeline = RenderPipeline.GUI
@@ -35,6 +38,20 @@ class RoundedRectRenderer : BatchRenderer, AutoCloseable {
     fun draw(x: Float, y: Float, width: Float, height: Float) {
         RenderUtil.useRoundedBatch(pipeline)
         renderers[pipeline.ordinal].rect(x, y, width, height, color, radius)
+        pendingMask = pendingMask or (1 shl pipeline.ordinal)
+    }
+
+    internal fun texture(
+        pipeline: RenderPipeline,
+        id: String,
+        x: Float,
+        y: Float,
+        width: Float,
+        height: Float,
+        color: Int,
+        radius: Float
+    ) {
+        renderers[pipeline.ordinal].texture(id, x, y, width, height, color, radius)
         pendingMask = pendingMask or (1 shl pipeline.ordinal)
     }
 

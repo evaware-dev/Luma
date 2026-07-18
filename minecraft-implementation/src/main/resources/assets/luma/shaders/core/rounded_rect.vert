@@ -7,12 +7,14 @@
 @in 1 vec2 a1 Size
 @in 2 vec4 a2 Radius
 @in 3 vec4 a3 Color
-@in 4 vec4 a4 Scissor
+@in 4 vec4 a4 UvRect
+@in 5 vec4 a5 Scissor
 
 out vec2 vLocal;
 out vec2 vSize;
 out vec4 vRadius;
 out vec4 vColor;
+out vec4 vUvRect;
 out vec4 vScissor;
 
 void main() {
@@ -23,5 +25,6 @@ void main() {
     vSize = a1;
     vRadius = a2;
     vColor = a3;
-    vScissor = a4;
+    vUvRect = a4;
+    vScissor = a5;
 }

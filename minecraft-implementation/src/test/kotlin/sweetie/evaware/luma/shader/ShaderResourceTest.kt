@@ -40,7 +40,7 @@ class ShaderResourceTest {
             val layout = VertexLayout().apply {
                 add(ShaderVertType.FLOAT, 2, 0)
                 add(ShaderVertType.FLOAT, 2, 1)
-                add(ShaderVertType.FLOAT, 2, 2)
+                add(ShaderVertType.FLOAT, 4, 2)
                 add(ShaderVertType.FLOAT, 4, 3)
                 add(ShaderVertType.FLOAT, 4, 4)
                 add(ShaderVertType.FLOAT, 4, 5)
@@ -110,7 +110,7 @@ class ShaderResourceTest {
             val layout = VertexLayout().apply {
                 add(ShaderVertType.FLOAT, 2, 0)
                 add(ShaderVertType.FLOAT, 2, 1)
-                add(ShaderVertType.FLOAT, 2, 2)
+                add(ShaderVertType.FLOAT, 4, 2)
                 add(ShaderVertType.FLOAT, 4, 3)
                 add(ShaderVertType.FLOAT, 4, 4)
                 add(ShaderVertType.FLOAT, 4, 5)
@@ -128,18 +128,14 @@ class ShaderResourceTest {
     }
     @Test
     fun `scissor is vertex payload for batching`() {
-        val uberVertex = resourceText("assets/luma/shaders/core/texture_rect.vert")
-        val uberFragment = resourceText("assets/luma/shaders/core/texture_rect.frag")
         val roundedVertex = resourceText("assets/luma/shaders/core/rounded_rect.vert")
         val roundedFragment = resourceText("assets/luma/shaders/core/rounded_rect.frag")
 
-        assertContains(uberVertex, "@in 5 vec4 a5 Scissor")
-        assertContains(roundedVertex, "@in 4 vec4 a4 Scissor")
-        assertContains(uberVertex, "out vec4 vScissor")
+        assertContains(roundedVertex, "@in 4 vec4 a4 UvRect")
+        assertContains(roundedVertex, "@in 5 vec4 a5 Scissor")
         assertContains(roundedVertex, "out vec4 vScissor")
-        assertContains(uberFragment, "scissorVisible(vScissor")
+        assertContains(roundedFragment, "@sampler sampler2D uTexture 0")
         assertContains(roundedFragment, "scissorVisible(vScissor")
-        assertFalse(uberFragment.contains("uniform vec4 uScissor"))
         assertFalse(roundedFragment.contains("uniform vec4 uScissor"))
     }
 

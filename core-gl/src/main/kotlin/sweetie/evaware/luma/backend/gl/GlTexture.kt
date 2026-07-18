@@ -6,34 +6,26 @@ import org.lwjgl.opengl.GL13
 import org.lwjgl.opengl.GL14
 import org.lwjgl.opengl.GL30
 import org.lwjgl.opengl.GL33
-import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.api.TextureHandle
 import java.awt.image.BufferedImage
-import java.awt.image.DataBufferInt
+import sweetie.evaware.luma.texture.RgbaTransferBuffer
 
 class GlTexture(
     val textureId: Int,
     override val width: Int,
-    override val height: Int
+    override val height: Int,
+    private val mipmap: Boolean = false
 ) : TextureHandle {
+    private var closed = false
 
     fun update(x: Int, y: Int, image: BufferedImage) {
+        check(!closed) { "Texture is closed" }
         val previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
+        val pixelStore = capturePixelStore()
         val w = image.width
         val h = image.height
-        val pixelCount = w * h
-        val pixels = getArgbPixels(image)
-
-        val buffer = MemoryUtil.memAlloc(pixelCount * 4)
+        val buffer = transfer.write(image)
         try {
-            for (p in pixels) {
-                buffer.put((p ushr 16 and 0xFF).toByte())
-                buffer.put((p ushr 8 and 0xFF).toByte())
-                buffer.put((p and 0xFF).toByte())
-                buffer.put((p ushr 24 and 0xFF).toByte())
-            }
-            buffer.flip()
-
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
             GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 4)
             GL11.glPixelStorei(GL11.GL_UNPACK_ROW_LENGTH, 0)
@@ -50,13 +42,15 @@ class GlTexture(
                 GL11.GL_UNSIGNED_BYTE,
                 buffer
             )
+            if (mipmap) GL30.glGenerateMipmap(GL11.GL_TEXTURE_2D)
         } finally {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture)
-            MemoryUtil.memFree(buffer)
+            restorePixelStore(pixelStore)
         }
     }
 
     fun bind(unit: Int) {
+        check(!closed) { "Texture is closed" }
         val activeUnit = GL13.GL_TEXTURE0 + unit
         GL13.glActiveTexture(activeUnit)
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
@@ -64,6 +58,8 @@ class GlTexture(
     }
 
     override fun close() {
+        if (closed) return
+        closed = true
         GL11.glDeleteTextures(textureId)
     }
 
@@ -71,22 +67,12 @@ class GlTexture(
         fun create(image: BufferedImage, mipmap: Boolean): GlTexture {
             val textureId = GL11.glGenTextures()
             val previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
+            val pixelStore = capturePixelStore()
 
             val w = image.width
             val h = image.height
-            val pixelCount = w * h
-            val pixels = getArgbPixels(image)
-
-            val buffer = MemoryUtil.memAlloc(pixelCount * 4)
+            val buffer = transfer.write(image)
             try {
-                for (p in pixels) {
-                    buffer.put((p ushr 16 and 0xFF).toByte())
-                    buffer.put((p ushr 8 and 0xFF).toByte())
-                    buffer.put((p and 0xFF).toByte())
-                    buffer.put((p ushr 24 and 0xFF).toByte())
-                }
-                buffer.flip()
-
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
                 if (mipmap) {
                     GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR_MIPMAP_LINEAR)
@@ -121,16 +107,29 @@ class GlTexture(
                     GL30.glGenerateMipmap(GL11.GL_TEXTURE_2D)
                 }
 
-                return GlTexture(textureId, w, h)
+                return GlTexture(textureId, w, h, mipmap)
             } finally {
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture)
-                MemoryUtil.memFree(buffer)
+                restorePixelStore(pixelStore)
             }
         }
 
-        private fun getArgbPixels(image: BufferedImage): IntArray {
-            return (image.raster.dataBuffer as? DataBufferInt)?.data
-                ?: image.getRGB(0, 0, image.width, image.height, null, 0, image.width)
+        fun closeTransferBuffer() = transfer.close()
+
+        private fun capturePixelStore() = intArrayOf(
+            GL11.glGetInteger(GL11.GL_UNPACK_ALIGNMENT),
+            GL11.glGetInteger(GL11.GL_UNPACK_ROW_LENGTH),
+            GL11.glGetInteger(GL11.GL_UNPACK_SKIP_ROWS),
+            GL11.glGetInteger(GL11.GL_UNPACK_SKIP_PIXELS)
+        )
+
+        private fun restorePixelStore(state: IntArray) {
+            GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, state[0])
+            GL11.glPixelStorei(GL11.GL_UNPACK_ROW_LENGTH, state[1])
+            GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_ROWS, state[2])
+            GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_PIXELS, state[3])
         }
+
+        private val transfer = RgbaTransferBuffer()
     }
 }

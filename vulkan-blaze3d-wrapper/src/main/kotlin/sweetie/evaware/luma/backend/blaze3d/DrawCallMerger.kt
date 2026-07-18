@@ -25,7 +25,6 @@ internal class DrawCallMerger {
 
     fun run(draws: DrawCallRecorder, consumer: GroupConsumer) {
         var currentTarget: Any? = Any()
-        var currentClearColor: FloatArray? = null
         var currentProgram: Program? = null
         var currentTopology: PrimitiveTopology? = null
         var currentDepthEnabled = false
@@ -46,7 +45,7 @@ internal class DrawCallMerger {
 
             val targetKey: Any = draw.target ?: mainTargetMarker
 
-            if (targetKey != currentTarget || !draw.clearColor.contentEquals(currentClearColor)) {
+            if (targetKey != currentTarget) {
                 if (currentVertexCount > 0 && currentTopology != null) {
                     consumer.onDraw(currentTopology, currentVertexOffset, currentVertexBytes, currentVertexCount)
                 }
@@ -54,7 +53,6 @@ internal class DrawCallMerger {
 
                 consumer.onTargetChanged(draw.target, draw.clearColor)
                 currentTarget = targetKey
-                currentClearColor = draw.clearColor
                 currentProgram = null
                 currentTopology = null
                 currentTextures = DrawCall.NO_TEXTURES
@@ -105,7 +103,7 @@ internal class DrawCallMerger {
                     }
                 }
 
-                if (!sameTextures(draw.textures, currentTextures)) {
+                if (currentProgram != program || !sameTextures(draw.textures, currentTextures)) {
                     consumer.onTextureChanged(program, draw.textures)
                 }
 

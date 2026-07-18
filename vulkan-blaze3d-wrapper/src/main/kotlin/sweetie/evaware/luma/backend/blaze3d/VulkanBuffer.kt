@@ -19,9 +19,9 @@ class VulkanBuffer(
     fun ensureCapacity(bytes: Int): GpuBuffer {
         val existing = gpuBuffer
         if (existing != null && bytes <= capacityBytes) return existing
-        existing?.close()
+        if (existing != null) VulkanResourceRetirement.defer(existing)
         var cap = capacityBytes.coerceAtLeast(256)
-        while (cap < bytes) cap = cap shl 1
+        while (cap < bytes) cap = Math.multiplyExact(cap, 2)
         val created = RenderSystem.getDevice().createBuffer(
             label,
             usage,
@@ -44,7 +44,7 @@ class VulkanBuffer(
     }
 
     override fun close() {
-        gpuBuffer?.close()
+        gpuBuffer?.let(VulkanResourceRetirement::defer)
         gpuBuffer = null
     }
 }

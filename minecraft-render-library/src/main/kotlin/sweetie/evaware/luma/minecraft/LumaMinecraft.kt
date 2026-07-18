@@ -50,6 +50,8 @@ class LazyBackend : RenderBackend {
         delegate.beginRenderTarget(target, clearColor)
     override fun endRenderTarget() =
         delegate.endRenderTarget()
+    override fun depthTest(enabled: Boolean) = delegate.depthTest(enabled)
+    override fun cull(enabled: Boolean) = delegate.cull(enabled)
     override fun close() { if (lazyDelegate.isInitialized()) delegate.close() }
     override fun hasContext(): Boolean = lazyDelegate.isInitialized() && delegate.hasContext()
 }

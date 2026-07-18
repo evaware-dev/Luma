@@ -4,6 +4,7 @@ import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.matrix.MatrixControl
 import sweetie.evaware.luma.shader.translator.ShaderTranslator
+import sweetie.evaware.luma.texture.TextureAtlasManager
 
 object Luma {
     @JvmField
@@ -25,6 +26,7 @@ object Luma {
 
     fun beginMainFramebufferFrame() {
         if (frameActive) return
+        TextureAtlasManager.processPending()
         backend.beginFrame()
         MatrixControl.beginGuiFrame()
         frameActive = true
@@ -32,8 +34,11 @@ object Luma {
 
     fun endFrame() {
         if (!frameActive) return
-        backend.endFrame()
-        frameActive = false
+        try {
+            backend.endFrame()
+        } finally {
+            frameActive = false
+        }
     }
 
     inline fun render(action: () -> Unit) {
@@ -41,11 +46,17 @@ object Luma {
             action()
             return
         }
+        TextureAtlasManager.processPending()
         backend.beginFrame()
+        frameActive = true
         try {
             action()
         } finally {
-            backend.endFrame()
+            try {
+                backend.endFrame()
+            } finally {
+                frameActive = false
+            }
         }
     }
 
@@ -57,8 +68,23 @@ object Luma {
 
     fun enableBlend() = platform.enableBlend()
     fun disableBlend() = platform.disableBlend()
-    fun enableDepthTest() = platform.enableDepthTest()
-    fun disableDepthTest() = platform.disableDepthTest()
-    fun enableCull() = platform.enableCull()
-    fun disableCull() = platform.disableCull()
+    fun enableDepthTest() {
+        platform.enableDepthTest()
+        backend.depthTest(true)
+    }
+
+    fun disableDepthTest() {
+        platform.disableDepthTest()
+        backend.depthTest(false)
+    }
+
+    fun enableCull() {
+        platform.enableCull()
+        backend.cull(true)
+    }
+
+    fun disableCull() {
+        platform.disableCull()
+        backend.cull(false)
+    }
 }

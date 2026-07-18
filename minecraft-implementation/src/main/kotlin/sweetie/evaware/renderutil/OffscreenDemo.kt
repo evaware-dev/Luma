@@ -83,7 +83,7 @@ object OffscreenDemo {
             existing.close()
         }
 
-        val created = GlResources.track(RenderUtil.createRenderTarget(w, h, useDepth = true))
+        val created = GlResources.track(RenderUtil.createRenderTarget(w, h))
         target = created
         width = w
         height = h

@@ -14,15 +14,18 @@ import sweetie.evaware.luma.vertex.VertexLayout
 import java.awt.image.BufferedImage
 import java.nio.FloatBuffer
 
-class Backend : RenderBackend {
+class Backend(
+    config: GlBackendConfig = GlBackendConfig()
+) : RenderBackend {
     private val frameSnapshot = GlStateSnapshot()
     private val viewportBuffer = IntArray(4)
+    private val colorMaskBuffer = IntArray(4)
     private val targetStack = ArrayList<GlRenderTarget?>()
 
     private var boundProgramId = -1
     private var boundVertexArrayId = -1
     private var boundArrayBufferId = -1
-    private var boundTextureIds = IntArray(INITIAL_TEXTURE_CACHE_SIZE) { UNKNOWN_BINDING }
+    private var boundTextureIds = IntArray(config.initialTextureUnits) { UNKNOWN_BINDING }
     private var frameActive = false
 
     private fun useProgram(programId: Int) {
@@ -189,6 +192,7 @@ class Backend : RenderBackend {
         target: RenderTargetHandle,
         clearColor: FloatArray?
     ) {
+        check(frameActive) { "Cannot begin a render target outside a frame" }
         val glTarget = target as GlRenderTarget
         targetStack.add(glTarget)
         GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, glTarget.fbo)
@@ -204,9 +208,8 @@ class Backend : RenderBackend {
     }
 
     override fun endRenderTarget() {
-        if (targetStack.size > 1) {
-            targetStack.removeAt(targetStack.size - 1)
-        }
+        check(targetStack.size > 1) { "No render target to end" }
+        targetStack.removeAt(targetStack.size - 1)
         val active = targetStack.last()
         if (active != null) {
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, active.fbo)
@@ -218,7 +221,9 @@ class Backend : RenderBackend {
         }
     }
 
-    override fun close() {}
+    override fun close() {
+        GlTexture.closeTransferBuffer()
+    }
 
     override fun hasContext(): Boolean = GLFW.glfwGetCurrentContext() != 0L
 
@@ -253,6 +258,11 @@ class Backend : RenderBackend {
         snapshot.depthEnabled = GL11.glIsEnabled(GL11.GL_DEPTH_TEST)
         snapshot.cullEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE)
         snapshot.scissorEnabled = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)
+        GL11.glGetIntegerv(GL11.GL_COLOR_WRITEMASK, colorMaskBuffer)
+        snapshot.colorMaskRed = colorMaskBuffer[0] != 0
+        snapshot.colorMaskGreen = colorMaskBuffer[1] != 0
+        snapshot.colorMaskBlue = colorMaskBuffer[2] != 0
+        snapshot.colorMaskAlpha = colorMaskBuffer[3] != 0
 
         snapshot.blendSrcRgb = GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB)
         snapshot.blendDstRgb = GL11.glGetInteger(GL14.GL_BLEND_DST_RGB)
@@ -279,6 +289,12 @@ class Backend : RenderBackend {
         if (snapshot.depthEnabled) GL11.glEnable(GL11.GL_DEPTH_TEST) else GL11.glDisable(GL11.GL_DEPTH_TEST)
         if (snapshot.cullEnabled) GL11.glEnable(GL11.GL_CULL_FACE) else GL11.glDisable(GL11.GL_CULL_FACE)
         if (snapshot.scissorEnabled) GL11.glEnable(GL11.GL_SCISSOR_TEST) else GL11.glDisable(GL11.GL_SCISSOR_TEST)
+        GL11.glColorMask(
+            snapshot.colorMaskRed,
+            snapshot.colorMaskGreen,
+            snapshot.colorMaskBlue,
+            snapshot.colorMaskAlpha
+        )
 
         GL14.glBlendFuncSeparate(snapshot.blendSrcRgb, snapshot.blendDstRgb, snapshot.blendSrcAlpha, snapshot.blendDstAlpha)
         GL20.glBlendEquationSeparate(snapshot.blendEquationRgb, snapshot.blendEquationAlpha)
@@ -328,6 +344,14 @@ class Backend : RenderBackend {
         if (snapshot.cullEnabled) GL11.glDisable(GL11.GL_CULL_FACE)
         if (snapshot.scissorEnabled) GL11.glDisable(GL11.GL_SCISSOR_TEST)
         if (!snapshot.blendEnabled) GL11.glEnable(GL11.GL_BLEND)
+        if (
+            !snapshot.colorMaskRed ||
+            !snapshot.colorMaskGreen ||
+            !snapshot.colorMaskBlue ||
+            !snapshot.colorMaskAlpha
+        ) {
+            GL11.glColorMask(true, true, true, true)
+        }
 
         if (snapshot.blendEquationRgb != GL14.GL_FUNC_ADD || snapshot.blendEquationAlpha != GL14.GL_FUNC_ADD) {
             GL20.glBlendEquationSeparate(GL14.GL_FUNC_ADD, GL14.GL_FUNC_ADD)
@@ -336,19 +360,18 @@ class Backend : RenderBackend {
             snapshot.blendSrcRgb != GL11.GL_SRC_ALPHA ||
             snapshot.blendDstRgb != GL11.GL_ONE_MINUS_SRC_ALPHA ||
             snapshot.blendSrcAlpha != GL11.GL_ONE ||
-            snapshot.blendDstAlpha != GL11.GL_ZERO
+            snapshot.blendDstAlpha != GL11.GL_ONE_MINUS_SRC_ALPHA
         ) {
             GL14.glBlendFuncSeparate(
                 GL11.GL_SRC_ALPHA,
                 GL11.GL_ONE_MINUS_SRC_ALPHA,
                 GL11.GL_ONE,
-                GL11.GL_ZERO
+                GL11.GL_ONE_MINUS_SRC_ALPHA
             )
         }
     }
 
     private companion object {
-        const val INITIAL_TEXTURE_CACHE_SIZE = 4
         const val UNKNOWN_BINDING = -1
     }
 }

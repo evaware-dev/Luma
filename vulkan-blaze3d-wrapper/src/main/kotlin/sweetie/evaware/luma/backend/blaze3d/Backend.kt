@@ -4,6 +4,7 @@ import sweetie.evaware.luma.LumaNames
 
 import com.mojang.blaze3d.buffers.GpuBuffer
 import com.mojang.blaze3d.buffers.Std140Builder
+import com.mojang.blaze3d.platform.CompareOp
 import com.mojang.blaze3d.systems.RenderSystem
 import net.minecraft.resources.Identifier
 import org.lwjgl.system.MemoryStack
@@ -19,20 +20,30 @@ import sweetie.evaware.luma.vertex.VertexLayout
 import java.awt.image.BufferedImage
 import java.nio.FloatBuffer
 
-class Backend : RenderBackend {
+class Backend(
+    private val config: VulkanBackendConfig = VulkanBackendConfig()
+) : RenderBackend {
     private var nextProgramId = 1
 
     private var frameId = 0L
 
-    private val vertexBuffer = VulkanBuffer({ LumaNames.VERTEX_BUFFER }, GpuBuffer.USAGE_VERTEX or GpuBuffer.USAGE_COPY_DST, 1024)
-    private val uboBuffer = VulkanBuffer({ LumaNames.UBO_BUFFER }, GpuBuffer.USAGE_UNIFORM or GpuBuffer.USAGE_COPY_DST, 256)
+    private val vertexBuffer = VulkanBuffer(
+        { LumaNames.VERTEX_BUFFER },
+        GpuBuffer.USAGE_VERTEX or GpuBuffer.USAGE_COPY_DST,
+        config.initialVertexBufferBytes
+    )
+    private val uboBuffer = VulkanBuffer(
+        { LumaNames.UBO_BUFFER },
+        GpuBuffer.USAGE_UNIFORM or GpuBuffer.USAGE_COPY_DST,
+        config.initialUniformBufferBytes
+    )
 
     private val boundTextures = arrayOfNulls<TextureHandle>(DrawCall.TEXTURE_UNITS)
     private var textureSnapshot: Array<TextureHandle?> = DrawCall.NO_TEXTURES
     private var texturesDirty = false
 
-    private val vertexStaging = StagingBuffer(1024 * 1024)
-    private val uboStaging = StagingBuffer(64 * 1024)
+    private val vertexStaging = StagingBuffer(config.initialVertexStagingBytes)
+    private val uboStaging = StagingBuffer(config.initialUniformStagingBytes)
 
     private val recorder = DrawCallRecorder()
     private val merger = DrawCallMerger()
@@ -44,6 +55,8 @@ class Backend : RenderBackend {
     private val targetStack = ArrayList<TargetFrame>()
 
     override fun beginFrame() {
+        VulkanResourceRetirement.collectCompleted()
+        RenderStateTracker.beginFrame()
         frameId++
         recorder.reset()
         vertexStaging.reset()
@@ -54,7 +67,11 @@ class Backend : RenderBackend {
     }
 
     override fun endFrame() {
-        if (recorder.size == 0 && !TextureUploadQueue.hasPending()) return
+        if (
+            recorder.size == 0 &&
+            !TextureUploadQueue.hasPending() &&
+            !VulkanResourceRetirement.hasPending()
+        ) return
 
         val device = RenderSystem.getDevice()
         val encoder = device.createCommandEncoder()
@@ -73,8 +90,9 @@ class Backend : RenderBackend {
             pass.finish()
         }
 
+        val retirement = VulkanResourceRetirement.attachTo(encoder)
         encoder.submit()
-        TextureUploadQueue.freeSubmitted()
+        VulkanResourceRetirement.submitted(retirement)
     }
 
     override fun hasContext(): Boolean = true
@@ -90,14 +108,15 @@ class Backend : RenderBackend {
             fragmentSource,
             layout
         )
-        prog.precompile(RenderSystem.getDevice())
+        if (config.precompileDefaultPipeline) prog.precompileDefaults(RenderSystem.getDevice())
         return prog
     }
 
     override fun bindProgram(program: ProgramHandle) {}
 
     override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle {
-        return VulkanTexture.create(image, mipmap)
+        require(!mipmap) { "Automatic mipmap generation is not supported by the Vulkan backend" }
+        return VulkanTexture.create(image)
     }
 
     override fun updateTexture(texture: TextureHandle, x: Int, y: Int, image: BufferedImage) {
@@ -105,10 +124,12 @@ class Backend : RenderBackend {
     }
 
     override fun bindTexture(texture: TextureHandle, unit: Int) {
-        if (unit in boundTextures.indices && boundTextures[unit] !== texture) {
-            boundTextures[unit] = texture
-            texturesDirty = true
+        require(unit in boundTextures.indices) {
+            "Texture unit $unit is outside 0..${boundTextures.lastIndex}"
         }
+        if (boundTextures[unit] === texture) return
+        boundTextures[unit] = texture
+        texturesDirty = true
     }
 
     private fun currentTextures(): Array<TextureHandle?> {
@@ -133,10 +154,13 @@ class Backend : RenderBackend {
     }
 
     override fun endRenderTarget() {
-        if (targetStack.size > 1) {
-            targetStack.removeAt(targetStack.size - 1)
-        }
+        check(targetStack.size > 1) { "No render target to end" }
+        targetStack.removeAt(targetStack.size - 1)
     }
+
+    override fun depthTest(enabled: Boolean) = RenderStateTracker.depthTest(enabled)
+
+    override fun cull(enabled: Boolean) = RenderStateTracker.cull(enabled)
 
     override fun draw(
         program: ProgramHandle,
@@ -170,7 +194,7 @@ class Backend : RenderBackend {
             } else {
                 val stack = MemoryStack.stackPush()
                 try {
-                    val builder = Std140Builder.onStack(stack, 256)
+                    val builder = Std140Builder.onStack(stack, config.uniformScratchBytes)
                     for (i in vulkanUniforms.indices) {
                         vulkanUniforms[i].write(builder, uniforms)
                     }
@@ -199,10 +223,10 @@ class Backend : RenderBackend {
         draw.uboBytes = uboBytes.toLong()
         draw.textures = currentTextures()
         draw.primitiveType = primitiveType
-        draw.depthEnabled = GlStateQuery.depthEnabled
-        draw.depthWrite = GlStateQuery.depthWrite
-        draw.depthFunc = GlStateQuery.depthFunc
-        draw.cullEnabled = GlStateQuery.cullEnabled
+        draw.depthEnabled = RenderStateTracker.depthEnabled
+        draw.depthWrite = draw.depthEnabled && RenderStateTracker.depthWrite
+        draw.depthFunc = if (draw.depthEnabled) RenderStateTracker.depthFunc else CompareOp.ALWAYS_PASS
+        draw.cullEnabled = RenderStateTracker.cullEnabled
         draw.target = activeTarget.target
         draw.clearColor = activeTarget.clearColor
 
@@ -210,7 +234,10 @@ class Backend : RenderBackend {
     }
 
     override fun close() {
+        TextureUploadQueue.close()
+        VulkanResourceRetirement.closeAll(RenderSystem.getDevice()::createCommandEncoder)
         vertexBuffer.close()
         uboBuffer.close()
+        VulkanResourceRetirement.closeAll(RenderSystem.getDevice()::createCommandEncoder)
     }
 }

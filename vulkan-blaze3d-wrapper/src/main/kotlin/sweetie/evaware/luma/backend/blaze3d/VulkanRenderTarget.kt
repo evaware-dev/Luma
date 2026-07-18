@@ -6,6 +6,7 @@ import com.mojang.blaze3d.textures.AddressMode
 import com.mojang.blaze3d.textures.FilterMode
 import com.mojang.blaze3d.textures.GpuTexture
 import com.mojang.blaze3d.textures.GpuTextureView
+import com.mojang.blaze3d.textures.GpuSampler
 import sweetie.evaware.luma.LumaNames
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
@@ -26,12 +27,17 @@ class VulkanRenderTarget(
 
     override fun close() {
         colorAsTexture.close()
-        depthView?.close()
-        depthTexture?.close()
+        if (depthView != null || depthTexture != null) {
+            VulkanResourceRetirement.defer {
+                depthView?.close()
+                depthTexture?.close()
+            }
+        }
     }
 
     companion object {
-        private const val COLOR_USAGE = GpuTexture.USAGE_RENDER_ATTACHMENT or GpuTexture.USAGE_TEXTURE_BINDING
+        private const val COLOR_USAGE = GpuTexture.USAGE_COPY_DST or
+            GpuTexture.USAGE_RENDER_ATTACHMENT or GpuTexture.USAGE_TEXTURE_BINDING
         private const val DEPTH_USAGE = GpuTexture.USAGE_COPY_DST or GpuTexture.USAGE_COPY_SRC or
             GpuTexture.USAGE_TEXTURE_BINDING or GpuTexture.USAGE_RENDER_ATTACHMENT
 
@@ -42,42 +48,62 @@ class VulkanRenderTarget(
                 RenderTargetFormat.RGBA16F -> GpuFormat.RGBA16_FLOAT
             }
 
-            val texture = device.createTexture(
-                Supplier { LumaNames.TEXTURE },
-                COLOR_USAGE,
-                gpuFormat,
-                width,
-                height,
-                1,
-                1
-            )
-            val textureView = device.createTextureView(texture)
-            val sampler = device.createSampler(
-                AddressMode.CLAMP_TO_EDGE,
-                AddressMode.CLAMP_TO_EDGE,
-                FilterMode.LINEAR,
-                FilterMode.LINEAR,
-                1,
-                OptionalDouble.empty()
-            )
-
+            var texture: GpuTexture? = null
+            var textureView: GpuTextureView? = null
+            var sampler: GpuSampler? = null
             var depthTexture: GpuTexture? = null
             var depthView: GpuTextureView? = null
-            if (useDepth) {
-                depthTexture = device.createTexture(
-                    Supplier { LumaNames.DEPTH_TEXTURE },
-                    DEPTH_USAGE,
-                    GpuFormat.D32_FLOAT,
+            try {
+                texture = device.createTexture(
+                    Supplier { LumaNames.TEXTURE },
+                    COLOR_USAGE,
+                    gpuFormat,
                     width,
                     height,
                     1,
                     1
                 )
-                depthView = device.createTextureView(depthTexture)
-            }
+                textureView = device.createTextureView(texture)
+                sampler = device.createSampler(
+                    AddressMode.CLAMP_TO_EDGE,
+                    AddressMode.CLAMP_TO_EDGE,
+                    FilterMode.LINEAR,
+                    FilterMode.LINEAR,
+                    1,
+                    OptionalDouble.empty()
+                )
 
-            val vulkanTexture = VulkanTexture(texture, textureView, sampler, width, height)
-            return VulkanRenderTarget(texture, textureView, vulkanTexture, depthTexture, depthView, width, height)
+                if (useDepth) {
+                    depthTexture = device.createTexture(
+                        Supplier { LumaNames.DEPTH_TEXTURE },
+                        DEPTH_USAGE,
+                        GpuFormat.D32_FLOAT,
+                        width,
+                        height,
+                        1,
+                        1
+                    )
+                    depthView = device.createTextureView(depthTexture)
+                }
+
+                val colorTexture = VulkanTexture(texture, textureView, sampler, width, height)
+                return VulkanRenderTarget(
+                    texture,
+                    textureView,
+                    colorTexture,
+                    depthTexture,
+                    depthView,
+                    width,
+                    height
+                )
+            } catch (throwable: Throwable) {
+                depthView?.close()
+                depthTexture?.close()
+                sampler?.close()
+                textureView?.close()
+                texture?.close()
+                throw throwable
+            }
         }
     }
 }

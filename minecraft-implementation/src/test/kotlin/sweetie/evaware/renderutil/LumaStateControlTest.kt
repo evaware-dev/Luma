@@ -42,11 +42,13 @@ class LumaStateControlTest {
     }
 
     private class MockBackend : RenderBackend {
-        var frameBegun = false
-        var frameEnded = false
+        var framesBegun = 0
+        var framesEnded = 0
+        var depthState = false
+        var cullState = false
 
-        override fun beginFrame() { frameBegun = true }
-        override fun endFrame() { frameEnded = true }
+        override fun beginFrame() { framesBegun++ }
+        override fun endFrame() { framesEnded++ }
         override fun createProgram(vertexSource: String, fragmentSource: String, layout: VertexLayout): ProgramHandle = error("mock")
         override fun bindProgram(program: ProgramHandle) {}
         override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle = error("mock")
@@ -56,6 +58,8 @@ class LumaStateControlTest {
         override fun createRenderTarget(width: Int, height: Int, useDepth: Boolean, format: RenderTargetFormat): RenderTargetHandle = error("mock")
         override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) {}
         override fun endRenderTarget() {}
+        override fun depthTest(enabled: Boolean) { depthState = enabled }
+        override fun cull(enabled: Boolean) { cullState = enabled }
         override fun close() {}
         override fun hasContext(): Boolean = true
     }
@@ -71,6 +75,7 @@ class LumaStateControlTest {
 
     @AfterTest
     fun tearDown() {
+        Luma.frameActive = false
         originalPlatform?.let { Luma.platform = it }
         originalBackend?.let { Luma.backend = it }
     }
@@ -78,7 +83,9 @@ class LumaStateControlTest {
     @Test
     fun `test luma state delegation functions`() {
         val platform = MockPlatform()
+        val backend = MockBackend()
         Luma.platform = platform
+        Luma.backend = backend
 
         Luma.enableBlend()
         assertTrue(platform.blendState)
@@ -88,15 +95,19 @@ class LumaStateControlTest {
 
         Luma.enableDepthTest()
         assertTrue(platform.depthState)
+        assertTrue(backend.depthState)
 
         Luma.disableDepthTest()
         assertEquals(false, platform.depthState)
+        assertEquals(false, backend.depthState)
 
         Luma.enableCull()
         assertTrue(platform.cullState)
+        assertTrue(backend.cullState)
 
         Luma.disableCull()
         assertEquals(false, platform.cullState)
+        assertEquals(false, backend.cullState)
     }
 
     @Test
@@ -109,8 +120,23 @@ class LumaStateControlTest {
             actionExecuted = true
         }
 
-        assertTrue(backend.frameBegun)
-        assertTrue(backend.frameEnded)
+        assertEquals(1, backend.framesBegun)
+        assertEquals(1, backend.framesEnded)
         assertTrue(actionExecuted)
+    }
+
+    @Test
+    fun `nested render shares one backend frame`() {
+        val backend = MockBackend()
+        Luma.backend = backend
+
+        Luma.render {
+            assertTrue(Luma.frameActive)
+            Luma.render { assertTrue(Luma.frameActive) }
+        }
+
+        assertEquals(1, backend.framesBegun)
+        assertEquals(1, backend.framesEnded)
+        assertEquals(false, Luma.frameActive)
     }
 }

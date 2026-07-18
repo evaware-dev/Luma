@@ -20,8 +20,8 @@ object LumaRenderer : ModInitializer {
             .register("rect", LumaAssets.RECT_INCLUDE)
             .attach()
 
-        RenderUtil.registerTexture("demo_icon", LumaAssets.DEMO_ICON)
-        RenderUtil.registerTexture("demo_checker") {
+        RenderUtil.registerTexture(LumaAssets.DEMO_ICON_ID, LumaAssets.DEMO_ICON)
+        RenderUtil.registerTexture(LumaAssets.DEMO_CHECKER_ID) {
             val image = BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB)
             for (x in 0 until 16) {
                 for (y in 0 until 16) {
