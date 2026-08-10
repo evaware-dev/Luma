@@ -5,6 +5,11 @@ enum class RenderTargetFormat {
     RGBA16F
 }
 
+enum class RenderTargetFilter {
+    NEAREST,
+    LINEAR
+}
+
 interface RenderTargetHandle : AutoCloseable {
     val width: Int
     val height: Int

@@ -54,8 +54,8 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
 
         if (quadIndexBuffer == 0) {
             quadIndexBuffer = GL15.glGenBuffers()
+            GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, quadIndexBuffer)
         }
-        GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, quadIndexBuffer)
 
         if (requiredIndices > quadIndexCapacity) {
             quadIndexCapacity = nextIndexCapacity(requiredIndices)

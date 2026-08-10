@@ -53,8 +53,13 @@ class GlTexture(
         check(!closed) { "Texture is closed" }
         val activeUnit = GL13.GL_TEXTURE0 + unit
         GL13.glActiveTexture(activeUnit)
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
+        bindCurrentUnit()
         GL33.glBindSampler(unit, 0)
+    }
+
+    internal fun bindCurrentUnit() {
+        check(!closed) { "Texture is closed" }
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
     }
 
     override fun close() {

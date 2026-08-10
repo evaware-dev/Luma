@@ -15,6 +15,7 @@ import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.uniform.*
 import sweetie.evaware.luma.vertex.VertexLayout
 import java.awt.image.BufferedImage
@@ -39,6 +40,8 @@ class Backend(
     )
 
     private val boundTextures = arrayOfNulls<TextureHandle>(DrawCall.TEXTURE_UNITS)
+    private val textureSnapshots = ArrayList<Array<TextureHandle?>>()
+    private var textureSnapshotCount = 0
     private var textureSnapshot: Array<TextureHandle?> = DrawCall.NO_TEXTURES
     private var texturesDirty = false
 
@@ -59,6 +62,7 @@ class Backend(
         RenderStateTracker.beginFrame()
         frameId++
         recorder.reset()
+        resetTextureSnapshots()
         vertexStaging.reset()
         uboStaging.reset()
 
@@ -134,10 +138,26 @@ class Backend(
 
     private fun currentTextures(): Array<TextureHandle?> {
         if (texturesDirty) {
-            textureSnapshot = boundTextures.copyOf()
+            val snapshot = if (textureSnapshotCount < textureSnapshots.size) {
+                textureSnapshots[textureSnapshotCount]
+            } else {
+                arrayOfNulls<TextureHandle>(DrawCall.TEXTURE_UNITS).also(textureSnapshots::add)
+            }
+            textureSnapshotCount++
+            boundTextures.copyInto(snapshot)
+            textureSnapshot = snapshot
             texturesDirty = false
         }
         return textureSnapshot
+    }
+
+    private fun resetTextureSnapshots() {
+        for (index in 0 until textureSnapshotCount) {
+            textureSnapshots[index].fill(null)
+        }
+        textureSnapshotCount = 0
+        textureSnapshot = DrawCall.NO_TEXTURES
+        texturesDirty = true
     }
 
     override fun createRenderTarget(
@@ -145,8 +165,16 @@ class Backend(
         height: Int,
         useDepth: Boolean,
         format: RenderTargetFormat
+    ): RenderTargetHandle = createRenderTarget(width, height, useDepth, format, RenderTargetFilter.LINEAR)
+
+    override fun createRenderTarget(
+        width: Int,
+        height: Int,
+        useDepth: Boolean,
+        format: RenderTargetFormat,
+        filter: RenderTargetFilter
     ): RenderTargetHandle {
-        return VulkanRenderTarget.create(width, height, useDepth, format)
+        return VulkanRenderTarget.create(width, height, useDepth, format, filter)
     }
 
     override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) {

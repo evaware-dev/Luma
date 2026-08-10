@@ -25,9 +25,6 @@ class GlStateSnapshot {
     var colorMaskGreen = true
     var colorMaskBlue = true
     var colorMaskAlpha = true
-    val clearColor = FloatArray(4)
-    var clearColorCaptured = false
-
     private var textureUnits = IntArray(INITIAL_TEXTURE_UNITS)
     private var boundTextures = IntArray(INITIAL_TEXTURE_UNITS)
     private var samplerBindings = IntArray(INITIAL_TEXTURE_UNITS)

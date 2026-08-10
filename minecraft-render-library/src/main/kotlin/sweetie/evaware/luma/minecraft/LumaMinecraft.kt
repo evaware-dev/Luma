@@ -8,6 +8,7 @@ import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.RenderTargetFormat
+import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.shader.translator.DefaultShaderTranslator
 import sweetie.evaware.luma.uniform.ShaderUniforms
 import sweetie.evaware.luma.vertex.VertexLayout
@@ -46,6 +47,13 @@ class LazyBackend : RenderBackend {
         delegate.draw(program, vertices, vertexCount, uniforms, primitiveType)
     override fun createRenderTarget(width: Int, height: Int, useDepth: Boolean, format: RenderTargetFormat): RenderTargetHandle =
         delegate.createRenderTarget(width, height, useDepth, format)
+    override fun createRenderTarget(
+        width: Int,
+        height: Int,
+        useDepth: Boolean,
+        format: RenderTargetFormat,
+        filter: RenderTargetFilter
+    ): RenderTargetHandle = delegate.createRenderTarget(width, height, useDepth, format, filter)
     override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) =
         delegate.beginRenderTarget(target, clearColor)
     override fun endRenderTarget() =

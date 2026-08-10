@@ -21,6 +21,13 @@ interface RenderBackend {
         primitiveType: PrimitiveType
     )
     fun createRenderTarget(width: Int, height: Int, useDepth: Boolean, format: RenderTargetFormat): RenderTargetHandle
+    fun createRenderTarget(
+        width: Int,
+        height: Int,
+        useDepth: Boolean,
+        format: RenderTargetFormat,
+        filter: RenderTargetFilter
+    ): RenderTargetHandle = throw UnsupportedOperationException("Render target filtering is not supported")
     fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?)
     fun endRenderTarget()
     fun depthTest(enabled: Boolean) {}

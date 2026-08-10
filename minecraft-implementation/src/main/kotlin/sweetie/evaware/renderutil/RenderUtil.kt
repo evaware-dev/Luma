@@ -6,6 +6,7 @@ import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.CloseableResourceBase
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
+import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.matrix.MatrixControl
 import sweetie.evaware.luma.resource.GlResources
 import sweetie.evaware.luma.scissor.ScissorControl
@@ -177,6 +178,17 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
     ): RenderTargetHandle {
         load()
         return Luma.backend.createRenderTarget(width, height, useDepth, format)
+    }
+
+    fun createRenderTarget(
+        width: Int,
+        height: Int,
+        useDepth: Boolean,
+        format: RenderTargetFormat,
+        filter: RenderTargetFilter
+    ): RenderTargetHandle {
+        load()
+        return Luma.backend.createRenderTarget(width, height, useDepth, format, filter)
     }
 
     fun renderToTarget(target: RenderTargetHandle, clearColor: FloatArray? = null, action: () -> Unit) {

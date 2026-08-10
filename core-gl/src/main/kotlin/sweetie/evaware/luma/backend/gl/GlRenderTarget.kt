@@ -7,6 +7,7 @@ import org.lwjgl.opengl.GL30
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.api.RenderTargetFilter
 
 class GlRenderTarget(
     val fbo: Int,
@@ -31,6 +32,14 @@ class GlRenderTarget(
             height: Int,
             useDepth: Boolean,
             format: RenderTargetFormat
+        ): GlRenderTarget = create(width, height, useDepth, format, RenderTargetFilter.NEAREST)
+
+        fun create(
+            width: Int,
+            height: Int,
+            useDepth: Boolean,
+            format: RenderTargetFormat,
+            filter: RenderTargetFilter
         ): GlRenderTarget {
             val previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
             val previousDrawFramebuffer = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING)
@@ -51,8 +60,12 @@ class GlRenderTarget(
             try {
                 textureId = GL11.glGenTextures()
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
-                GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST)
-                GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST)
+                val glFilter = when (filter) {
+                    RenderTargetFilter.NEAREST -> GL11.GL_NEAREST
+                    RenderTargetFilter.LINEAR -> GL11.GL_LINEAR
+                }
+                GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, glFilter)
+                GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, glFilter)
                 GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL14.GL_CLAMP_TO_EDGE)
                 GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL14.GL_CLAMP_TO_EDGE)
                 GL11.glTexImage2D(

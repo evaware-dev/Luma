@@ -9,6 +9,7 @@ import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.uniform.*
 import sweetie.evaware.luma.vertex.VertexLayout
 import java.awt.image.BufferedImage
@@ -26,6 +27,7 @@ class Backend(
     private var boundVertexArrayId = -1
     private var boundArrayBufferId = -1
     private var boundTextureIds = IntArray(config.initialTextureUnits) { UNKNOWN_BINDING }
+    private var activeTextureUnit = -1
     private var frameActive = false
 
     private fun useProgram(programId: Int) {
@@ -57,6 +59,7 @@ class Backend(
         captureState(frameSnapshot)
         applyGuiState(frameSnapshot)
         invalidateBindingCache()
+        activeTextureUnit = frameSnapshot.activeTexture - GL13.GL_TEXTURE0
         targetStack.clear()
         targetStack.add(null)
         frameActive = true
@@ -67,6 +70,7 @@ class Backend(
             restoreState(frameSnapshot)
         } finally {
             frameActive = false
+            activeTextureUnit = -1
             targetStack.clear()
             invalidateBindingCache()
         }
@@ -134,8 +138,12 @@ class Backend(
         ensureTextureCacheCapacity(unit + 1)
         if (boundTextureIds[unit] == glTexture.textureId) return
 
-        if (frameActive) captureTextureUnit(unit)
-        glTexture.bind(unit)
+        if (frameActive) {
+            prepareTextureUnit(unit)
+            glTexture.bindCurrentUnit()
+        } else {
+            glTexture.bind(unit)
+        }
         boundTextureIds[unit] = glTexture.textureId
     }
 
@@ -184,8 +192,16 @@ class Backend(
         height: Int,
         useDepth: Boolean,
         format: RenderTargetFormat
+    ): RenderTargetHandle = createRenderTarget(width, height, useDepth, format, RenderTargetFilter.NEAREST)
+
+    override fun createRenderTarget(
+        width: Int,
+        height: Int,
+        useDepth: Boolean,
+        format: RenderTargetFormat,
+        filter: RenderTargetFilter
     ): RenderTargetHandle {
-        return GlRenderTarget.create(width, height, useDepth, format)
+        return GlRenderTarget.create(width, height, useDepth, format, filter)
     }
 
     override fun beginRenderTarget(
@@ -198,12 +214,7 @@ class Backend(
         GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, glTarget.fbo)
         GL11.glViewport(0, 0, glTarget.width, glTarget.height)
         if (clearColor != null) {
-            if (!frameSnapshot.clearColorCaptured) {
-                GL11.glGetFloatv(GL11.GL_COLOR_CLEAR_VALUE, frameSnapshot.clearColor)
-                frameSnapshot.clearColorCaptured = true
-            }
-            GL11.glClearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3])
-            GL11.glClear(GL11.GL_COLOR_BUFFER_BIT)
+            GL30.glClearBufferfv(GL11.GL_COLOR, 0, clearColor)
         }
     }
 
@@ -277,7 +288,6 @@ class Backend(
 
         snapshot.activeTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE)
         snapshot.clearTextureUnits()
-        snapshot.clearColorCaptured = false
     }
 
     private fun restoreState(snapshot: GlStateSnapshot) {
@@ -303,15 +313,6 @@ class Backend(
         GL30.glBindVertexArray(snapshot.vertexArray)
         GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, snapshot.arrayBuffer)
 
-        if (snapshot.clearColorCaptured) {
-            GL11.glClearColor(
-                snapshot.clearColor[0],
-                snapshot.clearColor[1],
-                snapshot.clearColor[2],
-                snapshot.clearColor[3]
-            )
-        }
-
         for (index in 0 until snapshot.textureUnitCount) {
             val unit = snapshot.textureUnit(index)
             GL13.glActiveTexture(GL13.GL_TEXTURE0 + unit)
@@ -321,14 +322,22 @@ class Backend(
         GL13.glActiveTexture(snapshot.activeTexture)
     }
 
-    private fun captureTextureUnit(unit: Int) {
+    private fun prepareTextureUnit(unit: Int) {
+        activateTextureUnit(unit)
         if (frameSnapshot.hasTextureUnit(unit)) return
-        GL13.glActiveTexture(GL13.GL_TEXTURE0 + unit)
+        val sampler = GL11.glGetInteger(GL33.GL_SAMPLER_BINDING)
         frameSnapshot.addTextureUnit(
             unit,
             GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D),
-            GL11.glGetInteger(GL33.GL_SAMPLER_BINDING)
+            sampler
         )
+        if (sampler != 0) GL33.glBindSampler(unit, 0)
+    }
+
+    private fun activateTextureUnit(unit: Int) {
+        if (activeTextureUnit == unit) return
+        GL13.glActiveTexture(GL13.GL_TEXTURE0 + unit)
+        activeTextureUnit = unit
     }
 
     private fun ensureTextureCacheCapacity(required: Int) {
