@@ -15,15 +15,22 @@ import java.util.Optional
 import java.util.OptionalDouble
 
 internal class RenderPassEncoder(
-    private val device: GpuDevice,
-    private val encoder: CommandEncoder,
     private val vertexBuffer: VulkanBuffer,
     private val uboBuffer: VulkanBuffer
 ) : GroupConsumer {
 
+    private var device: GpuDevice? = null
+    private var encoder: CommandEncoder? = null
     private var currentPass: RenderPass? = null
     private var currentProgram: Program? = null
     private var currentTargetHasDepth = false
+
+    fun begin(device: GpuDevice, encoder: CommandEncoder): RenderPassEncoder {
+        check(this.encoder == null) { "Render pass encoder is already active" }
+        this.device = device
+        this.encoder = encoder
+        return this
+    }
 
     override fun onTargetChanged(target: VulkanRenderTarget?, clearColor: FloatArray?) {
         currentPass?.close()
@@ -48,7 +55,7 @@ internal class RenderPassEncoder(
         } else {
             OptionalDouble.empty()
         }
-        val pass = encoder.createRenderPass(
+        val pass = checkNotNull(encoder).createRenderPass(
             { LumaNames.RENDER_PASS },
             colorView,
             if (clear != null) Optional.of(Vector4f(clear[0], clear[1], clear[2], clear[3])) else Optional.empty(),
@@ -70,7 +77,8 @@ internal class RenderPassEncoder(
         cullEnabled: Boolean
     ) {
         val pass = currentPass ?: return
-        val key = PipelineKey(
+        val pipeline = program.getOrCreatePipeline(
+            checkNotNull(device),
             topology,
             depthEnabled,
             depthWrite,
@@ -78,7 +86,7 @@ internal class RenderPassEncoder(
             cullEnabled,
             currentTargetHasDepth
         )
-        pass.setPipeline(program.getOrCreatePipeline(device, key))
+        pass.setPipeline(pipeline)
         currentProgram = program
     }
 
@@ -119,5 +127,8 @@ internal class RenderPassEncoder(
     fun finish() {
         currentPass?.close()
         currentPass = null
+        currentProgram = null
+        device = null
+        encoder = null
     }
 }

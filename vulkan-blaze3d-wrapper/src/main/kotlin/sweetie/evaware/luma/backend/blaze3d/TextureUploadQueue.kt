@@ -1,31 +1,58 @@
 package sweetie.evaware.luma.backend.blaze3d
 
 import com.mojang.blaze3d.systems.CommandEncoder
-import com.mojang.blaze3d.systems.GpuDevice
 import com.mojang.blaze3d.textures.GpuTexture
 import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.texture.RgbaTransferBuffer
 import java.awt.image.BufferedImage
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
-internal object TextureUploadQueue : AutoCloseable {
-    private class Pending(
-        val texture: GpuTexture,
-        val buffer: ByteBuffer,
-        val x: Int,
-        val y: Int,
-        val width: Int,
-        val height: Int
-    )
+internal class TextureUploadQueue(
+    private val maxPooledBytes: Long
+) : AutoCloseable {
+    private class Pending {
+        var texture: GpuTexture? = null
+        var buffer: ByteBuffer? = null
+        var x = 0
+        var y = 0
+        var width = 0
+        var height = 0
+
+        fun set(texture: GpuTexture, buffer: ByteBuffer, x: Int, y: Int, width: Int, height: Int): Pending {
+            this.texture = texture
+            this.buffer = buffer
+            this.x = x
+            this.y = y
+            this.width = width
+            this.height = height
+            return this
+        }
+
+        fun reset() {
+            texture = null
+            buffer = null
+            x = 0
+            y = 0
+            width = 0
+            height = 0
+        }
+    }
 
     private val pending = ArrayList<Pending>()
+    private val recycledPending = ArrayDeque<Pending>()
+    private val available = ArrayList<ByteBuffer>()
     private val transfer = RgbaTransferBuffer()
+    private var pooledBytes = 0L
+    private var closed = false
 
     @Synchronized
     fun enqueue(texture: GpuTexture, image: BufferedImage, x: Int, y: Int) {
-        pending += Pending(
+        check(!closed) { "Texture upload queue is closed" }
+        val buffer = acquire(Math.multiplyExact(Math.multiplyExact(image.width, image.height), 4))
+        pending += obtainPending().set(
             texture = texture,
-            buffer = snapshot(image),
+            buffer = transfer.write(image, buffer),
             x = x,
             y = y,
             width = image.width,
@@ -38,44 +65,42 @@ internal object TextureUploadQueue : AutoCloseable {
 
     @Synchronized
     fun record(encoder: CommandEncoder) {
+        if (pending.isEmpty()) return
+        val recycledBuffers = ArrayList<ByteBuffer>(pending.size)
         pending.forEach { upload ->
             write(
                 encoder,
-                upload.texture,
-                upload.buffer,
+                requireNotNull(upload.texture),
+                requireNotNull(upload.buffer),
                 upload.x,
                 upload.y,
                 upload.width,
                 upload.height
             )
-            VulkanResourceRetirement.defer { MemoryUtil.memFree(upload.buffer) }
+            recycledBuffers += requireNotNull(upload.buffer)
+            upload.reset()
+            recycledPending += upload
         }
         pending.clear()
-    }
-
-    @Synchronized
-    fun uploadNow(
-        device: GpuDevice,
-        texture: GpuTexture,
-        image: BufferedImage,
-        x: Int = 0,
-        y: Int = 0
-    ) {
-        val encoder = device.createCommandEncoder()
-        write(encoder, texture, transfer.write(image), x, y, image.width, image.height)
-        val fence = encoder.createFence()
-        encoder.submit()
-        try {
-            check(fence.awaitCompletion(UPLOAD_TIMEOUT_NANOS)) { "Timed out while uploading texture" }
-        } finally {
-            fence.close()
+        VulkanResourceRetirement.defer {
+            synchronized(this) {
+                recycledBuffers.forEach(::recycle)
+            }
         }
     }
 
     @Synchronized
     override fun close() {
-        pending.forEach { MemoryUtil.memFree(it.buffer) }
+        closed = true
+        pending.forEach {
+            MemoryUtil.memFree(requireNotNull(it.buffer))
+            it.reset()
+        }
         pending.clear()
+        recycledPending.clear()
+        available.forEach(MemoryUtil::memFree)
+        available.clear()
+        pooledBytes = 0
         transfer.close()
     }
 
@@ -100,12 +125,34 @@ internal object TextureUploadQueue : AutoCloseable {
         )
     }
 
-    private fun snapshot(image: BufferedImage): ByteBuffer {
-        val source = transfer.write(image)
-        return MemoryUtil.memAlloc(source.remaining()).also { target ->
-            target.put(source.duplicate()).flip()
+    @Synchronized
+    private fun acquire(requiredBytes: Int): ByteBuffer {
+        val index = available.indexOfFirst { it.capacity() >= requiredBytes }
+        if (index >= 0) {
+            return available.removeAt(index).also {
+                pooledBytes -= it.capacity().toLong()
+                it.clear()
+                it.limit(requiredBytes)
+            }
         }
+        return MemoryUtil.memAlloc(requiredBytes).order(ByteOrder.nativeOrder())
     }
 
-    private const val UPLOAD_TIMEOUT_NANOS = 10_000_000_000L
+    private fun obtainPending(): Pending {
+        return if (recycledPending.isEmpty()) Pending() else recycledPending.removeFirst()
+    }
+
+    private fun recycle(buffer: ByteBuffer) {
+        if (closed) {
+            MemoryUtil.memFree(buffer)
+            return
+        }
+        buffer.clear()
+        if (pooledBytes + buffer.capacity() <= maxPooledBytes) {
+            available += buffer
+            pooledBytes += buffer.capacity().toLong()
+        } else {
+            MemoryUtil.memFree(buffer)
+        }
+    }
 }

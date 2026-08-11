@@ -2,8 +2,6 @@ package sweetie.evaware.luma.backend.blaze3d
 
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.systems.RenderSystem
-import com.mojang.blaze3d.textures.AddressMode
-import com.mojang.blaze3d.textures.FilterMode
 import com.mojang.blaze3d.textures.GpuTexture
 import com.mojang.blaze3d.textures.GpuTextureView
 import com.mojang.blaze3d.textures.GpuSampler
@@ -11,8 +9,6 @@ import sweetie.evaware.luma.LumaNames
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.TextureHandle
-import sweetie.evaware.luma.api.RenderTargetFilter
-import java.util.OptionalDouble
 import java.util.function.Supplier
 
 class VulkanRenderTarget(
@@ -38,23 +34,18 @@ class VulkanRenderTarget(
 
     companion object {
         private const val COLOR_USAGE = GpuTexture.USAGE_COPY_DST or
+            GpuTexture.USAGE_COPY_SRC or
             GpuTexture.USAGE_RENDER_ATTACHMENT or GpuTexture.USAGE_TEXTURE_BINDING
         private const val DEPTH_USAGE = GpuTexture.USAGE_COPY_DST or GpuTexture.USAGE_COPY_SRC or
             GpuTexture.USAGE_TEXTURE_BINDING or GpuTexture.USAGE_RENDER_ATTACHMENT
 
-        fun create(
-            width: Int,
-            height: Int,
-            useDepth: Boolean,
-            format: RenderTargetFormat
-        ): VulkanRenderTarget = create(width, height, useDepth, format, RenderTargetFilter.LINEAR)
-
-        fun create(
+        internal fun create(
             width: Int,
             height: Int,
             useDepth: Boolean,
             format: RenderTargetFormat,
-            filter: RenderTargetFilter
+            sampler: GpuSampler,
+            uploads: TextureUploadQueue
         ): VulkanRenderTarget {
             val device = RenderSystem.getDevice()
             val gpuFormat = when (format) {
@@ -64,7 +55,6 @@ class VulkanRenderTarget(
 
             var texture: GpuTexture? = null
             var textureView: GpuTextureView? = null
-            var sampler: GpuSampler? = null
             var depthTexture: GpuTexture? = null
             var depthView: GpuTextureView? = null
             try {
@@ -78,15 +68,6 @@ class VulkanRenderTarget(
                     1
                 )
                 textureView = device.createTextureView(texture)
-                sampler = device.createSampler(
-                    AddressMode.CLAMP_TO_EDGE,
-                    AddressMode.CLAMP_TO_EDGE,
-                    filter.toGpuFilter(),
-                    filter.toGpuFilter(),
-                    1,
-                    OptionalDouble.empty()
-                )
-
                 if (useDepth) {
                     depthTexture = device.createTexture(
                         Supplier { LumaNames.DEPTH_TEXTURE },
@@ -100,7 +81,7 @@ class VulkanRenderTarget(
                     depthView = device.createTextureView(depthTexture)
                 }
 
-                val colorTexture = VulkanTexture(texture, textureView, sampler, width, height)
+                val colorTexture = VulkanTexture(texture, textureView, sampler, width, height, uploads)
                 return VulkanRenderTarget(
                     texture,
                     textureView,
@@ -113,16 +94,11 @@ class VulkanRenderTarget(
             } catch (throwable: Throwable) {
                 depthView?.close()
                 depthTexture?.close()
-                sampler?.close()
                 textureView?.close()
                 texture?.close()
                 throw throwable
             }
         }
 
-        private fun RenderTargetFilter.toGpuFilter(): FilterMode = when (this) {
-            RenderTargetFilter.NEAREST -> FilterMode.NEAREST
-            RenderTargetFilter.LINEAR -> FilterMode.LINEAR
-        }
     }
 }

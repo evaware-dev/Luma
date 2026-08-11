@@ -60,13 +60,14 @@ internal class DrawCallMerger {
                 currentUboBytes = -1L
             }
 
+            val texturesSame = currentProgram === program && sameTextures(draw.textures, currentTextures)
             val canMerge = currentProgram == program &&
                 currentTopology == topology &&
                 currentDepthEnabled == draw.depthEnabled &&
                 currentDepthWrite == draw.depthWrite &&
                 currentDepthFunc == draw.depthFunc &&
                 currentCullEnabled == draw.cullEnabled &&
-                sameTextures(draw.textures, currentTextures) &&
+                texturesSame &&
                 currentUboOffset == draw.uboOffset &&
                 currentUboBytes == draw.uboBytes &&
                 draw.vertexOffset == currentVertexOffset + currentVertexBytes
@@ -103,7 +104,7 @@ internal class DrawCallMerger {
                     }
                 }
 
-                if (currentProgram != program || !sameTextures(draw.textures, currentTextures)) {
+                if (!texturesSame) {
                     consumer.onTextureChanged(program, draw.textures)
                 }
 

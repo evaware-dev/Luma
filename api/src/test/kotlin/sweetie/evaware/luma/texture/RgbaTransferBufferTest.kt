@@ -1,6 +1,7 @@
 package sweetie.evaware.luma.texture
 
 import java.awt.image.BufferedImage
+import java.nio.ByteBuffer
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 
@@ -37,5 +38,26 @@ class RgbaTransferBufferTest {
         transfer.write(image).get(actual)
         assertContentEquals(byteArrayOf(1, 2, 3, 0xFF.toByte()), actual)
         transfer.close()
+    }
+
+    @Test
+    fun `writes a larger fallback image directly into a caller buffer`() {
+        val image = BufferedImage(4, 2, BufferedImage.TYPE_4BYTE_ABGR).apply {
+            setRGB(3, 1, 0x7F123456)
+        }
+
+        RgbaTransferBuffer(initialPixelCapacity = 1).use { transfer ->
+            val target = ByteBuffer.allocateDirect(32)
+            val result = transfer.write(image, target)
+            val lastPixel = ByteArray(4)
+            result.position(28)
+            result.get(lastPixel)
+
+            assertContentEquals(byteArrayOf(0x12, 0x34, 0x56, 0x7F), lastPixel)
+
+            val internal = ByteArray(32)
+            transfer.write(image).get(internal)
+            assertContentEquals(lastPixel, internal.copyOfRange(28, 32))
+        }
     }
 }

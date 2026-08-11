@@ -18,31 +18,16 @@ class GlTexture(
 ) : TextureHandle {
     private var closed = false
 
+    internal fun requireOpen() = check(!closed) { "Texture is closed" }
+
     fun update(x: Int, y: Int, image: BufferedImage) {
-        check(!closed) { "Texture is closed" }
+        requireOpen()
         val previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
-        val pixelStore = capturePixelStore()
-        val w = image.width
-        val h = image.height
-        val buffer = transfer.write(image)
+        val pixelStore = capturePixelStore(pixelStoreState.get())
         try {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
-            GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 4)
-            GL11.glPixelStorei(GL11.GL_UNPACK_ROW_LENGTH, 0)
-            GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_ROWS, 0)
-            GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_PIXELS, 0)
-            GL11.glTexSubImage2D(
-                GL11.GL_TEXTURE_2D,
-                0,
-                x,
-                y,
-                w,
-                h,
-                GL11.GL_RGBA,
-                GL11.GL_UNSIGNED_BYTE,
-                buffer
-            )
-            if (mipmap) GL30.glGenerateMipmap(GL11.GL_TEXTURE_2D)
+            setRequiredPixelStore()
+            updateBound(x, y, image, transfer.get())
         } finally {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture)
             restorePixelStore(pixelStore)
@@ -50,7 +35,7 @@ class GlTexture(
     }
 
     fun bind(unit: Int) {
-        check(!closed) { "Texture is closed" }
+        requireOpen()
         val activeUnit = GL13.GL_TEXTURE0 + unit
         GL13.glActiveTexture(activeUnit)
         bindCurrentUnit()
@@ -58,8 +43,55 @@ class GlTexture(
     }
 
     internal fun bindCurrentUnit() {
-        check(!closed) { "Texture is closed" }
+        requireOpen()
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
+    }
+
+    internal fun initializeBound(image: BufferedImage, transfer: RgbaTransferBuffer) {
+        if (!mipmap) {
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL12.GL_TEXTURE_MAX_LEVEL, 0)
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL12.GL_TEXTURE_MIN_LOD, 0)
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL12.GL_TEXTURE_MAX_LOD, 0)
+        }
+        GL11.glTexParameteri(
+            GL11.GL_TEXTURE_2D,
+            GL11.GL_TEXTURE_MIN_FILTER,
+            if (mipmap) GL11.GL_LINEAR_MIPMAP_LINEAR else GL11.GL_LINEAR
+        )
+        GL11.glTexParameterf(GL11.GL_TEXTURE_2D, GL14.GL_TEXTURE_LOD_BIAS, 0f)
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR)
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE)
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE)
+        val buffer = transfer.write(image)
+        GL11.glTexImage2D(
+            GL11.GL_TEXTURE_2D,
+            0,
+            GL11.GL_RGBA8,
+            image.width,
+            image.height,
+            0,
+            GL11.GL_RGBA,
+            GL11.GL_UNSIGNED_BYTE,
+            buffer
+        )
+        if (mipmap) GL30.glGenerateMipmap(GL11.GL_TEXTURE_2D)
+    }
+
+    internal fun updateBound(x: Int, y: Int, image: BufferedImage, transfer: RgbaTransferBuffer) {
+        requireOpen()
+        val buffer = transfer.write(image)
+        GL11.glTexSubImage2D(
+            GL11.GL_TEXTURE_2D,
+            0,
+            x,
+            y,
+            image.width,
+            image.height,
+            GL11.GL_RGBA,
+            GL11.GL_UNSIGNED_BYTE,
+            buffer
+        )
+        if (mipmap) GL30.glGenerateMipmap(GL11.GL_TEXTURE_2D)
     }
 
     override fun close() {
@@ -72,61 +104,43 @@ class GlTexture(
         fun create(image: BufferedImage, mipmap: Boolean): GlTexture {
             val textureId = GL11.glGenTextures()
             val previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
-            val pixelStore = capturePixelStore()
+            val pixelStore = capturePixelStore(pixelStoreState.get())
 
-            val w = image.width
-            val h = image.height
-            val buffer = transfer.write(image)
+            val texture = GlTexture(textureId, image.width, image.height, mipmap)
             try {
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
-                if (mipmap) {
-                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR_MIPMAP_LINEAR)
-                } else {
-                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL12.GL_TEXTURE_MAX_LEVEL, 0)
-                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL12.GL_TEXTURE_MIN_LOD, 0)
-                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL12.GL_TEXTURE_MAX_LOD, 0)
-                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR)
-                }
-                GL11.glTexParameterf(GL11.GL_TEXTURE_2D, GL14.GL_TEXTURE_LOD_BIAS, 0f)
-                GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR)
-                GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE)
-                GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE)
-
-                GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 4)
-                GL11.glPixelStorei(GL11.GL_UNPACK_ROW_LENGTH, 0)
-                GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_ROWS, 0)
-                GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_PIXELS, 0)
-                GL11.glTexImage2D(
-                    GL11.GL_TEXTURE_2D,
-                    0,
-                    GL11.GL_RGBA8,
-                    w,
-                    h,
-                    0,
-                    GL11.GL_RGBA,
-                    GL11.GL_UNSIGNED_BYTE,
-                    buffer
-                )
-
-                if (mipmap) {
-                    GL30.glGenerateMipmap(GL11.GL_TEXTURE_2D)
-                }
-
-                return GlTexture(textureId, w, h, mipmap)
+                setRequiredPixelStore()
+                texture.initializeBound(image, transfer.get())
+                return texture
+            } catch (failure: Throwable) {
+                GL11.glDeleteTextures(textureId)
+                throw failure
             } finally {
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture)
                 restorePixelStore(pixelStore)
             }
         }
 
-        fun closeTransferBuffer() = transfer.close()
+        fun closeTransferBuffer() {
+            transfer.get().close()
+            transfer.remove()
+            pixelStoreState.remove()
+        }
 
-        private fun capturePixelStore() = intArrayOf(
-            GL11.glGetInteger(GL11.GL_UNPACK_ALIGNMENT),
-            GL11.glGetInteger(GL11.GL_UNPACK_ROW_LENGTH),
-            GL11.glGetInteger(GL11.GL_UNPACK_SKIP_ROWS),
-            GL11.glGetInteger(GL11.GL_UNPACK_SKIP_PIXELS)
-        )
+        private fun setRequiredPixelStore() {
+            GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 4)
+            GL11.glPixelStorei(GL11.GL_UNPACK_ROW_LENGTH, 0)
+            GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_ROWS, 0)
+            GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_PIXELS, 0)
+        }
+
+        private fun capturePixelStore(state: IntArray): IntArray {
+            state[0] = GL11.glGetInteger(GL11.GL_UNPACK_ALIGNMENT)
+            state[1] = GL11.glGetInteger(GL11.GL_UNPACK_ROW_LENGTH)
+            state[2] = GL11.glGetInteger(GL11.GL_UNPACK_SKIP_ROWS)
+            state[3] = GL11.glGetInteger(GL11.GL_UNPACK_SKIP_PIXELS)
+            return state
+        }
 
         private fun restorePixelStore(state: IntArray) {
             GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, state[0])
@@ -135,6 +149,7 @@ class GlTexture(
             GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_PIXELS, state[3])
         }
 
-        private val transfer = RgbaTransferBuffer()
+        private val transfer = ThreadLocal.withInitial(::RgbaTransferBuffer)
+        private val pixelStoreState = ThreadLocal.withInitial { IntArray(4) }
     }
 }

@@ -6,25 +6,23 @@ import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.textures.GpuTexture
 import com.mojang.blaze3d.textures.GpuTextureView
 import com.mojang.blaze3d.textures.GpuSampler
-import com.mojang.blaze3d.textures.AddressMode
-import com.mojang.blaze3d.textures.FilterMode
 import com.mojang.blaze3d.systems.RenderSystem
 import sweetie.evaware.luma.api.TextureHandle
 import java.awt.image.BufferedImage
-import java.util.OptionalDouble
 
-class VulkanTexture(
+class VulkanTexture internal constructor(
     val gpuTexture: GpuTexture,
     val view: GpuTextureView,
     val sampler: GpuSampler,
     override val width: Int,
-    override val height: Int
+    override val height: Int,
+    private val uploads: TextureUploadQueue
 ) : TextureHandle {
     private var closed = false
 
     fun update(x: Int, y: Int, image: BufferedImage) {
         check(!closed) { "Texture is closed" }
-        TextureUploadQueue.enqueue(gpuTexture, image, x, y)
+        uploads.enqueue(gpuTexture, image, x, y)
     }
 
     fun bind(unit: Int) {
@@ -36,12 +34,11 @@ class VulkanTexture(
         VulkanResourceRetirement.defer {
             view.close()
             gpuTexture.close()
-            sampler.close()
         }
     }
 
     companion object {
-        fun create(image: BufferedImage): VulkanTexture {
+        internal fun create(image: BufferedImage, sampler: GpuSampler, uploads: TextureUploadQueue): VulkanTexture {
             val device = RenderSystem.getDevice()
             val w = image.width
             val h = image.height
@@ -49,7 +46,6 @@ class VulkanTexture(
 
             var texture: GpuTexture? = null
             var view: GpuTextureView? = null
-            var sampler: GpuSampler? = null
             try {
                 texture = device.createTexture(
                     { LumaNames.TEXTURE },
@@ -62,22 +58,12 @@ class VulkanTexture(
                 )
                 view = device.createTextureView(texture)
 
-                TextureUploadQueue.uploadNow(device, texture, image)
+                uploads.enqueue(texture, image, 0, 0)
 
-                sampler = device.createSampler(
-                    AddressMode.CLAMP_TO_EDGE,
-                    AddressMode.CLAMP_TO_EDGE,
-                    FilterMode.LINEAR,
-                    FilterMode.LINEAR,
-                    1,
-                    OptionalDouble.empty()
-                )
-
-                return VulkanTexture(texture, view, sampler, w, h)
+                return VulkanTexture(texture, view, sampler, w, h, uploads)
             } catch (t: Throwable) {
                 view?.close()
                 texture?.close()
-                sampler?.close()
                 throw t
             }
         }

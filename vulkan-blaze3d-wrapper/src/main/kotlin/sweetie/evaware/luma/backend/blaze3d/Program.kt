@@ -28,27 +28,18 @@ class LumaShaderSource(
     }
 }
 
-private fun RenderPipeline.close() {
-    (this as? AutoCloseable)?.close()
-}
-
-data class PipelineKey(
-    val topology: PrimitiveTopology,
-    val depthEnabled: Boolean,
-    val depthWrite: Boolean,
-    val depthFunc: CompareOp,
-    val cullEnabled: Boolean,
-    val hasDepthAttachment: Boolean
-)
-
 data class SamplerBinding(val name: String, val unit: Int)
 class Program(
     val id: Identifier,
     val vertexSource: String,
     val fragmentSource: String,
-    val layout: VertexLayout
+    val layout: VertexLayout,
+    private val scheduleClose: ((() -> Unit) -> Unit) = { action -> action() }
 ) : ProgramHandle {
-    private val pipelines = HashMap<PipelineKey, RenderPipeline>()
+    private var pipelineKeys = IntArray(4)
+    private var pipelines = arrayOfNulls<RenderPipeline>(4)
+    private var pipelineCount = 0
+    private var closeScheduled = false
     val uniformInfos = parseUniforms(vertexSource, fragmentSource)
     val attributeNames = parseAttributes(vertexSource)
     val samplers = run {
@@ -87,8 +78,21 @@ class Program(
         return list
     }
 
-    fun getOrCreatePipeline(device: GpuDevice, key: PipelineKey): RenderPipeline {
-        return pipelines.getOrPut(key) {
+    internal fun getOrCreatePipeline(
+        device: GpuDevice,
+        topology: PrimitiveTopology,
+        depthEnabled: Boolean,
+        depthWrite: Boolean,
+        depthFunc: CompareOp,
+        cullEnabled: Boolean,
+        hasDepthAttachment: Boolean
+    ): RenderPipeline {
+        val key = pipelineKey(topology, depthEnabled, depthWrite, depthFunc, cullEnabled, hasDepthAttachment)
+        for (index in 0 until pipelineCount) {
+            if (pipelineKeys[index] == key) return pipelines[index]!!
+        }
+
+        val pipeline = run {
             val fmt = convertLayout(layout, attributeNames)
             val layoutBuilder = BindGroupLayout.builder()
             if (uniformInfos.isNotEmpty()) {
@@ -100,8 +104,8 @@ class Program(
             val bindGroupLayout = layoutBuilder.build()
 
             val depthState = DepthStencilState(
-                if (key.depthEnabled) key.depthFunc else CompareOp.ALWAYS_PASS,
-                key.depthWrite
+                if (depthEnabled) depthFunc else CompareOp.ALWAYS_PASS,
+                depthWrite
             )
 
             val pipelineBuilder = RenderPipeline.builder()
@@ -110,12 +114,12 @@ class Program(
                 .withFragmentShader(id)
                 .withVertexBinding(0, fmt)
                 .withBindGroupLayout(bindGroupLayout)
-                .withCull(key.cullEnabled)
+                .withCull(cullEnabled)
                 .withDepthStencilState(
-                    if (key.hasDepthAttachment) Optional.of(depthState) else Optional.empty()
+                    if (hasDepthAttachment) Optional.of(depthState) else Optional.empty()
                 )
                 .withColorTargetState(ColorTargetState(BlendFunction.TRANSLUCENT))
-                .withPrimitiveTopology(key.topology)
+                .withPrimitiveTopology(topology)
                 .build()
 
             val source = LumaShaderSource(vertexSource, fragmentSource)
@@ -126,32 +130,67 @@ class Program(
             }
             pipelineBuilder
         }
+
+        if (pipelineCount == pipelines.size) {
+            pipelineKeys = pipelineKeys.copyOf(pipelineCount shl 1)
+            pipelines = pipelines.copyOf(pipelineCount shl 1)
+        }
+        pipelineKeys[pipelineCount] = key
+        pipelines[pipelineCount] = pipeline
+        pipelineCount++
+        return pipeline
     }
 
     fun precompileDefaults(device: GpuDevice) {
+        requireOpen()
         for (hasDepthAttachment in booleanArrayOf(false, true)) {
             getOrCreatePipeline(
                 device,
-                PipelineKey(
-                    topology = PrimitiveTopology.TRIANGLES,
-                    depthEnabled = false,
-                    depthWrite = false,
-                    depthFunc = CompareOp.ALWAYS_PASS,
-                    cullEnabled = false,
-                    hasDepthAttachment = hasDepthAttachment
-                )
+                PrimitiveTopology.TRIANGLES,
+                false,
+                false,
+                CompareOp.ALWAYS_PASS,
+                false,
+                hasDepthAttachment
             )
         }
     }
 
     override fun close() {
-        pipelines.values.forEach(RenderPipeline::close)
-        pipelines.clear()
+        if (closeScheduled) return
+        closeScheduled = true
+        scheduleClose(this::clearPipelines)
+    }
+
+    internal fun requireOpen() {
+        check(!closeScheduled) { "Program is closed" }
+    }
+
+    private fun clearPipelines() {
+        for (index in 0 until pipelineCount) pipelines[index] = null
+        pipelineCount = 0
+    }
+
+    private fun pipelineKey(
+        topology: PrimitiveTopology,
+        depthEnabled: Boolean,
+        depthWrite: Boolean,
+        depthFunc: CompareOp,
+        cullEnabled: Boolean,
+        hasDepthAttachment: Boolean
+    ): Int {
+        var key = topology.ordinal
+        key = key * CompareOp.entries.size + depthFunc.ordinal
+        key = key * 2 + if (depthEnabled) 1 else 0
+        key = key * 2 + if (depthWrite) 1 else 0
+        key = key * 2 + if (cullEnabled) 1 else 0
+        return key * 2 + if (hasDepthAttachment) 1 else 0
     }
 
     private fun parseAttributes(vertex: String): Map<Int, String> {
         val map = HashMap<Int, String>()
-        val regex = Regex("""^\s*//\s*@in\s+(\d+)\s+[a-zA-Z0-9_]+\s+[a-zA-Z0-9_]+\s+([a-zA-Z0-9_]+)""")
+        val directive = Regex.escape(LumaNames.ATTRIBUTE_DIRECTIVE)
+        val regex = Regex("""^\s*//\s*$directive\s+(\d+)\s+[a-zA-Z0-9_]+\s+[a-zA-Z0-9_]+\s+([a-zA-Z0-9_]+)""")
         for (line in vertex.lines()) {
             val match = regex.find(line)
             if (match != null) {

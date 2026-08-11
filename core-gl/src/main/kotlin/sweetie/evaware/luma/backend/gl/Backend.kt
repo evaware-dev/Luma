@@ -14,19 +14,23 @@ import sweetie.evaware.luma.uniform.*
 import sweetie.evaware.luma.vertex.VertexLayout
 import java.awt.image.BufferedImage
 import java.nio.FloatBuffer
+import sweetie.evaware.luma.texture.RgbaTransferBuffer
 
 class Backend(
-    config: GlBackendConfig = GlBackendConfig()
+    private val config: GlBackendConfig = GlBackendConfig()
 ) : RenderBackend {
     private val frameSnapshot = GlStateSnapshot()
     private val viewportBuffer = IntArray(4)
     private val colorMaskBuffer = IntArray(4)
     private val targetStack = ArrayList<GlRenderTarget?>()
+    private val pixelUnpackState = GlPixelUnpackState(config.statePolicy == GlStatePolicy.PRESERVE)
+    private val textureTransfer = RgbaTransferBuffer()
 
     private var boundProgramId = -1
     private var boundVertexArrayId = -1
     private var boundArrayBufferId = -1
-    private var boundTextureIds = IntArray(config.initialTextureUnits) { UNKNOWN_BINDING }
+    private val textureBindings = TextureBindingCache(config.initialTextureUnits)
+    private var samplerBindings = IntArray(config.initialTextureUnits) { UNKNOWN_SAMPLER_BINDING }
     private var activeTextureUnit = -1
     private var frameActive = false
 
@@ -52,14 +56,19 @@ class Backend(
         boundProgramId = -1
         boundVertexArrayId = -1
         boundArrayBufferId = -1
-        boundTextureIds.fill(UNKNOWN_BINDING)
+        textureBindings.invalidateAll()
+        samplerBindings.fill(UNKNOWN_SAMPLER_BINDING)
     }
 
     override fun beginFrame() {
-        captureState(frameSnapshot)
-        applyGuiState(frameSnapshot)
+        if (config.statePolicy == GlStatePolicy.PRESERVE) {
+            captureState(frameSnapshot)
+            applyGuiState(frameSnapshot)
+            activeTextureUnit = frameSnapshot.activeTexture - GL13.GL_TEXTURE0
+        } else {
+            prepareOwnedFrame()
+        }
         invalidateBindingCache()
-        activeTextureUnit = frameSnapshot.activeTexture - GL13.GL_TEXTURE0
         targetStack.clear()
         targetStack.add(null)
         frameActive = true
@@ -67,7 +76,11 @@ class Backend(
 
     override fun endFrame() {
         try {
-            restoreState(frameSnapshot)
+            try {
+                pixelUnpackState.restore()
+            } finally {
+                if (config.statePolicy == GlStatePolicy.PRESERVE) restoreState(frameSnapshot)
+            }
         } finally {
             frameActive = false
             activeTextureUnit = -1
@@ -125,26 +138,44 @@ class Backend(
     }
 
     override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle {
-        return GlTexture.create(image, mipmap)
+        if (!frameActive) return GlTexture.create(image, mipmap)
+        pixelUnpackState.prepare()
+        val texture = GlTexture(GL11.glGenTextures(), image.width, image.height, mipmap)
+        try {
+            bindTextureForUpload(texture)
+            texture.initializeBound(image, textureTransfer)
+            return texture
+        } catch (failure: Throwable) {
+            texture.close()
+            throw failure
+        }
     }
 
     override fun updateTexture(texture: TextureHandle, x: Int, y: Int, image: BufferedImage) {
-        (texture as GlTexture).update(x, y, image)
+        val glTexture = texture as GlTexture
+        if (!frameActive) {
+            glTexture.update(x, y, image)
+            return
+        }
+        pixelUnpackState.prepare()
+        bindTextureForUpload(glTexture)
+        glTexture.updateBound(x, y, image, textureTransfer)
     }
 
     override fun bindTexture(texture: TextureHandle, unit: Int) {
         require(unit >= 0) { "Texture unit must be non-negative: $unit" }
         val glTexture = texture as GlTexture
-        ensureTextureCacheCapacity(unit + 1)
-        if (boundTextureIds[unit] == glTexture.textureId) return
+        glTexture.requireOpen()
+        if (textureBindings.isBound(unit, glTexture)) return
 
         if (frameActive) {
             prepareTextureUnit(unit)
             glTexture.bindCurrentUnit()
+            ensureSamplerUnbound(unit)
         } else {
             glTexture.bind(unit)
         }
-        boundTextureIds[unit] = glTexture.textureId
+        textureBindings.bind(unit, glTexture)
     }
 
     override fun draw(
@@ -233,10 +264,27 @@ class Backend(
     }
 
     override fun close() {
+        textureTransfer.close()
         GlTexture.closeTransferBuffer()
     }
 
     override fun hasContext(): Boolean = GLFW.glfwGetCurrentContext() != 0L
+
+    fun invalidateStateCache() {
+        invalidateBindingCache()
+        activeTextureUnit = -1
+    }
+
+    fun <T> externalGl(action: () -> T): T {
+        pixelUnpackState.invalidate()
+        invalidateStateCache()
+        return try {
+            action()
+        } finally {
+            if (frameActive) applyOwnedGuiState()
+            invalidateStateCache()
+        }
+    }
 
     private fun compile(type: Int, source: String): Int {
         val shaderId = GL20.glCreateShader(type)
@@ -324,6 +372,11 @@ class Backend(
 
     private fun prepareTextureUnit(unit: Int) {
         activateTextureUnit(unit)
+        ensureSamplerCapacity(unit + 1)
+        if (config.statePolicy == GlStatePolicy.OWNED) {
+            ensureSamplerUnbound(unit)
+            return
+        }
         if (frameSnapshot.hasTextureUnit(unit)) return
         val sampler = GL11.glGetInteger(GL33.GL_SAMPLER_BINDING)
         frameSnapshot.addTextureUnit(
@@ -331,7 +384,10 @@ class Backend(
             GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D),
             sampler
         )
-        if (sampler != 0) GL33.glBindSampler(unit, 0)
+        if (sampler != 0) {
+            GL33.glBindSampler(unit, 0)
+        }
+        samplerBindings[unit] = 0
     }
 
     private fun activateTextureUnit(unit: Int) {
@@ -340,12 +396,29 @@ class Backend(
         activeTextureUnit = unit
     }
 
-    private fun ensureTextureCacheCapacity(required: Int) {
-        if (required <= boundTextureIds.size) return
-        val previousSize = boundTextureIds.size
-        val capacity = maxOf(required, previousSize shl 1)
-        boundTextureIds = boundTextureIds.copyOf(capacity)
-        boundTextureIds.fill(UNKNOWN_BINDING, previousSize, capacity)
+    private fun bindTextureForUpload(texture: GlTexture) {
+        texture.requireOpen()
+        val unit = activeTextureUnit.coerceAtLeast(0)
+        prepareTextureUnit(unit)
+        if (!textureBindings.isBound(unit, texture)) {
+            texture.bindCurrentUnit()
+            textureBindings.bind(unit, texture)
+        }
+    }
+
+    private fun ensureSamplerUnbound(unit: Int) {
+        ensureSamplerCapacity(unit + 1)
+        if (samplerBindings[unit] == 0) return
+        GL33.glBindSampler(unit, 0)
+        samplerBindings[unit] = 0
+    }
+
+    private fun ensureSamplerCapacity(required: Int) {
+        if (required <= samplerBindings.size) return
+        val previousSize = samplerBindings.size
+        val capacity = maxOf(required, maxOf(1, previousSize shl 1))
+        samplerBindings = samplerBindings.copyOf(capacity)
+        java.util.Arrays.fill(samplerBindings, previousSize, capacity, UNKNOWN_SAMPLER_BINDING)
     }
 
     private fun applyGuiState(snapshot: GlStateSnapshot) {
@@ -380,7 +453,37 @@ class Backend(
         }
     }
 
+    private fun prepareOwnedFrame() {
+        frameSnapshot.drawFramebuffer = config.ownedDrawFramebuffer
+        frameSnapshot.readFramebuffer = config.ownedReadFramebuffer
+        val viewport = viewportBuffer
+        if (!Luma.platform.getViewport(viewport)) GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport)
+        frameSnapshot.viewportX = viewport[0]
+        frameSnapshot.viewportY = viewport[1]
+        frameSnapshot.viewportWidth = viewport[2]
+        frameSnapshot.viewportHeight = viewport[3]
+        frameSnapshot.clearTextureUnits()
+        applyOwnedGuiState()
+        GL13.glActiveTexture(GL13.GL_TEXTURE0)
+        activeTextureUnit = 0
+    }
+
+    private fun applyOwnedGuiState() {
+        GL11.glDisable(GL11.GL_DEPTH_TEST)
+        GL11.glDisable(GL11.GL_CULL_FACE)
+        GL11.glDisable(GL11.GL_SCISSOR_TEST)
+        GL11.glEnable(GL11.GL_BLEND)
+        GL11.glColorMask(true, true, true, true)
+        GL20.glBlendEquationSeparate(GL14.GL_FUNC_ADD, GL14.GL_FUNC_ADD)
+        GL14.glBlendFuncSeparate(
+            GL11.GL_SRC_ALPHA,
+            GL11.GL_ONE_MINUS_SRC_ALPHA,
+            GL11.GL_ONE,
+            GL11.GL_ONE_MINUS_SRC_ALPHA
+        )
+    }
+
     private companion object {
-        const val UNKNOWN_BINDING = -1
+        const val UNKNOWN_SAMPLER_BINDING = Int.MIN_VALUE
     }
 }
