@@ -8,7 +8,7 @@ version = project.mod_version
 group = project.maven_group
 
 base {
-    archivesName = "luma-vulkan-blaze3d-wrapper"
+    archivesName = "vulkan-blaze3d-wrapper"
 }
 
 repositories {

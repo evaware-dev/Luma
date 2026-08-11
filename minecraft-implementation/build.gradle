@@ -7,7 +7,7 @@ version = project.mod_version
 group = project.maven_group
 
 base {
-    archivesName = "luma-minecraft-implementation"
+    archivesName = "minecraft-implementation"
 }
 
 loom {

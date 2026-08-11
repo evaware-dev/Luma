@@ -8,7 +8,7 @@ version = project.mod_version
 group = project.maven_group
 
 base {
-    archivesName = "luma-minecraft-render-library"
+    archivesName = "minecraft-render-library"
 }
 
 repositories {
