@@ -1,0 +1,73 @@
+plugins {
+    id 'net.fabricmc.fabric-loom'
+    id 'org.jetbrains.kotlin.jvm'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+
+    implementation project(":api")
+    implementation project(":core-gl")
+    implementation project(":shader-translator")
+    implementation project(":vulkan-blaze3d-wrapper")
+    implementation project(":standalone-app")
+
+    def osName = System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT)
+    def osArch = System.getProperty("os.arch").toLowerCase(java.util.Locale.ROOT)
+    def lwjglNatives = osName.contains("win")
+        ? "natives-windows"
+        : osName.contains("mac")
+            ? (osArch.contains("aarch64") || osArch.contains("arm64") ? "natives-macos-arm64" : "natives-macos")
+            : (osArch.contains("aarch64") || osArch.contains("arm64") ? "natives-linux-arm64" : "natives-linux")
+
+    ["lwjgl", "lwjgl-freetype", "lwjgl-glfw", "lwjgl-jemalloc", "lwjgl-openal", "lwjgl-opengl",
+     "lwjgl-shaderc", "lwjgl-spvc", "lwjgl-stb", "lwjgl-tinyfd", "lwjgl-vma"].each { artifact ->
+        runtimeOnly "org.lwjgl:${artifact}:${project.lwjgl_version}:${lwjglNatives}"
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 25
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_25
+    }
+}
+
+tasks.named("test", Test) {
+    failOnNoDiscoveredTests = false
+}
+
+tasks.register("runGlBenchmark", JavaExec) {
+    group = "verification"
+    description = "Runs the OpenGL benchmark in an isolated JVM"
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "benchmark.SingleBenchmarkMain"
+    args "gl"
+    jvmArgs "--enable-native-access=ALL-UNNAMED"
+}
+
+tasks.register("runVulkanBenchmark", JavaExec) {
+    group = "verification"
+    description = "Runs the Blaze3D Vulkan benchmark in an isolated JVM"
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "benchmark.SingleBenchmarkMain"
+    args "vulkan"
+    jvmArgs "--enable-native-access=ALL-UNNAMED"
+}
+
+tasks.register("runBenchmarks", JavaExec) {
+    group = "verification"
+    description = "Runs comparable OpenGL and Blaze3D Vulkan benchmarks in isolated JVM forks"
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "benchmark.Benchmarks"
+}

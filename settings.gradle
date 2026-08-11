@@ -17,6 +17,6 @@ include 'vulkan-blaze3d-wrapper'
 include 'shader-translator'
 include 'minecraft-render-library'
 include 'minecraft-implementation'
-include 'standalone-gl-app'
-
-project(':standalone-gl-app').projectDir = new File(settingsDir, 'standalone-gl-app')
+include 'developer-tools'
+include 'standalone-app'
+include 'benchmarks'
