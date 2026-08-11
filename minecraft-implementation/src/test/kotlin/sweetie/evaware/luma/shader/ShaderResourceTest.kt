@@ -5,6 +5,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.assertContains
 import kotlin.test.assertFalse
 import sweetie.evaware.luma.shader.translator.DefaultShaderTranslator
+import sweetie.evaware.luma.shader.translator.ShaderTarget
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.GraphicsBackend
 import sweetie.evaware.luma.RenderPlatform
@@ -36,7 +37,7 @@ class ShaderResourceTest {
                 override fun getViewport(viewport: IntArray) = false
                 override fun swapToMainFramebuffer(luma: Luma) {}
             }
-            val translator = DefaultShaderTranslator()
+            val translator = DefaultShaderTranslator(ShaderTarget.BLAZE3D)
             val layout = VertexLayout().apply {
                 add(ShaderVertType.FLOAT, 2, 0)
                 add(ShaderVertType.FLOAT, 2, 1)
@@ -79,7 +80,7 @@ class ShaderResourceTest {
                 override fun getViewport(viewport: IntArray) = false
                 override fun swapToMainFramebuffer(luma: Luma) {}
             }
-            val translator = DefaultShaderTranslator()
+            val translator = DefaultShaderTranslator(ShaderTarget.BLAZE3D)
             val layout = VertexLayout().apply {
                 add(ShaderVertType.FLOAT, 2, 0)
                 add(ShaderVertType.FLOAT, 4, 1)
@@ -106,7 +107,7 @@ class ShaderResourceTest {
                 override fun getViewport(viewport: IntArray) = false
                 override fun swapToMainFramebuffer(luma: Luma) {}
             }
-            val translator = DefaultShaderTranslator()
+            val translator = DefaultShaderTranslator(ShaderTarget.BLAZE3D)
             val layout = VertexLayout().apply {
                 add(ShaderVertType.FLOAT, 2, 0)
                 add(ShaderVertType.FLOAT, 2, 1)

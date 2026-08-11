@@ -53,6 +53,34 @@ class VertexLayout {
 
     fun size() = size
 
+    internal fun snapshot() = VertexLayout().also { copy ->
+        var index = 0
+        while (index < size) {
+            copy.add(type(index), count(index), layoutPos(index), normalized(index))
+            index++
+        }
+        if (instanced) copy.markInstanced(baseVertexCount)
+    }
+
+    internal fun isCompatibleWith(other: VertexLayout): Boolean {
+        if (size != other.size ||
+            strideFloats != other.strideFloats ||
+            instanced != other.instanced ||
+            baseVertexCount != other.baseVertexCount
+        ) return false
+
+        var index = 0
+        while (index < size) {
+            if (type(index) != other.type(index) ||
+                count(index) != other.count(index) ||
+                layoutPos(index) != other.layoutPos(index) ||
+                normalized(index) != other.normalized(index)
+            ) return false
+            index++
+        }
+        return true
+    }
+
     private fun ensureCapacity(required: Int) {
         if (required <= counts.size) return
 

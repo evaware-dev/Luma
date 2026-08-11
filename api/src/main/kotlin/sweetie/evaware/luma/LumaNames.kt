@@ -11,6 +11,7 @@ object LumaNames {
     const val PROGRAM_PREFIX = "program_"
 
     const val SAMPLER_PREFIX = "Sampler"
+    const val ATTRIBUTE_DIRECTIVE = "@in"
 
     const val BLAZE3D_GLSL_VERSION = "#version 450"
 }

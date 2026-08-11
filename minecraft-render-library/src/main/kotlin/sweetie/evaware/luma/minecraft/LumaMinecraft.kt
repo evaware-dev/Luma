@@ -10,6 +10,7 @@ import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.shader.translator.DefaultShaderTranslator
+import sweetie.evaware.luma.shader.translator.ShaderTarget
 import sweetie.evaware.luma.uniform.ShaderUniforms
 import sweetie.evaware.luma.vertex.VertexLayout
 import java.awt.image.BufferedImage
@@ -20,7 +21,13 @@ import sweetie.evaware.luma.backend.blaze3d.Backend as VulkanBackend
 object LumaMinecraft {
     fun install() {
         Luma.platform = MinecraftRenderPlatform
-        Luma.shaderTranslator = DefaultShaderTranslator()
+        Luma.shaderTranslator = DefaultShaderTranslator {
+            if (MinecraftRenderPlatform.activeBackend == GraphicsBackend.OPENGL) {
+                ShaderTarget.OPENGL
+            } else {
+                ShaderTarget.BLAZE3D
+            }
+        }
         Luma.backend = LazyBackend()
     }
 }

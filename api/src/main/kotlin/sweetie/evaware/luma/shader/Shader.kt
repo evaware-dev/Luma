@@ -4,6 +4,8 @@ import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.resource.GlResources
+import sweetie.evaware.luma.shader.translator.ShaderTranslator
+import sweetie.evaware.luma.vertex.PreparedVertices
 
 open class Shader(
     private val fragmentPath: String,
@@ -14,6 +16,7 @@ open class Shader(
     val uniforms get() = inputs.uniforms
 
     private var drawMode = PrimitiveType.TRIANGLES
+    private var translator: ShaderTranslator? = null
     private var programHandle: ProgramHandle? = null
     private var loaded = false
 
@@ -26,6 +29,11 @@ open class Shader(
         this.drawMode = PrimitiveType.TRIANGLES
     }
 
+    fun translator(translator: ShaderTranslator) = apply {
+        check(!loaded) { "Cannot change translator after shader loading" }
+        this.translator = translator
+    }
+
     open fun load() {
         if (loaded) return
         inputs.requireConfigured()
@@ -33,7 +41,7 @@ open class Shader(
         val rawVert = loadResource(vertexPath)
         val rawFrag = loadResource(fragmentPath)
 
-        val translated = Luma.shaderTranslator.translate(rawVert, rawFrag, vertices.layout)
+        val translated = (translator ?: Luma.shaderTranslator).translate(rawVert, rawFrag, vertices.layout)
         programHandle = Luma.backend.createProgram(translated.vertexSource, translated.fragmentSource, vertices.layout)
 
         GlResources.track(this)
@@ -43,6 +51,11 @@ open class Shader(
     fun attach() {
         if (!loaded) load()
         programHandle?.let { Luma.backend.bindProgram(it) }
+    }
+
+    fun prepareVertices(initialVertexCapacity: Int = 0): PreparedVertices {
+        inputs.requireConfigured()
+        return PreparedVertices(vertices.layout.snapshot(), initialVertexCapacity)
     }
 
     fun draw(): Int {
@@ -62,6 +75,22 @@ open class Shader(
         val count = stream.vertexCount
         stream.clear()
         return count
+    }
+
+    fun draw(prepared: PreparedVertices): Int {
+        prepared.requireDrawable(vertices.layout)
+        val stream = prepared.stream
+        if (!stream.hasVertices()) return 0
+
+        val currentHandle = programHandle ?: return 0
+        Luma.backend.draw(
+            program = currentHandle,
+            vertices = stream.flipForUpload(),
+            vertexCount = stream.vertexCount,
+            uniforms = uniforms,
+            primitiveType = drawMode
+        )
+        return stream.vertexCount
     }
 
     override fun close() {

@@ -4,6 +4,7 @@ import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.matrix.MatrixControl
 import sweetie.evaware.luma.shader.translator.ShaderTranslator
+import sweetie.evaware.luma.shader.translator.RawShaderTranslator
 import sweetie.evaware.luma.texture.TextureAtlasManager
 
 object Luma {
@@ -17,7 +18,7 @@ object Luma {
     var frameActive = false
 
     lateinit var backend: RenderBackend
-    lateinit var shaderTranslator: ShaderTranslator
+    var shaderTranslator: ShaderTranslator = RawShaderTranslator
 
     @JvmField
     var platform: RenderPlatform = DefaultRenderPlatform
@@ -26,10 +27,21 @@ object Luma {
 
     fun beginMainFramebufferFrame() {
         if (frameActive) return
-        TextureAtlasManager.processPending()
         backend.beginFrame()
-        MatrixControl.beginGuiFrame()
         frameActive = true
+        try {
+            TextureAtlasManager.processPending()
+            MatrixControl.beginGuiFrame()
+        } catch (failure: Throwable) {
+            try {
+                backend.endFrame()
+            } catch (endFailure: Throwable) {
+                failure.addSuppressed(endFailure)
+            } finally {
+                frameActive = false
+            }
+            throw failure
+        }
     }
 
     fun endFrame() {
@@ -46,14 +58,21 @@ object Luma {
             action()
             return
         }
-        TextureAtlasManager.processPending()
         backend.beginFrame()
         frameActive = true
+        var actionFailure: Throwable? = null
         try {
+            TextureAtlasManager.processPending()
             action()
+        } catch (failure: Throwable) {
+            actionFailure = failure
+            throw failure
         } finally {
             try {
                 backend.endFrame()
+            } catch (endFailure: Throwable) {
+                if (actionFailure == null) throw endFailure
+                actionFailure.addSuppressed(endFailure)
             } finally {
                 frameActive = false
             }

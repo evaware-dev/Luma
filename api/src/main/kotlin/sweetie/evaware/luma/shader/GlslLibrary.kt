@@ -16,7 +16,10 @@ object GlslLibrary {
         }
     }
 
-    fun resolve(source: String): String = resolve(source, HashSet())
+    fun resolve(source: String): String {
+        if (source.lineSequence().none(importPattern::matches)) return source
+        return resolve(source, HashSet())
+    }
 
     private fun resolve(source: String, stack: MutableSet<String>): String {
         val builder = StringBuilder(source.length + 64)
