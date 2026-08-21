@@ -23,7 +23,31 @@ Lightweight rendering abstraction library for OpenGL and Vulkan (via Mojang Blaz
 
 The OpenGL backend defaults to `GlStatePolicy.PRESERVE`, which snapshots and restores the surrounding renderer's state. Applications that own the whole GL context can select `GlStatePolicy.OWNED` to remove that integration overhead. Raw GL remains available through `Backend.externalGl { ... }`; Luma invalidates its caches around the call instead of restricting what the application may do.
 
-### Dependency
+### GitHub Packages
+
+GitHub Packages requires GitHub credentials, including for dependency downloads:
+
+```groovy
+repositories {
+    mavenCentral()
+    maven {
+        url 'https://maven.pkg.github.com/evaware-dev/Luma'
+        credentials {
+            username = System.getenv('GITHUB_ACTOR')
+            password = System.getenv('GITHUB_TOKEN')
+        }
+    }
+}
+
+dependencies {
+    implementation 'sweetie.evaware:api:VERSION'
+    implementation 'sweetie.evaware:core-gl:VERSION'
+    implementation 'sweetie.evaware:vulkan-blaze3d-wrapper:VERSION'
+    implementation 'sweetie.evaware:developer-tools:VERSION'
+}
+```
+
+### JitPack
 
 Add the JitPack repository and the core dependency to your project:
 
@@ -43,4 +67,4 @@ dependencies {
 
 ## License
 
-MIT License
+GNU Lesser General Public License v3.0 only. See [LICENSE](LICENSE).
