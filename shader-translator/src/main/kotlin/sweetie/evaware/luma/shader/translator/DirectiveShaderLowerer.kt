@@ -12,9 +12,9 @@ internal object DirectiveShaderLowerer {
             )
         }
 
-        val sharedUniforms = extractUniformLines(vertexSource).ifEmpty {
-            extractUniformLines(fragmentSource)
-        }
+        val sharedUniforms = (
+            extractUniformLines(vertexSource) + extractUniformLines(fragmentSource)
+        ).distinct()
         val outputs = extractShaderOutputs(vertexSource)
         val outputLocations = HashMap<String, Int>(outputs.size)
         for (index in outputs.indices) outputLocations[outputs[index]] = index

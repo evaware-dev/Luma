@@ -13,6 +13,7 @@ repositories {
 dependencies {
     implementation project(":api")
     implementation "org.jetbrains.kotlin:kotlin-stdlib"
+    testImplementation "org.jetbrains.kotlin:kotlin-test"
 }
 
 tasks.withType(JavaCompile).configureEach {
