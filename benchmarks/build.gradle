@@ -64,6 +64,37 @@ tasks.register("runVulkanBenchmark", JavaExec) {
     jvmArgs "--enable-native-access=ALL-UNNAMED"
 }
 
+tasks.register("runGlPreserveBenchmark", JavaExec) {
+    group = "verification"
+    description = "Runs the OpenGL shared-context state-preservation benchmark in an isolated JVM"
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "benchmark.SingleBenchmarkMain"
+    args "gl-preserve"
+    jvmArgs "--enable-native-access=ALL-UNNAMED"
+}
+
+def registerAllocationProfile = { String taskName, String backend ->
+    tasks.register(taskName, JavaExec) {
+        group = "benchmark"
+        description = "Profiles ${backend} benchmark allocations with Java Flight Recorder"
+        dependsOn testClasses
+        classpath = sourceSets.test.runtimeClasspath
+        mainClass = "benchmark.SingleBenchmarkMain"
+        args backend
+        jvmArgs "--enable-native-access=ALL-UNNAMED"
+        doFirst {
+            def output = layout.buildDirectory.file("jfr/${backend}-allocations.jfr").get().asFile
+            output.parentFile.mkdirs()
+            jvmArgs "-XX:StartFlightRecording=filename=${output.absolutePath},settings=profile,dumponexit=true"
+        }
+    }
+}
+
+registerAllocationProfile("profileGlAllocations", "gl")
+registerAllocationProfile("profileGlPreserveAllocations", "gl-preserve")
+registerAllocationProfile("profileVulkanAllocations", "vulkan")
+
 tasks.register("runBenchmarks", JavaExec) {
     group = "verification"
     description = "Runs comparable OpenGL and Blaze3D Vulkan benchmarks in isolated JVM forks"

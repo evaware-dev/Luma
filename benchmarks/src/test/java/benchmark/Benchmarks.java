@@ -7,7 +7,7 @@ public final class Benchmarks {
     }
 
     public static void main(String[] args) {
-        for (String backend : List.of("gl", "vulkan")) {
+        for (String backend : List.of("gl", "gl-preserve", "vulkan")) {
             runFork(backend);
         }
     }
