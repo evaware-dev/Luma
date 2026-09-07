@@ -34,6 +34,7 @@ class VulkanBuffer(
 
     fun write(encoder: CommandEncoder, data: ByteBuffer) {
         val bytes = data.remaining()
+        if (bytes == 0) return
         val buffer = ensureCapacity(bytes)
         encoder.writeToBuffer(buffer.slice(0, bytes.toLong()), data)
     }

@@ -1,12 +1,12 @@
 package sweetie.evaware.luma.backend.blaze3d
 
+import java.awt.image.BufferedImage
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import com.mojang.blaze3d.systems.CommandEncoder
 import com.mojang.blaze3d.textures.GpuTexture
 import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.texture.RgbaTransferBuffer
-import java.awt.image.BufferedImage
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 internal class TextureUploadQueue(
     private val maxPooledBytes: Long

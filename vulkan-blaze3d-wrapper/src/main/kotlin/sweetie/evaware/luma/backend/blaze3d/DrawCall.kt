@@ -1,6 +1,7 @@
 package sweetie.evaware.luma.backend.blaze3d
 
 import com.mojang.blaze3d.platform.CompareOp
+import sweetie.evaware.luma.api.BlendFunction
 import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.TextureHandle
 
@@ -13,11 +14,14 @@ internal class DrawCall {
     var uboBytes: Long = 0
     var textures: Array<TextureHandle?> = NO_TEXTURES
     var primitiveType: PrimitiveType = PrimitiveType.TRIANGLES
+    var blendEnabled: Boolean = true
+    var blendFunction: BlendFunction = BlendFunction.TRANSLUCENT
     var depthEnabled: Boolean = false
     var depthWrite: Boolean = false
     var depthFunc: CompareOp = CompareOp.ALWAYS_PASS
     var cullEnabled: Boolean = false
     var target: VulkanRenderTarget? = null
+    var targetPassId: Int = 0
     var clearColor: FloatArray? = null
 
     fun releaseReferences() {
@@ -40,7 +44,7 @@ internal class DrawCallRecorder {
         private set
 
     fun reset() {
-        for (i in pool.indices) pool[i].releaseReferences()
+        for (index in 0 until size) pool[index].releaseReferences()
         size = 0
     }
 

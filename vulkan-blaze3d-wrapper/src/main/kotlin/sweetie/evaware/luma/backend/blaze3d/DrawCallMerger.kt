@@ -2,6 +2,7 @@ package sweetie.evaware.luma.backend.blaze3d
 
 import com.mojang.blaze3d.PrimitiveTopology
 import com.mojang.blaze3d.platform.CompareOp
+import sweetie.evaware.luma.api.BlendFunction
 import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.TextureHandle
 
@@ -17,6 +18,7 @@ internal class DrawCallMerger {
 
     private fun sameTextures(a: Array<TextureHandle?>, b: Array<TextureHandle?>): Boolean {
         if (a === b) return true
+        if (a.size != b.size) return false
         for (i in a.indices) {
             if (a[i] !== b[i]) return false
         }
@@ -24,9 +26,12 @@ internal class DrawCallMerger {
     }
 
     fun run(draws: DrawCallRecorder, consumer: GroupConsumer) {
-        var currentTarget: Any? = Any()
+        var currentTarget: Any? = null
+        var currentTargetPassId = -1
         var currentProgram: Program? = null
         var currentTopology: PrimitiveTopology? = null
+        var currentBlendEnabled = true
+        var currentBlendFunction = BlendFunction.TRANSLUCENT
         var currentDepthEnabled = false
         var currentDepthWrite = false
         var currentDepthFunc = CompareOp.ALWAYS_PASS
@@ -45,7 +50,7 @@ internal class DrawCallMerger {
 
             val targetKey: Any = draw.target ?: mainTargetMarker
 
-            if (targetKey != currentTarget) {
+            if (targetKey !== currentTarget || draw.targetPassId != currentTargetPassId) {
                 if (currentVertexCount > 0 && currentTopology != null) {
                     consumer.onDraw(currentTopology, currentVertexOffset, currentVertexBytes, currentVertexCount)
                 }
@@ -53,6 +58,7 @@ internal class DrawCallMerger {
 
                 consumer.onTargetChanged(draw.target, draw.clearColor)
                 currentTarget = targetKey
+                currentTargetPassId = draw.targetPassId
                 currentProgram = null
                 currentTopology = null
                 currentTextures = DrawCall.NO_TEXTURES
@@ -61,8 +67,10 @@ internal class DrawCallMerger {
             }
 
             val texturesSame = currentProgram === program && sameTextures(draw.textures, currentTextures)
-            val canMerge = currentProgram == program &&
+            val canMerge = currentProgram === program &&
                 currentTopology == topology &&
+                currentBlendEnabled == draw.blendEnabled &&
+                currentBlendFunction == draw.blendFunction &&
                 currentDepthEnabled == draw.depthEnabled &&
                 currentDepthWrite == draw.depthWrite &&
                 currentDepthFunc == draw.depthFunc &&
@@ -80,8 +88,10 @@ internal class DrawCallMerger {
                     consumer.onDraw(currentTopology, currentVertexOffset, currentVertexBytes, currentVertexCount)
                 }
 
-                val pipelineChanged = currentProgram != program ||
+                val pipelineChanged = currentProgram !== program ||
                     currentTopology != topology ||
+                    currentBlendEnabled != draw.blendEnabled ||
+                    currentBlendFunction != draw.blendFunction ||
                     currentDepthEnabled != draw.depthEnabled ||
                     currentDepthWrite != draw.depthWrite ||
                     currentDepthFunc != draw.depthFunc ||
@@ -91,6 +101,8 @@ internal class DrawCallMerger {
                     consumer.onPipelineChanged(
                         program,
                         topology,
+                        draw.blendEnabled,
+                        draw.blendFunction,
                         draw.depthEnabled,
                         draw.depthWrite,
                         draw.depthFunc,
@@ -110,6 +122,8 @@ internal class DrawCallMerger {
 
                 currentProgram = program
                 currentTopology = topology
+                currentBlendEnabled = draw.blendEnabled
+                currentBlendFunction = draw.blendFunction
                 currentDepthEnabled = draw.depthEnabled
                 currentDepthWrite = draw.depthWrite
                 currentDepthFunc = draw.depthFunc

@@ -1,23 +1,27 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import com.mojang.blaze3d.pipeline.RenderPipeline
 import com.mojang.blaze3d.PrimitiveTopology
+import com.mojang.blaze3d.pipeline.BindGroupLayout
+import com.mojang.blaze3d.pipeline.BlendFunction as MinecraftBlendFunction
 import com.mojang.blaze3d.pipeline.ColorTargetState
 import com.mojang.blaze3d.pipeline.DepthStencilState
-import com.mojang.blaze3d.pipeline.BlendFunction
-import com.mojang.blaze3d.pipeline.BindGroupLayout
+import com.mojang.blaze3d.pipeline.RenderPipeline
 import com.mojang.blaze3d.platform.CompareOp
-import com.mojang.blaze3d.shaders.UniformType
-import com.mojang.blaze3d.systems.GpuDevice
-import sweetie.evaware.luma.LumaNames
-import sweetie.evaware.luma.api.ProgramHandle
-import sweetie.evaware.luma.vertex.VertexLayout
-import sweetie.evaware.luma.uniform.*
-import net.minecraft.resources.Identifier
-
+import com.mojang.blaze3d.platform.BlendFactor as MinecraftBlendFactor
+import com.mojang.blaze3d.platform.BlendOp as MinecraftBlendOp
 import com.mojang.blaze3d.shaders.ShaderSource
 import com.mojang.blaze3d.shaders.ShaderType
+import com.mojang.blaze3d.shaders.UniformType
+import com.mojang.blaze3d.systems.GpuDevice
 import java.util.Optional
+import net.minecraft.resources.Identifier
+import sweetie.evaware.luma.LumaNames
+import sweetie.evaware.luma.api.BlendFactor
+import sweetie.evaware.luma.api.BlendFunction
+import sweetie.evaware.luma.api.BlendOp
+import sweetie.evaware.luma.api.ProgramHandle
+import sweetie.evaware.luma.uniform.*
+import sweetie.evaware.luma.vertex.VertexLayout
 
 class LumaShaderSource(
     val vertexCode: String,
@@ -36,8 +40,10 @@ class Program(
     val layout: VertexLayout,
     private val scheduleClose: ((() -> Unit) -> Unit) = { action -> action() }
 ) : ProgramHandle {
-    private var pipelineKeys = IntArray(4)
+    private val shaderSource = LumaShaderSource(vertexSource, fragmentSource)
+    private var pipelineKeys = LongArray(4)
     private var pipelines = arrayOfNulls<RenderPipeline>(4)
+    private var pipelineGenerations = LongArray(4) { Long.MIN_VALUE }
     private var pipelineCount = 0
     private var closeScheduled = false
     val uniformInfos = parseUniforms(vertexSource, fragmentSource)
@@ -81,15 +87,25 @@ class Program(
     internal fun getOrCreatePipeline(
         device: GpuDevice,
         topology: PrimitiveTopology,
+        blendEnabled: Boolean,
+        blendFunction: BlendFunction,
         depthEnabled: Boolean,
         depthWrite: Boolean,
         depthFunc: CompareOp,
         cullEnabled: Boolean,
-        hasDepthAttachment: Boolean
+        hasDepthAttachment: Boolean,
+        pipelineGeneration: Long
     ): RenderPipeline {
-        val key = pipelineKey(topology, depthEnabled, depthWrite, depthFunc, cullEnabled, hasDepthAttachment)
+        val key = pipelineKey(topology, blendEnabled, blendFunction, depthEnabled, depthWrite, depthFunc, cullEnabled, hasDepthAttachment)
         for (index in 0 until pipelineCount) {
-            if (pipelineKeys[index] == key) return pipelines[index]!!
+            if (pipelineKeys[index] == key) {
+                val pipeline = pipelines[index]!!
+                if (pipelineGenerations[index] != pipelineGeneration) {
+                    compile(device, pipeline)
+                    pipelineGenerations[index] = pipelineGeneration
+                }
+                return pipeline
+            }
         }
 
         val pipeline = run {
@@ -118,40 +134,49 @@ class Program(
                 .withDepthStencilState(
                     if (hasDepthAttachment) Optional.of(depthState) else Optional.empty()
                 )
-                .withColorTargetState(ColorTargetState(BlendFunction.TRANSLUCENT))
+                .withColorTargetState(if (blendEnabled) ColorTargetState(blendFunction.toMinecraft()) else ColorTargetState.DEFAULT)
                 .withPrimitiveTopology(topology)
                 .build()
 
-            val source = LumaShaderSource(vertexSource, fragmentSource)
-            val compiled = device.precompilePipeline(pipelineBuilder, source)
-            if (!compiled.isValid) {
-                val messages = device.getLastDebugMessages()
-                error("Pipeline compilation failed for $id:\n${messages.joinToString("\n")}")
-            }
+            compile(device, pipelineBuilder)
             pipelineBuilder
         }
 
         if (pipelineCount == pipelines.size) {
             pipelineKeys = pipelineKeys.copyOf(pipelineCount shl 1)
             pipelines = pipelines.copyOf(pipelineCount shl 1)
+            pipelineGenerations = pipelineGenerations.copyOf(pipelineCount shl 1)
         }
         pipelineKeys[pipelineCount] = key
         pipelines[pipelineCount] = pipeline
+        pipelineGenerations[pipelineCount] = pipelineGeneration
         pipelineCount++
         return pipeline
     }
 
-    fun precompileDefaults(device: GpuDevice) {
+    private fun compile(device: GpuDevice, pipeline: RenderPipeline): RenderPipeline {
+        val compiled = device.precompilePipeline(pipeline, shaderSource)
+        if (!compiled.isValid) {
+            val messages = device.getLastDebugMessages()
+            error("Pipeline compilation failed for $id:\n${messages.joinToString("\n")}")
+        }
+        return pipeline
+    }
+
+    fun precompileDefaults(device: GpuDevice, pipelineGeneration: Long) {
         requireOpen()
         for (hasDepthAttachment in booleanArrayOf(false, true)) {
             getOrCreatePipeline(
                 device,
                 PrimitiveTopology.TRIANGLES,
+                true,
+                BlendFunction.TRANSLUCENT,
                 false,
                 false,
                 CompareOp.ALWAYS_PASS,
                 false,
-                hasDepthAttachment
+                hasDepthAttachment,
+                pipelineGeneration
             )
         }
     }
@@ -167,25 +192,51 @@ class Program(
     }
 
     private fun clearPipelines() {
-        for (index in 0 until pipelineCount) pipelines[index] = null
+        for (index in 0 until pipelineCount) {
+            pipelines[index] = null
+            pipelineGenerations[index] = Long.MIN_VALUE
+        }
         pipelineCount = 0
     }
 
     private fun pipelineKey(
         topology: PrimitiveTopology,
+        blendEnabled: Boolean,
+        blendFunction: BlendFunction,
         depthEnabled: Boolean,
         depthWrite: Boolean,
         depthFunc: CompareOp,
         cullEnabled: Boolean,
         hasDepthAttachment: Boolean
-    ): Int {
-        var key = topology.ordinal
+    ): Long {
+        var key = topology.ordinal.toLong()
         key = key * CompareOp.entries.size + depthFunc.ordinal
+        key = key * BlendFactor.entries.size + blendFunction.sourceColor.ordinal
+        key = key * BlendFactor.entries.size + blendFunction.destinationColor.ordinal
+        key = key * BlendFactor.entries.size + blendFunction.sourceAlpha.ordinal
+        key = key * BlendFactor.entries.size + blendFunction.destinationAlpha.ordinal
+        key = key * BlendOp.entries.size + blendFunction.colorOp.ordinal
+        key = key * BlendOp.entries.size + blendFunction.alphaOp.ordinal
+        key = key * 2 + if (blendEnabled) 1 else 0
         key = key * 2 + if (depthEnabled) 1 else 0
         key = key * 2 + if (depthWrite) 1 else 0
         key = key * 2 + if (cullEnabled) 1 else 0
         return key * 2 + if (hasDepthAttachment) 1 else 0
     }
+
+    private fun BlendFunction.toMinecraft() = MinecraftBlendFunction(
+        sourceColor.toMinecraft(),
+        destinationColor.toMinecraft(),
+        colorOp.toMinecraft(),
+        sourceAlpha.toMinecraft(),
+        destinationAlpha.toMinecraft(),
+        alphaOp.toMinecraft()
+    )
+
+    private fun BlendFactor.toMinecraft(): MinecraftBlendFactor =
+        MinecraftBlendFactor.valueOf(name)
+
+    private fun BlendOp.toMinecraft(): MinecraftBlendOp = MinecraftBlendOp.valueOf(name)
 
     private fun parseAttributes(vertex: String): Map<Int, String> {
         val map = HashMap<Int, String>()

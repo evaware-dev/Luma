@@ -2,6 +2,8 @@ package sweetie.evaware.luma.tools
 
 import java.awt.image.BufferedImage
 import java.nio.FloatBuffer
+import sweetie.evaware.luma.api.BlendFunction
+import sweetie.evaware.luma.api.DepthCompare
 import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.api.RenderBackend
@@ -148,7 +150,14 @@ class StatsBackend(
 
     override fun endRenderTarget() = delegate.endRenderTarget()
 
+    override fun blend(enabled: Boolean) = delegate.blend(enabled)
+    override fun blendFunction(function: BlendFunction) = delegate.blendFunction(function)
+
     override fun depthTest(enabled: Boolean) = delegate.depthTest(enabled)
+
+    override fun depthWrite(enabled: Boolean) = delegate.depthWrite(enabled)
+
+    override fun depthCompare(compare: DepthCompare) = delegate.depthCompare(compare)
 
     override fun cull(enabled: Boolean) = delegate.cull(enabled)
 

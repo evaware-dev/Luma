@@ -1,16 +1,5 @@
 package sweetie.evaware.renderutil
 
-import sweetie.evaware.luma.Luma
-import sweetie.evaware.luma.RenderPlatform
-import sweetie.evaware.luma.DefaultRenderPlatform
-import sweetie.evaware.luma.api.ProgramHandle
-import sweetie.evaware.luma.api.PrimitiveType
-import sweetie.evaware.luma.api.RenderBackend
-import sweetie.evaware.luma.api.TextureHandle
-import sweetie.evaware.luma.api.RenderTargetHandle
-import sweetie.evaware.luma.api.RenderTargetFormat
-import sweetie.evaware.luma.uniform.ShaderUniforms
-import sweetie.evaware.luma.vertex.VertexLayout
 import java.awt.image.BufferedImage
 import java.nio.FloatBuffer
 import kotlin.test.AfterTest
@@ -18,6 +7,17 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import sweetie.evaware.luma.DefaultRenderPlatform
+import sweetie.evaware.luma.Luma
+import sweetie.evaware.luma.RenderPlatform
+import sweetie.evaware.luma.api.PrimitiveType
+import sweetie.evaware.luma.api.ProgramHandle
+import sweetie.evaware.luma.api.RenderBackend
+import sweetie.evaware.luma.api.RenderTargetFormat
+import sweetie.evaware.luma.api.RenderTargetHandle
+import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.uniform.ShaderUniforms
+import sweetie.evaware.luma.vertex.VertexLayout
 
 class LumaStateControlTest {
 
@@ -44,6 +44,7 @@ class LumaStateControlTest {
     private class MockBackend : RenderBackend {
         var framesBegun = 0
         var framesEnded = 0
+        var blendState = false
         var depthState = false
         var cullState = false
 
@@ -58,6 +59,7 @@ class LumaStateControlTest {
         override fun createRenderTarget(width: Int, height: Int, useDepth: Boolean, format: RenderTargetFormat): RenderTargetHandle = error("mock")
         override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) {}
         override fun endRenderTarget() {}
+        override fun blend(enabled: Boolean) { blendState = enabled }
         override fun depthTest(enabled: Boolean) { depthState = enabled }
         override fun cull(enabled: Boolean) { cullState = enabled }
         override fun close() {}
@@ -88,25 +90,21 @@ class LumaStateControlTest {
         Luma.backend = backend
 
         Luma.enableBlend()
-        assertTrue(platform.blendState)
+        assertTrue(backend.blendState)
 
         Luma.disableBlend()
-        assertEquals(false, platform.blendState)
+        assertEquals(false, backend.blendState)
 
         Luma.enableDepthTest()
-        assertTrue(platform.depthState)
         assertTrue(backend.depthState)
 
         Luma.disableDepthTest()
-        assertEquals(false, platform.depthState)
         assertEquals(false, backend.depthState)
 
         Luma.enableCull()
-        assertTrue(platform.cullState)
         assertTrue(backend.cullState)
 
         Luma.disableCull()
-        assertEquals(false, platform.cullState)
         assertEquals(false, backend.cullState)
     }
 

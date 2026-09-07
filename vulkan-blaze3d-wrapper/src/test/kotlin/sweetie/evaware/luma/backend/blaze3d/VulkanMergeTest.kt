@@ -3,13 +3,14 @@ package sweetie.evaware.luma.backend.blaze3d
 import com.mojang.blaze3d.PrimitiveTopology
 import com.mojang.blaze3d.platform.CompareOp
 import net.minecraft.resources.Identifier
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import sun.misc.Unsafe
+import sweetie.evaware.luma.api.BlendFunction
 import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.vertex.VertexLayout
-import sun.misc.Unsafe
-import org.junit.Test
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 
 class VulkanMergeTest {
     private val unsafe: Unsafe by lazy {
@@ -60,11 +61,14 @@ class VulkanMergeTest {
         uboBytes: Long,
         texture: TextureHandle?,
         primitiveType: PrimitiveType,
+        blendEnabled: Boolean = true,
+        blendFunction: BlendFunction = BlendFunction.TRANSLUCENT,
         depthEnabled: Boolean = false,
         depthWrite: Boolean = false,
         depthFunc: CompareOp = CompareOp.ALWAYS_PASS,
         cullEnabled: Boolean = false,
         target: VulkanRenderTarget? = null,
+        targetPassId: Int = 0,
         clearColor: FloatArray? = null
     ) {
         val draw = obtain()
@@ -80,11 +84,14 @@ class VulkanMergeTest {
             arrayOfNulls<TextureHandle>(DrawCall.TEXTURE_UNITS).also { it[0] = texture }
         }
         draw.primitiveType = primitiveType
+        draw.blendEnabled = blendEnabled
+        draw.blendFunction = blendFunction
         draw.depthEnabled = depthEnabled
         draw.depthWrite = depthWrite
         draw.depthFunc = depthFunc
         draw.cullEnabled = cullEnabled
         draw.target = target
+        draw.targetPassId = targetPassId
         draw.clearColor = clearColor
     }
 
@@ -104,6 +111,8 @@ class VulkanMergeTest {
         class PipelineParams(
             val program: Program,
             val topology: PrimitiveTopology,
+            val blendEnabled: Boolean,
+            val blendFunction: BlendFunction,
             val depthEnabled: Boolean,
             val depthWrite: Boolean,
             val depthFunc: CompareOp,
@@ -124,13 +133,15 @@ class VulkanMergeTest {
         override fun onPipelineChanged(
             program: Program,
             topology: PrimitiveTopology,
+            blendEnabled: Boolean,
+            blendFunction: BlendFunction,
             depthEnabled: Boolean,
             depthWrite: Boolean,
             depthFunc: CompareOp,
             cullEnabled: Boolean
         ) {
             pipelineChanges.add(
-                PipelineParams(program, topology, depthEnabled, depthWrite, depthFunc, cullEnabled)
+                PipelineParams(program, topology, blendEnabled, blendFunction, depthEnabled, depthWrite, depthFunc, cullEnabled)
             )
         }
 
@@ -213,6 +224,35 @@ class VulkanMergeTest {
     }
 
     @Test
+    fun testSplitByBlendState() {
+        val consumer = TestGroupConsumer()
+        merge(consumer) {
+            record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS, blendEnabled = true)
+            record(program1, 64L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS, blendEnabled = false)
+        }
+
+        assertEquals(2, consumer.pipelineChanges.size)
+        assertEquals(true, consumer.pipelineChanges[0].blendEnabled)
+        assertEquals(false, consumer.pipelineChanges[1].blendEnabled)
+    }
+
+    @Test
+    fun testSplitByBlendFunction() {
+        val consumer = TestGroupConsumer()
+        merge(consumer) {
+            record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS,
+                blendFunction = BlendFunction.TRANSLUCENT)
+            record(program1, 64L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS,
+                blendFunction = BlendFunction.PREMULTIPLIED_ALPHA)
+        }
+
+        assertEquals(2, consumer.pipelineChanges.size)
+        assertEquals(BlendFunction.TRANSLUCENT, consumer.pipelineChanges[0].blendFunction)
+        assertEquals(BlendFunction.PREMULTIPLIED_ALPHA, consumer.pipelineChanges[1].blendFunction)
+        assertEquals(2, consumer.draws.size)
+    }
+
+    @Test
     fun testSplitByProgram() {
         val consumer = TestGroupConsumer()
         merge(consumer) {
@@ -281,7 +321,7 @@ class VulkanMergeTest {
     }
 
     @Test
-    fun testClearColorDoesNotSplitTargetPass() {
+    fun testClearColorDoesNotSplitCurrentTargetPass() {
         val target = createMockRenderTarget()
         val clearColor = floatArrayOf(0f, 0f, 0f, 0f)
         val consumer = TestGroupConsumer()
@@ -316,5 +356,24 @@ class VulkanMergeTest {
         assertTrue(consumer.targetChanges.single().second contentEquals clearColor)
         assertEquals(1, consumer.draws.size)
         assertEquals(8, consumer.draws.single().vertexCount)
+    }
+
+    @Test
+    fun testNewScopeSplitsSameTargetAndPreservesClear() {
+        val target = createMockRenderTarget()
+        val clearColor = floatArrayOf(0.1f, 0.2f, 0.3f, 0.4f)
+        val consumer = TestGroupConsumer()
+
+        merge(consumer) {
+            record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS,
+                target = target, targetPassId = 1)
+            record(program1, 64L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS,
+                target = target, targetPassId = 2, clearColor = clearColor)
+        }
+
+        assertEquals(2, consumer.targetChanges.size)
+        assertEquals(null, consumer.targetChanges[0].second)
+        assertTrue(consumer.targetChanges[1].second contentEquals clearColor)
+        assertEquals(2, consumer.draws.size)
     }
 }

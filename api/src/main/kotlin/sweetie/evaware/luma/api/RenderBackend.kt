@@ -30,8 +30,13 @@ interface RenderBackend {
     ): RenderTargetHandle = throw UnsupportedOperationException("Render target filtering is not supported")
     fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?)
     fun endRenderTarget()
+    fun blend(enabled: Boolean) {}
+    fun blendFunction(function: BlendFunction) {}
     fun depthTest(enabled: Boolean) {}
+    fun depthWrite(enabled: Boolean) {}
+    fun depthCompare(compare: DepthCompare) {}
     fun cull(enabled: Boolean) {}
+    fun invalidatePipelineCache() {}
     fun close()
     fun hasContext(): Boolean
 }

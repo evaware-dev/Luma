@@ -1,10 +1,12 @@
 package sweetie.evaware.luma
 
+import sweetie.evaware.luma.api.BlendFunction
+import sweetie.evaware.luma.api.DepthCompare
 import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.matrix.MatrixControl
-import sweetie.evaware.luma.shader.translator.ShaderTranslator
 import sweetie.evaware.luma.shader.translator.RawShaderTranslator
+import sweetie.evaware.luma.shader.translator.ShaderTranslator
 import sweetie.evaware.luma.texture.TextureAtlasManager
 
 object Luma {
@@ -85,25 +87,30 @@ object Luma {
         backend.bindTexture(texture, unit)
     }
 
-    fun enableBlend() = platform.enableBlend()
-    fun disableBlend() = platform.disableBlend()
+    fun enableBlend() = backend.blend(true)
+    fun disableBlend() = backend.blend(false)
+    fun blendFunction(function: BlendFunction) = backend.blendFunction(function)
     fun enableDepthTest() {
-        platform.enableDepthTest()
         backend.depthTest(true)
     }
 
     fun disableDepthTest() {
-        platform.disableDepthTest()
         backend.depthTest(false)
     }
 
+    fun depthWrite(enabled: Boolean) = backend.depthWrite(enabled)
+
+    fun depthCompare(compare: DepthCompare) = backend.depthCompare(compare)
+
     fun enableCull() {
-        platform.enableCull()
         backend.cull(true)
     }
 
     fun disableCull() {
-        platform.disableCull()
         backend.cull(false)
+    }
+
+    fun invalidatePipelineCache() {
+        if (::backend.isInitialized) backend.invalidatePipelineCache()
     }
 }

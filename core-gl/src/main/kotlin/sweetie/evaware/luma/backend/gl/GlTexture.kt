@@ -1,20 +1,23 @@
 package sweetie.evaware.luma.backend.gl
 
+import java.awt.image.BufferedImage
 import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL12
 import org.lwjgl.opengl.GL13
 import org.lwjgl.opengl.GL14
 import org.lwjgl.opengl.GL30
 import org.lwjgl.opengl.GL33
+import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.TextureHandle
-import java.awt.image.BufferedImage
 import sweetie.evaware.luma.texture.RgbaTransferBuffer
 
-class GlTexture(
+class GlTexture @JvmOverloads constructor(
     val textureId: Int,
     override val width: Int,
     override val height: Int,
-    private val mipmap: Boolean = false
+    private val mipmap: Boolean = false,
+    internal val samplerId: Int = 0,
+    private val ownsTexture: Boolean = true
 ) : TextureHandle {
     private var closed = false
 
@@ -39,7 +42,7 @@ class GlTexture(
         val activeUnit = GL13.GL_TEXTURE0 + unit
         GL13.glActiveTexture(activeUnit)
         bindCurrentUnit()
-        GL33.glBindSampler(unit, 0)
+        GL33.glBindSampler(unit, samplerId)
     }
 
     internal fun bindCurrentUnit() {
@@ -97,10 +100,24 @@ class GlTexture(
     override fun close() {
         if (closed) return
         closed = true
-        GL11.glDeleteTextures(textureId)
+        if (samplerId != 0) GL33.glDeleteSamplers(samplerId)
+        if (ownsTexture) GL11.glDeleteTextures(textureId)
     }
 
     companion object {
+        fun borrow(textureId: Int, width: Int, height: Int, filter: RenderTargetFilter): GlTexture {
+            val sampler = GL33.glGenSamplers()
+            val glFilter = when (filter) {
+                RenderTargetFilter.NEAREST -> GL11.GL_NEAREST
+                RenderTargetFilter.LINEAR -> GL11.GL_LINEAR
+            }
+            GL33.glSamplerParameteri(sampler, GL11.GL_TEXTURE_MIN_FILTER, glFilter)
+            GL33.glSamplerParameteri(sampler, GL11.GL_TEXTURE_MAG_FILTER, glFilter)
+            GL33.glSamplerParameteri(sampler, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE)
+            GL33.glSamplerParameteri(sampler, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE)
+            return GlTexture(textureId, width, height, false, sampler, false)
+        }
+
         fun create(image: BufferedImage, mipmap: Boolean): GlTexture {
             val textureId = GL11.glGenTextures()
             val previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)

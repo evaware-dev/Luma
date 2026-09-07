@@ -2,6 +2,7 @@ package sweetie.evaware.luma.backend.blaze3d
 
 import com.mojang.blaze3d.PrimitiveTopology
 import com.mojang.blaze3d.platform.CompareOp
+import sweetie.evaware.luma.api.BlendFunction
 import sweetie.evaware.luma.api.TextureHandle
 
 interface GroupConsumer {
@@ -9,6 +10,8 @@ interface GroupConsumer {
     fun onPipelineChanged(
         program: Program,
         topology: PrimitiveTopology,
+        blendEnabled: Boolean,
+        blendFunction: BlendFunction,
         depthEnabled: Boolean,
         depthWrite: Boolean,
         depthFunc: CompareOp,

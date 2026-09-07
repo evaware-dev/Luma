@@ -10,6 +10,7 @@ import com.mojang.blaze3d.textures.GpuTextureView
 import net.minecraft.client.Minecraft
 import org.joml.Vector4f
 import sweetie.evaware.luma.LumaNames
+import sweetie.evaware.luma.api.BlendFunction
 import sweetie.evaware.luma.api.TextureHandle
 import java.util.Optional
 import java.util.OptionalDouble
@@ -24,11 +25,13 @@ internal class RenderPassEncoder(
     private var currentPass: RenderPass? = null
     private var currentProgram: Program? = null
     private var currentTargetHasDepth = false
+    private var pipelineGeneration = 0L
 
-    fun begin(device: GpuDevice, encoder: CommandEncoder): RenderPassEncoder {
+    fun begin(device: GpuDevice, encoder: CommandEncoder, pipelineGeneration: Long): RenderPassEncoder {
         check(this.encoder == null) { "Render pass encoder is already active" }
         this.device = device
         this.encoder = encoder
+        this.pipelineGeneration = pipelineGeneration
         return this
     }
 
@@ -71,6 +74,8 @@ internal class RenderPassEncoder(
     override fun onPipelineChanged(
         program: Program,
         topology: PrimitiveTopology,
+        blendEnabled: Boolean,
+        blendFunction: BlendFunction,
         depthEnabled: Boolean,
         depthWrite: Boolean,
         depthFunc: CompareOp,
@@ -80,11 +85,14 @@ internal class RenderPassEncoder(
         val pipeline = program.getOrCreatePipeline(
             checkNotNull(device),
             topology,
+            blendEnabled,
+            blendFunction,
             depthEnabled,
             depthWrite,
             depthFunc,
             cullEnabled,
-            currentTargetHasDepth
+            currentTargetHasDepth,
+            pipelineGeneration
         )
         pass.setPipeline(pipeline)
         currentProgram = program
@@ -97,7 +105,9 @@ internal class RenderPassEncoder(
 
     override fun onTextureChanged(program: Program, textures: Array<TextureHandle?>) {
         val pass = currentPass ?: return
-        for (binding in program.samplerBindings) {
+        val bindings = program.samplerBindings
+        for (index in bindings.indices) {
+            val binding = bindings[index]
             val texture = textures.getOrNull(binding.unit) as? VulkanTexture ?: continue
             pass.bindTexture(binding.name, texture.view, texture.sampler)
         }

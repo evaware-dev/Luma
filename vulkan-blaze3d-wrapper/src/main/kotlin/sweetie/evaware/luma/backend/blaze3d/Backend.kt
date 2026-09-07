@@ -1,7 +1,5 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import sweetie.evaware.luma.LumaNames
-
 import com.mojang.blaze3d.buffers.GpuBuffer
 import com.mojang.blaze3d.buffers.GpuFence
 import com.mojang.blaze3d.buffers.Std140Builder
@@ -11,13 +9,16 @@ import com.mojang.blaze3d.textures.FilterMode
 import net.minecraft.resources.Identifier
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.system.MemoryUtil
+import sweetie.evaware.luma.LumaNames
+import sweetie.evaware.luma.api.BlendFunction
+import sweetie.evaware.luma.api.DepthCompare
 import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.api.RenderBackend
+import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.TextureHandle
-import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.uniform.*
 import sweetie.evaware.luma.vertex.VertexLayout
 import java.awt.image.BufferedImage
@@ -29,6 +30,7 @@ class Backend(
     private var nextProgramId = 1
 
     private var frameId = 0L
+    private var pipelineGeneration = 0L
 
     private val vertexBuffer = VulkanBuffer(
         { LumaNames.VERTEX_BUFFER },
@@ -49,22 +51,25 @@ class Backend(
 
     private val vertexStaging = StagingBuffer(config.initialVertexStagingBytes)
     private val uboStaging = StagingBuffer(config.initialUniformStagingBytes)
+    private val uniformOffsetAlignment = RenderSystem.getDevice().deviceInfo.limits.minUniformOffsetAlignment
 
     private val recorder = DrawCallRecorder()
     private val merger = DrawCallMerger()
     private val passEncoder = RenderPassEncoder(vertexBuffer, uboBuffer)
+    private val renderState = RenderStateTracker()
     private val postRecordActions = ArrayList<() -> Unit>()
     private val samplerCache = VulkanSamplerCache(RenderSystem.getDevice())
     private val textureUploads = TextureUploadQueue(config.maxPooledUploadBytes)
 
     private val targetStack = ArrayList<VulkanRenderTarget?>()
     private val targetClearColors = ArrayList<FloatArray?>()
+    private var targetPassId = 0
     private var completionFenceRequested = false
     private var completionFence: GpuFence? = null
 
     override fun beginFrame() {
         VulkanResourceRetirement.collectCompleted()
-        RenderStateTracker.beginFrame()
+        renderState.beginFrame()
         frameId++
         recorder.reset()
         resetTextureSnapshots()
@@ -75,6 +80,7 @@ class Backend(
         targetClearColors.clear()
         targetStack.add(null)
         targetClearColors.add(null)
+        targetPassId = 0
     }
 
     override fun endFrame() {
@@ -100,7 +106,7 @@ class Backend(
             uboStaging.flip()
             uboBuffer.write(encoder, uboStaging.buffer)
 
-            val pass = passEncoder.begin(device, encoder)
+            val pass = passEncoder.begin(device, encoder, pipelineGeneration)
             try {
                 merger.run(recorder, pass)
             } finally {
@@ -146,7 +152,9 @@ class Backend(
             layout,
             this::schedulePostRecord
         )
-        if (config.precompileDefaultPipeline) prog.precompileDefaults(RenderSystem.getDevice())
+        if (config.precompileDefaultPipeline) {
+            prog.precompileDefaults(RenderSystem.getDevice(), pipelineGeneration)
+        }
         return prog
     }
 
@@ -229,17 +237,32 @@ class Backend(
     override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) {
         targetStack.add(target as VulkanRenderTarget)
         targetClearColors.add(clearColor)
+        targetPassId++
     }
 
     override fun endRenderTarget() {
         check(targetStack.size > 1) { "No render target to end" }
         targetStack.removeAt(targetStack.size - 1)
         targetClearColors.removeAt(targetClearColors.size - 1)
+        targetPassId++
     }
 
-    override fun depthTest(enabled: Boolean) = RenderStateTracker.depthTest(enabled)
+    override fun blend(enabled: Boolean) = renderState.blend(enabled)
 
-    override fun cull(enabled: Boolean) = RenderStateTracker.cull(enabled)
+    override fun blendFunction(function: BlendFunction) =
+        renderState.blendFunction(function)
+
+    override fun depthTest(enabled: Boolean) = renderState.depthTest(enabled)
+
+    override fun depthWrite(enabled: Boolean) = renderState.depthWrite(enabled)
+
+    override fun depthCompare(compare: DepthCompare) = renderState.depthCompare(compareOp(compare))
+
+    override fun cull(enabled: Boolean) = renderState.cull(enabled)
+
+    override fun invalidatePipelineCache() {
+        pipelineGeneration++
+    }
 
     override fun draw(
         program: ProgramHandle,
@@ -280,7 +303,7 @@ class Backend(
                     }
                     val uboData = builder.get()
                     uboBytes = uboData.remaining()
-                    uboOffset = uboStaging.append(uboData)
+                    uboOffset = uboStaging.appendAligned(uboData, uniformOffsetAlignment)
                 } finally {
                     stack.pop()
                 }
@@ -303,14 +326,28 @@ class Backend(
         draw.uboBytes = uboBytes.toLong()
         draw.textures = currentTextures()
         draw.primitiveType = primitiveType
-        draw.depthEnabled = RenderStateTracker.depthEnabled
-        draw.depthWrite = draw.depthEnabled && RenderStateTracker.depthWrite
-        draw.depthFunc = if (draw.depthEnabled) RenderStateTracker.depthFunc else CompareOp.ALWAYS_PASS
-        draw.cullEnabled = RenderStateTracker.cullEnabled
+        draw.blendEnabled = renderState.blendEnabled
+        draw.blendFunction = renderState.blendFunction
+        draw.depthEnabled = renderState.depthEnabled
+        draw.depthWrite = draw.depthEnabled && renderState.depthWrite
+        draw.depthFunc = if (draw.depthEnabled) renderState.depthFunc else CompareOp.ALWAYS_PASS
+        draw.cullEnabled = renderState.cullEnabled
         draw.target = targetStack[activeTargetIndex]
+        draw.targetPassId = targetPassId
         draw.clearColor = targetClearColors[activeTargetIndex]
 
         targetClearColors[activeTargetIndex] = null
+    }
+
+    private fun compareOp(compare: DepthCompare): CompareOp = when (compare) {
+        DepthCompare.ALWAYS -> CompareOp.ALWAYS_PASS
+        DepthCompare.LESS -> CompareOp.LESS_THAN
+        DepthCompare.LESS_OR_EQUAL -> CompareOp.LESS_THAN_OR_EQUAL
+        DepthCompare.EQUAL -> CompareOp.EQUAL
+        DepthCompare.NOT_EQUAL -> CompareOp.NOT_EQUAL
+        DepthCompare.GREATER_OR_EQUAL -> CompareOp.GREATER_THAN_OR_EQUAL
+        DepthCompare.GREATER -> CompareOp.GREATER_THAN
+        DepthCompare.NEVER -> CompareOp.NEVER_PASS
     }
 
     override fun close() {

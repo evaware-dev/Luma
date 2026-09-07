@@ -37,7 +37,7 @@ internal class StagingBuffer(initialCapacity: Int) {
     fun appendFromAddress(sourceAddress: Long, bytes: Int): Long {
         ensure(bytes)
         val offset = buffer.position().toLong()
-        MemoryUtil.memCopy(sourceAddress, MemoryUtil.memAddress(buffer) + buffer.position(), bytes.toLong())
+        MemoryUtil.memCopy(sourceAddress, MemoryUtil.memAddress(buffer), bytes.toLong())
         buffer.position(buffer.position() + bytes)
         return offset
     }
@@ -48,4 +48,17 @@ internal class StagingBuffer(initialCapacity: Int) {
         buffer.put(source)
         return offset
     }
+
+    fun appendAligned(source: ByteBuffer, alignment: Int): Long {
+        require(alignment > 0) { "Alignment must be positive" }
+        val position = buffer.position()
+        val remainder = position % alignment
+        val padding = if (remainder == 0) 0 else alignment - remainder
+        ensure(Math.addExact(padding, source.remaining()))
+        buffer.position(Math.addExact(position, padding))
+        val offset = buffer.position().toLong()
+        buffer.put(source)
+        return offset
+    }
+
 }

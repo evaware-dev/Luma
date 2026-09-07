@@ -57,17 +57,32 @@ open class VulkanTestApp : BackendTestApp(64, 64, "Luma Vulkan") {
     }
 
     override fun runScene(window: Long, args: Array<String>) {
+        renderScene()
+        verifyPixels()
+        device.clearPipelineCache()
+        backend.invalidatePipelineCache()
+        renderScene()
+        verifyPixels()
+    }
+
+    private fun renderScene() {
         Luma.render {
             backend.beginRenderTarget(target, floatArrayOf(0f, 0f, 1f, 1f))
             shader.attach()
+            Luma.enableBlend()
             shader.vertices
-                .vec2(-0.75f, -0.75f)
-                .vec2(0.75f, -0.75f)
-                .vec2(0f, 0.75f)
+                .vec2(-0.9f, -0.6f)
+                .vec2(-0.1f, -0.6f)
+                .vec2(-0.5f, 0.6f)
+            shader.draw()
+            Luma.disableBlend()
+            shader.vertices
+                .vec2(0.1f, -0.6f)
+                .vec2(0.9f, -0.6f)
+                .vec2(0.5f, 0.6f)
             shader.draw()
             backend.endRenderTarget()
         }
-        verifyPixels()
     }
 
     protected fun awaitGpu() {
@@ -108,12 +123,25 @@ open class VulkanTestApp : BackendTestApp(64, 64, "Luma Vulkan") {
             }
 
             readback.map(true, false).use { mapped ->
-                val center = colorAt(mapped.data(), size, size / 2, size / 2)
-                val corner = colorAt(mapped.data(), size, 2, 2)
-                check(isRed(center) && isBlue(corner)) {
-                    "Vulkan readback mismatch: center=${center.contentToString()}, corner=${corner.contentToString()}"
+                var minRedX = size
+                var maxRedX = -1
+                var redPixels = 0
+                for (y in 0 until size) {
+                    for (x in 0 until size) {
+                        if (isRed(colorAt(mapped.data(), size, x, y))) {
+                            minRedX = minOf(minRedX, x)
+                            maxRedX = maxOf(maxRedX, x)
+                            redPixels++
+                        }
+                    }
                 }
-                println("[Info] Vulkan offscreen readback: center=${center.contentToString()} corner=${corner.contentToString()} => PASS")
+                val left = colorAt(mapped.data(), size, size / 4, size / 2)
+                val right = colorAt(mapped.data(), size, size * 3 / 4, size / 2)
+                val corner = colorAt(mapped.data(), size, 2, 2)
+                check(isRed(left) && isRed(right) && isBlue(corner)) {
+                    "Vulkan readback mismatch: left=${left.contentToString()}, right=${right.contentToString()}, corner=${corner.contentToString()}, redX=$minRedX..$maxRedX, redPixels=$redPixels"
+                }
+                println("[Info] Vulkan offscreen readback: left=${left.contentToString()} right=${right.contentToString()} corner=${corner.contentToString()} => PASS")
             }
         } finally {
             readback.close()

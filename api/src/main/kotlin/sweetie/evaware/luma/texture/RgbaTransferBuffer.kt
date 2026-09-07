@@ -6,20 +6,18 @@ import java.awt.image.DataBufferInt
 import java.awt.image.SinglePixelPackedSampleModel
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.IntBuffer
 
 class RgbaTransferBuffer(
     initialPixelCapacity: Int = DEFAULT_PIXEL_CAPACITY
 ) : AutoCloseable {
     private var pixels = IntArray(initialPixelCapacity.coerceAtLeast(1))
     private var buffer: ByteBuffer? = allocate(pixels.size * RGBA_BYTES)
-    private var words: IntBuffer? = buffer?.asIntBuffer()
 
     fun write(image: BufferedImage): ByteBuffer {
         val pixelCount = Math.multiplyExact(image.width, image.height)
         ensureCapacity(pixelCount)
         val target = requireNotNull(buffer)
-        return write(image, target, requireNotNull(words))
+        return writePixels(image, target)
     }
 
     fun write(image: BufferedImage, target: ByteBuffer): ByteBuffer {
@@ -32,13 +30,12 @@ class RgbaTransferBuffer(
         target.order(ByteOrder.nativeOrder())
         target.clear()
         target.limit(requiredBytes)
-        return write(image, target, target.asIntBuffer())
+        return writePixels(image, target)
     }
 
     override fun close() {
         buffer?.let(MemoryUtil::memFree)
         buffer = null
-        words = null
         pixels = IntArray(0)
     }
 
@@ -52,7 +49,6 @@ class RgbaTransferBuffer(
         val capacityBytes = Math.multiplyExact(capacity, RGBA_BYTES)
         buffer = buffer?.let { MemoryUtil.memRealloc(it, capacityBytes).order(ByteOrder.nativeOrder()) }
             ?: allocate(capacityBytes)
-        words = buffer?.asIntBuffer()
     }
 
     private fun ensurePixelCapacity(requiredPixels: Int) {
@@ -67,10 +63,9 @@ class RgbaTransferBuffer(
 
     private fun allocate(bytes: Int): ByteBuffer = MemoryUtil.memAlloc(bytes).order(ByteOrder.nativeOrder())
 
-    private fun write(image: BufferedImage, target: ByteBuffer, targetWords: IntBuffer): ByteBuffer {
+    private fun writePixels(image: BufferedImage, target: ByteBuffer): ByteBuffer {
         val pixelCount = Math.multiplyExact(image.width, image.height)
         target.clear()
-        targetWords.clear()
 
         val raster = image.raster
         val data = raster.dataBuffer
@@ -88,13 +83,12 @@ class RgbaTransferBuffer(
             for (row in 0 until image.height) {
                 var offset = start + row * model.scanlineStride
                 val end = offset + image.width
-                while (offset < end) targetWords.put(toNativeRgba(source[offset++]))
+                while (offset < end) target.putInt(toNativeRgba(source[offset++]))
             }
         } else {
             image.getRGB(0, 0, image.width, image.height, pixels, 0, image.width)
-            for (index in 0 until pixelCount) targetWords.put(toNativeRgba(pixels[index]))
+            for (index in 0 until pixelCount) target.putInt(toNativeRgba(pixels[index]))
         }
-        target.position(pixelCount * RGBA_BYTES)
         target.flip()
         return target
     }

@@ -1,22 +1,24 @@
 package sweetie.evaware.luma.minecraft
 
+import java.awt.image.BufferedImage
+import java.nio.FloatBuffer
 import sweetie.evaware.luma.GraphicsBackend
 import sweetie.evaware.luma.Luma
-import sweetie.evaware.luma.api.ProgramHandle
+import sweetie.evaware.luma.api.BlendFunction
+import sweetie.evaware.luma.api.DepthCompare
 import sweetie.evaware.luma.api.PrimitiveType
+import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.api.RenderBackend
-import sweetie.evaware.luma.api.TextureHandle
-import sweetie.evaware.luma.api.RenderTargetHandle
-import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetFilter
+import sweetie.evaware.luma.api.RenderTargetFormat
+import sweetie.evaware.luma.api.RenderTargetHandle
+import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.backend.blaze3d.Backend as VulkanBackend
+import sweetie.evaware.luma.backend.gl.Backend as GlBackend
 import sweetie.evaware.luma.shader.translator.DefaultShaderTranslator
 import sweetie.evaware.luma.shader.translator.ShaderTarget
 import sweetie.evaware.luma.uniform.ShaderUniforms
 import sweetie.evaware.luma.vertex.VertexLayout
-import java.awt.image.BufferedImage
-import java.nio.FloatBuffer
-import sweetie.evaware.luma.backend.gl.Backend as GlBackend
-import sweetie.evaware.luma.backend.blaze3d.Backend as VulkanBackend
 
 object LumaMinecraft {
     fun install() {
@@ -65,8 +67,15 @@ class LazyBackend : RenderBackend {
         delegate.beginRenderTarget(target, clearColor)
     override fun endRenderTarget() =
         delegate.endRenderTarget()
+    override fun blend(enabled: Boolean) = delegate.blend(enabled)
+    override fun blendFunction(function: BlendFunction) = delegate.blendFunction(function)
     override fun depthTest(enabled: Boolean) = delegate.depthTest(enabled)
+    override fun depthWrite(enabled: Boolean) = delegate.depthWrite(enabled)
+    override fun depthCompare(compare: DepthCompare) = delegate.depthCompare(compare)
     override fun cull(enabled: Boolean) = delegate.cull(enabled)
+    override fun invalidatePipelineCache() {
+        if (lazyDelegate.isInitialized()) delegate.invalidatePipelineCache()
+    }
     override fun close() { if (lazyDelegate.isInitialized()) delegate.close() }
     override fun hasContext(): Boolean = lazyDelegate.isInitialized() && delegate.hasContext()
 }

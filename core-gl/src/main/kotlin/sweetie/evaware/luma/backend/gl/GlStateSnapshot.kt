@@ -9,6 +9,8 @@ class GlStateSnapshot {
     var viewportHeight = 0
     var blendEnabled = false
     var depthEnabled = false
+    var depthWrite = true
+    var depthFunc = 0
     var cullEnabled = false
     var blendSrcRgb = 0
     var blendDstRgb = 0
