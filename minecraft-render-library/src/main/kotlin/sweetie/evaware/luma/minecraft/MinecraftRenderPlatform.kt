@@ -1,13 +1,8 @@
 package sweetie.evaware.luma.minecraft
 
-import com.mojang.blaze3d.opengl.GlStateManager
 import net.minecraft.client.Minecraft
-import org.lwjgl.opengl.GL11
-import org.lwjgl.opengl.GL30
 import sweetie.evaware.luma.GraphicsBackend
-import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.RenderPlatform
-import sweetie.evaware.luma.framebuffer.FramebufferHandle
 
 object MinecraftRenderPlatform : RenderPlatform {
     private const val OPENGL_BACKEND_NAME = "OpenGL"
@@ -35,41 +30,5 @@ object MinecraftRenderPlatform : RenderPlatform {
             return true
         }
         return false
-    }
-
-    override fun swapToMainFramebuffer(luma: Luma) {
-        if (activeBackend == GraphicsBackend.OPENGL) {
-            val target = Minecraft.getInstance().gameRenderer.mainRenderTarget()
-            val colorTexture = target.colorTextureView ?: return
-            val fbo = FramebufferHandle.resolve(colorTexture, target.depthTextureView)
-            val w = colorTexture.getWidth(0)
-            val h = colorTexture.getHeight(0)
-            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo)
-            GL11.glViewport(0, 0, w, h)
-        }
-    }
-
-    override fun enableBlend() {
-        GlStateManager._enableBlend(0)
-    }
-
-    override fun disableBlend() {
-        GlStateManager._disableBlend(0)
-    }
-
-    override fun enableDepthTest() {
-        GlStateManager._enableDepthTest()
-    }
-
-    override fun disableDepthTest() {
-        GlStateManager._disableDepthTest()
-    }
-
-    override fun enableCull() {
-        GlStateManager._enableCull()
-    }
-
-    override fun disableCull() {
-        GlStateManager._disableCull()
     }
 }

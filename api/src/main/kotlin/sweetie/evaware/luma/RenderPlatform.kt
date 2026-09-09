@@ -8,14 +8,6 @@ interface RenderPlatform {
     fun getGuiScale(): Float
     fun getWindowHeight(): Float
     fun getViewport(viewport: IntArray): Boolean
-    fun swapToMainFramebuffer(luma: Luma)
-
-    fun enableBlend() {}
-    fun disableBlend() {}
-    fun enableDepthTest() {}
-    fun disableDepthTest() {}
-    fun enableCull() {}
-    fun disableCull() {}
 }
 
 object DefaultRenderPlatform : RenderPlatform {
@@ -31,6 +23,4 @@ object DefaultRenderPlatform : RenderPlatform {
         viewport[3] = 540
         return true
     }
-
-    override fun swapToMainFramebuffer(luma: Luma) {}
 }

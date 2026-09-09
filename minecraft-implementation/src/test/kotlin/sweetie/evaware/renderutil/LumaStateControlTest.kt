@@ -22,23 +22,11 @@ import sweetie.evaware.luma.vertex.VertexLayout
 class LumaStateControlTest {
 
     private class MockPlatform : RenderPlatform {
-        var blendState = false
-        var cullState = false
-        var depthState = false
-
         override fun getGuiScaledWidth(): Float = 960f
         override fun getGuiScaledHeight(): Float = 540f
         override fun getGuiScale(): Float = 1f
         override fun getWindowHeight(): Float = 540f
         override fun getViewport(viewport: IntArray): Boolean = true
-        override fun swapToMainFramebuffer(luma: Luma) {}
-
-        override fun enableBlend() { blendState = true }
-        override fun disableBlend() { blendState = false }
-        override fun enableDepthTest() { depthState = true }
-        override fun disableDepthTest() { depthState = false }
-        override fun enableCull() { cullState = true }
-        override fun disableCull() { cullState = false }
     }
 
     private class MockBackend : RenderBackend {

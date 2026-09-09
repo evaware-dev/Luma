@@ -27,6 +27,12 @@ object Luma {
 
     fun hasContext(): Boolean = backend.hasContext()
 
+    fun beginFrame() {
+        if (frameActive) return
+        backend.beginFrame()
+        frameActive = true
+    }
+
     fun beginMainFramebufferFrame() {
         if (frameActive) return
         backend.beginFrame()
@@ -65,6 +71,31 @@ object Luma {
         var actionFailure: Throwable? = null
         try {
             TextureAtlasManager.processPending()
+            action()
+        } catch (failure: Throwable) {
+            actionFailure = failure
+            throw failure
+        } finally {
+            try {
+                backend.endFrame()
+            } catch (endFailure: Throwable) {
+                if (actionFailure == null) throw endFailure
+                actionFailure.addSuppressed(endFailure)
+            } finally {
+                frameActive = false
+            }
+        }
+    }
+
+    inline fun frame(action: () -> Unit) {
+        if (frameActive) {
+            action()
+            return
+        }
+        backend.beginFrame()
+        frameActive = true
+        var actionFailure: Throwable? = null
+        try {
             action()
         } catch (failure: Throwable) {
             actionFailure = failure

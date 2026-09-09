@@ -35,7 +35,6 @@ class ShaderResourceTest {
                 override fun getGuiScale() = 1f
                 override fun getWindowHeight() = 0f
                 override fun getViewport(viewport: IntArray) = false
-                override fun swapToMainFramebuffer(luma: Luma) {}
             }
             val translator = DefaultShaderTranslator(ShaderTarget.BLAZE3D)
             val layout = VertexLayout().apply {
@@ -78,7 +77,6 @@ class ShaderResourceTest {
                 override fun getGuiScale() = 1f
                 override fun getWindowHeight() = 0f
                 override fun getViewport(viewport: IntArray) = false
-                override fun swapToMainFramebuffer(luma: Luma) {}
             }
             val translator = DefaultShaderTranslator(ShaderTarget.BLAZE3D)
             val layout = VertexLayout().apply {
@@ -105,7 +103,6 @@ class ShaderResourceTest {
                 override fun getGuiScale() = 1f
                 override fun getWindowHeight() = 0f
                 override fun getViewport(viewport: IntArray) = false
-                override fun swapToMainFramebuffer(luma: Luma) {}
             }
             val translator = DefaultShaderTranslator(ShaderTarget.BLAZE3D)
             val layout = VertexLayout().apply {
