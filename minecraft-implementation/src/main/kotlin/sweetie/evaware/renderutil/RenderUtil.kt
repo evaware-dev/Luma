@@ -1,5 +1,6 @@
 package sweetie.evaware.renderutil
 
+import net.minecraft.client.Minecraft
 import sweetie.evaware.LumaRenderer
 import sweetie.evaware.luma.GraphicsBackend
 import sweetie.evaware.luma.Luma
@@ -8,6 +9,7 @@ import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.matrix.MatrixControl
+import sweetie.evaware.luma.minecraft.MinecraftRenderTargets
 import sweetie.evaware.luma.resource.GlResources
 import sweetie.evaware.luma.scissor.ScissorControl
 import sweetie.evaware.luma.texture.TextureAtlasManager
@@ -27,6 +29,7 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
     private var activePipeline: RenderPipeline? = null
     private var loaded = false
     private var frameActive = false
+    private var mainTarget: RenderTargetHandle? = null
 
     val TEXTURE get() = textureRectRenderer.reset()
     val ROUNDED_RECT get() = roundedRectRenderer.reset()
@@ -48,6 +51,18 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
 
         if (frameActive && Luma.hasContext()) {
             endFrame()
+        }
+
+        mainTarget?.let { target ->
+            try {
+                if (Luma.hasContext()) {
+                    Luma.backend.endRenderTarget()
+                }
+            } catch (_: Throwable) {
+            } finally {
+                target.close()
+                mainTarget = null
+            }
         }
 
         frameActive = false
@@ -120,17 +135,55 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
         }
     }
 
+    fun borrowMainTarget(filter: RenderTargetFilter = RenderTargetFilter.NEAREST): RenderTargetHandle? {
+        return try {
+            val target = Minecraft.getInstance().gameRenderer.mainRenderTarget()
+            MinecraftRenderTargets.borrow(target, filter)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    fun renderToMain(clearColor: FloatArray? = null, action: () -> Unit) {
+        val target = borrowMainTarget() ?: error("Minecraft main render target is not available")
+        try {
+            renderToTarget(target, clearColor, action)
+        } finally {
+            target.close()
+        }
+    }
+
     fun beginFrame() {
         load()
         Luma.beginMainFramebufferFrame()
         frameActive = true
+        if (mainTarget == null && Luma.hasContext()) {
+            val target = borrowMainTarget()
+            if (target != null) {
+                mainTarget = target
+                Luma.backend.beginRenderTarget(target, null)
+            }
+        }
     }
 
     fun endFrame() {
         flushAll()
         if (!frameActive) return
-        Luma.endFrame()
-        frameActive = false
+        try {
+            mainTarget?.let { target ->
+                try {
+                    if (Luma.hasContext()) {
+                        Luma.backend.endRenderTarget()
+                    }
+                } finally {
+                    target.close()
+                    mainTarget = null
+                }
+            }
+        } finally {
+            Luma.endFrame()
+            frameActive = false
+        }
     }
 
     fun startScissor(x: Float, y: Float, width: Float, height: Float) {
@@ -234,7 +287,7 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
             return
         }
 
-        Luma.renderToMainFramebuffer {
+        renderFrame {
             roundedRectRenderer.flush(pipeline)
         }
     }

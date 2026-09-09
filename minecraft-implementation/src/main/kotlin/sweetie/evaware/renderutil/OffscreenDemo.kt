@@ -8,6 +8,7 @@ import sweetie.evaware.luma.resource.GlResources
 import sweetie.evaware.luma.shader.BaseShader
 import sweetie.evaware.luma.uniform.Int1Uniform
 import sweetie.evaware.luma.uniform.Mat4Uniform
+import sweetie.evaware.luma.vertex.PreparedVertices
 
 class BlitShader : BaseShader("blit.frag", "blit.vert") {
     lateinit var uMatrix: Mat4Uniform
@@ -29,11 +30,13 @@ object OffscreenDemo {
     private var target: RenderTargetHandle? = null
     private var width = 0
     private var height = 0
+    private var preparedVertices: PreparedVertices? = null
 
     fun render() {
         val w = Luma.platform.getGuiScaledWidth().toInt().coerceAtLeast(1)
         val h = Luma.platform.getGuiScaledHeight().toInt().coerceAtLeast(1)
-        val renderTarget = ensureTarget(w, h)
+        updateSize(w, h)
+        val renderTarget = target ?: return
         val shader = ensureBlit()
 
         RenderUtil.renderFrame {
@@ -43,19 +46,17 @@ object OffscreenDemo {
         }
 
         RenderUtil.renderFrame {
-            present(shader, renderTarget, w.toFloat(), h.toFloat())
+            present(shader, renderTarget)
         }
     }
 
-    private fun present(shader: BlitShader, renderTarget: RenderTargetHandle, w: Float, h: Float) {
+    private fun present(shader: BlitShader, renderTarget: RenderTargetHandle) {
+        val prepared = preparedVertices ?: return
         shader.attach()
         shader.uniforms.mat4(shader.uMatrix, MatrixControl.current())
         shader.uniforms.int1(shader.uTexture, 0)
         Luma.bindTexture(renderTarget.colorTexture, 0)
-        repeat(4) {
-            shader.vertices.vec2(0f, 0f).vec2(w, h)
-        }
-        shader.draw()
+        shader.draw(prepared)
     }
 
     fun reset() {
@@ -63,6 +64,8 @@ object OffscreenDemo {
         blit = null
         width = 0
         height = 0
+        preparedVertices?.close()
+        preparedVertices = null
     }
 
     private fun ensureBlit(): BlitShader {
@@ -70,23 +73,31 @@ object OffscreenDemo {
         if (shader == null) {
             shader = BlitShader()
             blit = shader
+            shader.load()
         }
         return shader
     }
 
-    private fun ensureTarget(w: Int, h: Int): RenderTargetHandle {
-        val existing = target
-        if (existing != null && width == w && height == h) return existing
-
-        if (existing != null) {
-            GlResources.untrack(existing)
-            existing.close()
-        }
-
-        val created = GlResources.track(RenderUtil.createRenderTarget(w, h))
-        target = created
+    private fun updateSize(w: Int, h: Int) {
+        if (width == w && height == h && target != null && preparedVertices != null) return
         width = w
         height = h
-        return created
+
+        target?.let {
+            GlResources.untrack(it)
+            it.close()
+        }
+        target = GlResources.track(RenderUtil.createRenderTarget(w, h))
+
+        preparedVertices?.close()
+        val shader = ensureBlit()
+        val wf = w.toFloat()
+        val hf = h.toFloat()
+        preparedVertices = shader.prepareVertices(4)
+            .vec2(0f, 0f).vec2(wf, hf)
+            .vec2(0f, 0f).vec2(wf, hf)
+            .vec2(0f, 0f).vec2(wf, hf)
+            .vec2(0f, 0f).vec2(wf, hf)
+            .seal()
     }
 }
