@@ -9,7 +9,10 @@ class VertexInputLayout {
     private var stepRates = IntArray(INITIAL_CAPACITY)
     private var size = 0
 
-    fun binding(layout: VertexLayout, stepRate: Int = 0) = apply {
+    fun binding(
+        layout: VertexLayout,
+        stepRate: Int = if (layout.instanced) 1 else 0
+    ) = apply {
         require(stepRate >= 0) { "Vertex step rate must not be negative" }
         ensureCapacity(size + 1)
         layouts[size] = layout.snapshot()

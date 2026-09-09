@@ -4,6 +4,19 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class VertexInputLayoutTest {
+
+    @Test
+    fun `default binding preserves legacy instance rate`() {
+        val layout = VertexLayout().apply {
+            markInstanced(6)
+            add(ShaderVertType.FLOAT, 2, 0)
+        }
+
+        val inputs = VertexInputLayout().binding(layout)
+
+        assertEquals(1, inputs.stepRate(0))
+    }
+
     @Test
     fun `keeps independent vertex and instance bindings`() {
         val vertices = VertexLayout().apply {

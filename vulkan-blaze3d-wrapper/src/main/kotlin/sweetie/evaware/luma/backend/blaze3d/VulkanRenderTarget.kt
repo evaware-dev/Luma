@@ -7,6 +7,7 @@ import com.mojang.blaze3d.textures.GpuTextureView
 import com.mojang.blaze3d.textures.GpuSampler
 import java.util.function.Supplier
 import sweetie.evaware.luma.LumaNames
+import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.TextureHandle
@@ -19,7 +20,8 @@ class VulkanRenderTarget(
     val depthView: GpuTextureView?,
     private val depthAsTexture: VulkanTexture?,
     override val width: Int,
-    override val height: Int
+    override val height: Int,
+    private val ownsAttachments: Boolean = true
 ) : RenderTargetHandle {
     override val colorTexture: TextureHandle get() = colorAsTexture
     override val depthTexture: TextureHandle? get() = depthAsTexture
@@ -32,7 +34,7 @@ class VulkanRenderTarget(
         closed = true
         colorAsTexture.close()
         depthAsTexture?.close()
-        if (depthView != null || gpuDepthTexture != null) {
+        if (ownsAttachments && (depthView != null || gpuDepthTexture != null)) {
             VulkanResourceRetirement.defer {
                 depthView?.close()
                 gpuDepthTexture?.close()
@@ -114,5 +116,31 @@ class VulkanRenderTarget(
             }
         }
 
+        fun borrow(
+            colorView: GpuTextureView,
+            depthView: GpuTextureView? = null,
+            filter: RenderTargetFilter = RenderTargetFilter.NEAREST
+        ): VulkanRenderTarget {
+            val color = VulkanTexture.borrow(colorView, filter)
+            var depth: VulkanTexture? = null
+            try {
+                depth = depthView?.let { VulkanTexture.borrow(it, RenderTargetFilter.NEAREST) }
+                return VulkanRenderTarget(
+                    colorView.texture(),
+                    colorView,
+                    color,
+                    depthView?.texture(),
+                    depthView,
+                    depth,
+                    colorView.getWidth(0),
+                    colorView.getHeight(0),
+                    false
+                )
+            } catch (failure: Throwable) {
+                depth?.close()
+                color.close()
+                throw failure
+            }
+        }
     }
 }

@@ -6,9 +6,11 @@ import org.lwjgl.opengl.GL
 import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL30
 import sweetie.evaware.luma.Luma
+import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.backend.gl.Backend
 import sweetie.evaware.luma.backend.gl.GlRenderTarget
+import sweetie.evaware.luma.backend.gl.GlTexture
 import sweetie.evaware.luma.shader.Shader
 import sweetie.evaware.luma.shader.translator.DefaultShaderTranslator
 import sweetie.evaware.luma.shader.translator.ShaderTarget
@@ -72,14 +74,25 @@ open class GlTestApp : BackendTestApp(960, 540, "Luma OpenGL") {
         val size = 64
         val target = backend.createRenderTarget(size, size, false, RenderTargetFormat.RGBA8)
         try {
-            Luma.render {
-                backend.beginRenderTarget(target, floatArrayOf(0f, 0f, 1f, 1f))
-                directGeometry.draw()
-                backend.endRenderTarget()
+            val glTarget = target as GlRenderTarget
+            val borrowed = GlRenderTarget.borrow(
+                glTarget.fbo,
+                size,
+                size,
+                GlTexture.borrow(glTarget.color.textureId, size, size, RenderTargetFilter.NEAREST)
+            )
+            try {
+                Luma.render {
+                    backend.beginRenderTarget(borrowed, floatArrayOf(0f, 0f, 1f, 1f))
+                    directGeometry.draw()
+                    backend.endRenderTarget()
+                }
+            } finally {
+                borrowed.close()
             }
 
             val pixels = BufferUtils.createByteBuffer(size * size * 4)
-            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, (target as GlRenderTarget).fbo)
+            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, glTarget.fbo)
             GL11.glReadPixels(0, 0, size, size, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, pixels)
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0)
 

@@ -59,10 +59,15 @@ open class VulkanTestApp : BackendTestApp(64, 64, "Luma Vulkan") {
     }
 
     override fun runScene(window: Long, args: Array<String>) {
-        Luma.render {
-            backend.beginRenderTarget(target, floatArrayOf(0f, 0f, 1f, 1f))
-            directGeometry.draw()
-            backend.endRenderTarget()
+        val borrowed = VulkanRenderTarget.borrow(target.colorView)
+        try {
+            Luma.render {
+                backend.beginRenderTarget(borrowed, floatArrayOf(0f, 0f, 1f, 1f))
+                directGeometry.draw()
+                backend.endRenderTarget()
+            }
+        } finally {
+            borrowed.close()
         }
         verifyPixels(true)
         renderScene()

@@ -8,7 +8,6 @@ import com.mojang.blaze3d.systems.GpuDevice
 import com.mojang.blaze3d.systems.RenderPass
 import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.textures.GpuTextureView
-import net.minecraft.client.Minecraft
 import org.joml.Vector4f
 import sweetie.evaware.luma.LumaNames
 import sweetie.evaware.luma.api.BlendFunction
@@ -27,7 +26,6 @@ internal class RenderPassEncoder(
     private var currentPass: RenderPass? = null
     private var currentProgram: Program? = null
     private var currentTargetHasDepth = false
-    private var stagingVertexBufferBound = false
     private val directVertexBuffers = arrayOfNulls<VulkanVertexBuffer>(RenderPass.MAX_VERTEX_BUFFERS)
     private val directVertexOffsets = LongArray(RenderPass.MAX_VERTEX_BUFFERS)
     private var directIndexBuffer: VulkanIndexBuffer? = null
@@ -46,20 +44,16 @@ internal class RenderPassEncoder(
         currentPass?.close()
         currentPass = null
         currentProgram = null
-        stagingVertexBufferBound = false
         resetDirectBindings()
 
         val colorView: GpuTextureView
         val depthView: GpuTextureView?
 
-        if (target != null) {
-            colorView = target.colorView
-            depthView = target.depthView
-        } else {
-            val mainTarget = Minecraft.getInstance().gameRenderer.mainRenderTarget()
-            colorView = mainTarget.colorTextureView ?: return
-            depthView = mainTarget.depthTextureView
+        checkNotNull(target) {
+            "No Blaze3D render target is active; call beginRenderTarget before drawing"
         }
+        colorView = target.colorView
+        depthView = target.depthView
 
         val pass = checkNotNull(encoder).createRenderPass(
             { LumaNames.RENDER_PASS },
@@ -87,19 +81,13 @@ internal class RenderPassEncoder(
         currentPass?.close()
         currentPass = null
         currentProgram = null
-        stagingVertexBufferBound = false
         resetDirectBindings()
         val commandEncoder = checkNotNull(encoder)
-        val colorTexture = if (target != null) {
-            target.gpuTexture
-        } else {
-            Minecraft.getInstance().gameRenderer.mainRenderTarget().colorTexture
+        val activeTarget = checkNotNull(target) {
+            "No Blaze3D render target is active; call beginRenderTarget before clearing"
         }
-        val depthTexture = if (target != null) {
-            target.gpuDepthTexture
-        } else {
-            Minecraft.getInstance().gameRenderer.mainRenderTarget().depthTexture
-        }
+        val colorTexture = activeTarget.gpuTexture
+        val depthTexture = activeTarget.gpuDepthTexture
         if (color) clearColor.set(red, green, blue, alpha)
         when {
             color && depth && depthTexture != null ->
@@ -159,16 +147,11 @@ internal class RenderPassEncoder(
     override fun onDraw(topology: PrimitiveTopology, vertexStart: Long, vertexBytes: Long, vertexCount: Int) {
         val pass = currentPass ?: return
         val program = currentProgram ?: return
-        val strideBytes = program.layout.strideFloats * Float.SIZE_BYTES
-        check(vertexStart % strideBytes == 0L) { "Vertex data is not aligned to its layout stride" }
-        val firstElement = Math.toIntExact(vertexStart / strideBytes)
-        if (!stagingVertexBufferBound) {
-            pass.setVertexBuffer(0, vertexBuffer.fullSlice())
-            stagingVertexBufferBound = true
-            resetDirectBindings()
-        }
+        pass.setVertexBuffer(0, vertexBuffer.slice(vertexStart, vertexBytes))
+        resetDirectBindings()
+
         if (program.layout.instanced) {
-            pass.draw(program.layout.baseVertexCount, vertexCount, 0, firstElement)
+            pass.draw(program.layout.baseVertexCount, vertexCount, 0, 0)
             return
         }
 
@@ -178,9 +161,9 @@ internal class RenderPassEncoder(
             val indexBuffer = sequential.getBuffer(indexCount)
             pass.setIndexBuffer(indexBuffer, sequential.type())
             directIndexBuffer = null
-            pass.drawIndexed(indexCount, 1, 0, firstElement, 0)
+            pass.drawIndexed(indexCount, 1, 0, 0, 0)
         } else {
-            pass.draw(vertexCount, 1, firstElement, 0)
+            pass.draw(vertexCount, 1, 0, 0)
         }
     }
 
@@ -212,14 +195,12 @@ internal class RenderPassEncoder(
         } else {
             pass.draw(draw.vertexCount, draw.instanceCount, draw.firstVertex, draw.firstInstance)
         }
-        stagingVertexBufferBound = false
     }
 
     fun finish() {
         currentPass?.close()
         currentPass = null
         currentProgram = null
-        stagingVertexBufferBound = false
         resetDirectBindings()
         device = null
         encoder = null

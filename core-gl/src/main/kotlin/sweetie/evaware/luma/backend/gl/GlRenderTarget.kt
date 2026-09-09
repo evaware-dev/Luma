@@ -14,18 +14,27 @@ class GlRenderTarget(
     override val width: Int,
     override val height: Int,
     val color: GlTexture,
-    val depth: GlTexture?
+    val depth: GlTexture?,
+    private val ownsFramebuffer: Boolean = true
 ) : RenderTargetHandle {
     override val colorTexture: TextureHandle get() = color
     override val depthTexture: TextureHandle? get() = depth
 
     override fun close() {
-        GL30.glDeleteFramebuffers(fbo)
+        if (ownsFramebuffer) GL30.glDeleteFramebuffers(fbo)
         depth?.close()
         color.close()
     }
 
     companion object {
+        fun borrow(
+            fbo: Int,
+            width: Int,
+            height: Int,
+            color: GlTexture,
+            depth: GlTexture? = null
+        ): GlRenderTarget = GlRenderTarget(fbo, width, height, color, depth, false)
+
         fun create(
             width: Int,
             height: Int,
