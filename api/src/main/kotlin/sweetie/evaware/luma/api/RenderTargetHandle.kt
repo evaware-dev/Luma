@@ -14,4 +14,5 @@ interface RenderTargetHandle : AutoCloseable {
     val width: Int
     val height: Int
     val colorTexture: TextureHandle
+    val depthTexture: TextureHandle? get() = null
 }

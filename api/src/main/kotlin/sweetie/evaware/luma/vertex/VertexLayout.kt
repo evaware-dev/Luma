@@ -15,6 +15,9 @@ class VertexLayout {
     var strideFloats = 0
         private set
 
+    var strideBytes = 0
+        private set
+
     var instanced = false
         private set
 
@@ -38,6 +41,7 @@ class VertexLayout {
         normalizedFlags[size] = normalized
         byteSizes[size] = count * type.byteSize
         strideFloats += count
+        strideBytes += byteSizes[size]
         size++
     }
 
@@ -65,6 +69,7 @@ class VertexLayout {
     internal fun isCompatibleWith(other: VertexLayout): Boolean {
         if (size != other.size ||
             strideFloats != other.strideFloats ||
+            strideBytes != other.strideBytes ||
             instanced != other.instanced ||
             baseVertexCount != other.baseVertexCount
         ) return false
