@@ -1,7 +1,5 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import java.awt.image.BufferedImage
-import java.util.OptionalDouble
 import com.mojang.blaze3d.GpuFormat
 import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.textures.AddressMode
@@ -9,6 +7,8 @@ import com.mojang.blaze3d.textures.FilterMode
 import com.mojang.blaze3d.textures.GpuSampler
 import com.mojang.blaze3d.textures.GpuTexture
 import com.mojang.blaze3d.textures.GpuTextureView
+import java.awt.image.BufferedImage
+import java.util.OptionalDouble
 import sweetie.evaware.luma.LumaNames
 import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.TextureHandle
@@ -26,12 +26,11 @@ class VulkanTexture internal constructor(
 ) : TextureHandle {
     private var closed = false
 
-    fun update(x: Int, y: Int, image: BufferedImage) {
-        check(!closed) { "Texture is closed" }
-        checkNotNull(uploads) { "Borrowed textures cannot be updated" }.enqueue(gpuTexture, image, x, y)
-    }
+    internal fun requireOpen() = check(!closed) { "Texture is closed" }
 
-    fun bind(unit: Int) {
+    fun update(x: Int, y: Int, image: BufferedImage) {
+        requireOpen()
+        checkNotNull(uploads) { "Borrowed textures cannot be updated" }.enqueue(gpuTexture, image, x, y)
     }
 
     override fun close() {

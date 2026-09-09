@@ -38,4 +38,18 @@ class StagingBufferTest {
         staging.buffer.get(contents)
         assertArrayEquals(byteArrayOf(1, 2, 3, 0, 0, 0, 0, 0, 4, 5), contents)
     }
+
+    @Test
+    fun `aligned address append aligns independent vertex layouts`() {
+        val source = MemoryUtil.memAlloc(4)
+        val staging = StagingBuffer(8)
+        try {
+            source.putInt(0, 0x01020304)
+            assertEquals(0L, staging.appendFromAddressAligned(MemoryUtil.memAddress(source), 3, 3))
+            assertEquals(4L, staging.appendFromAddressAligned(MemoryUtil.memAddress(source), 4, 4))
+        } finally {
+            staging.close()
+            MemoryUtil.memFree(source)
+        }
+    }
 }

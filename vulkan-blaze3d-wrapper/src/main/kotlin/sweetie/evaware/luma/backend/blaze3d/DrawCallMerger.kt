@@ -87,7 +87,7 @@ internal class DrawCallMerger {
                 }
                 currentVertexCount = 0
 
-                consumer.onTargetChanged(draw.target, draw.clearColor)
+                consumer.onTargetChanged(draw.target)
                 currentTarget = targetKey
                 currentTargetPassId = draw.targetPassId
                 currentProgram = null

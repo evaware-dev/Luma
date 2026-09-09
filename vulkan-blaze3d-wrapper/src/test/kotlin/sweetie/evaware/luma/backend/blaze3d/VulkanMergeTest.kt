@@ -68,8 +68,7 @@ class VulkanMergeTest {
         depthFunc: CompareOp = CompareOp.ALWAYS_PASS,
         cullEnabled: Boolean = false,
         target: VulkanRenderTarget? = null,
-        targetPassId: Int = 0,
-        clearColor: FloatArray? = null
+        targetPassId: Int = 0
     ) {
         val draw = obtain()
         draw.program = program
@@ -92,7 +91,6 @@ class VulkanMergeTest {
         draw.cullEnabled = cullEnabled
         draw.target = target
         draw.targetPassId = targetPassId
-        draw.clearColor = clearColor
     }
 
     private fun merge(consumer: GroupConsumer, record: DrawCallRecorder.() -> Unit) {
@@ -102,7 +100,8 @@ class VulkanMergeTest {
     }
 
     private class TestGroupConsumer : GroupConsumer {
-        val targetChanges = ArrayList<Pair<VulkanRenderTarget?, FloatArray?>>()
+        val targetChanges = ArrayList<VulkanRenderTarget?>()
+        val clears = ArrayList<VulkanRenderTarget?>()
         val pipelineChanges = ArrayList<PipelineParams>()
         val uboChanges = ArrayList<Pair<Long, Long>>()
         val textureChanges = ArrayList<Pair<Program, TextureHandle?>>()
@@ -126,8 +125,8 @@ class VulkanMergeTest {
             val vertexCount: Int
         )
 
-        override fun onTargetChanged(target: VulkanRenderTarget?, clearColor: FloatArray?) {
-            targetChanges.add(target to clearColor)
+        override fun onTargetChanged(target: VulkanRenderTarget?) {
+            targetChanges.add(target)
         }
 
         override fun onClear(
@@ -139,7 +138,9 @@ class VulkanMergeTest {
             alpha: Float,
             depth: Boolean,
             depthValue: Double
-        ) {}
+        ) {
+            clears.add(target)
+        }
 
         override fun onPipelineChanged(
             program: Program,
@@ -338,24 +339,16 @@ class VulkanMergeTest {
     }
 
     @Test
-    fun testClearColorDoesNotSplitCurrentTargetPass() {
+    fun testExplicitClearSplitsCurrentTargetPass() {
         val target = createMockRenderTarget()
-        val clearColor = floatArrayOf(0f, 0f, 0f, 0f)
         val consumer = TestGroupConsumer()
 
         merge(consumer) {
-            record(
-                program1,
-                0L,
-                64L,
-                4,
-                0L,
-                32L,
-                texture1,
-                PrimitiveType.QUADS,
-                target = target,
-                clearColor = clearColor
-            )
+            record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS, target = target)
+            obtain().apply {
+                this.target = target
+                clearColorEnabled = true
+            }
             record(
                 program1,
                 64L,
@@ -369,28 +362,27 @@ class VulkanMergeTest {
             )
         }
 
-        assertEquals(1, consumer.targetChanges.size)
-        assertTrue(consumer.targetChanges.single().second contentEquals clearColor)
-        assertEquals(1, consumer.draws.size)
-        assertEquals(8, consumer.draws.single().vertexCount)
+        assertEquals(2, consumer.targetChanges.size)
+        assertEquals(1, consumer.clears.size)
+        assertEquals(target, consumer.clears.single())
+        assertEquals(2, consumer.draws.size)
     }
 
     @Test
-    fun testNewScopeSplitsSameTargetAndPreservesClear() {
+    fun testNewScopeSplitsSameTarget() {
         val target = createMockRenderTarget()
-        val clearColor = floatArrayOf(0.1f, 0.2f, 0.3f, 0.4f)
         val consumer = TestGroupConsumer()
 
         merge(consumer) {
             record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS,
                 target = target, targetPassId = 1)
             record(program1, 64L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS,
-                target = target, targetPassId = 2, clearColor = clearColor)
+                target = target, targetPassId = 2)
         }
 
         assertEquals(2, consumer.targetChanges.size)
-        assertEquals(null, consumer.targetChanges[0].second)
-        assertTrue(consumer.targetChanges[1].second contentEquals clearColor)
+        assertEquals(target, consumer.targetChanges[0])
+        assertEquals(target, consumer.targetChanges[1])
         assertEquals(2, consumer.draws.size)
     }
 }

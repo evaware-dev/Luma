@@ -27,6 +27,10 @@ internal class RenderPassEncoder(
     private var currentPass: RenderPass? = null
     private var currentProgram: Program? = null
     private var currentTargetHasDepth = false
+    private var stagingVertexBufferBound = false
+    private val directVertexBuffers = arrayOfNulls<VulkanVertexBuffer>(RenderPass.MAX_VERTEX_BUFFERS)
+    private val directVertexOffsets = LongArray(RenderPass.MAX_VERTEX_BUFFERS)
+    private var directIndexBuffer: VulkanIndexBuffer? = null
     private var pipelineGeneration = 0L
     private val clearColor = Vector4f()
 
@@ -38,10 +42,12 @@ internal class RenderPassEncoder(
         return this
     }
 
-    override fun onTargetChanged(target: VulkanRenderTarget?, clearColor: FloatArray?) {
+    override fun onTargetChanged(target: VulkanRenderTarget?) {
         currentPass?.close()
         currentPass = null
         currentProgram = null
+        stagingVertexBufferBound = false
+        resetDirectBindings()
 
         val colorView: GpuTextureView
         val depthView: GpuTextureView?
@@ -55,18 +61,12 @@ internal class RenderPassEncoder(
             depthView = mainTarget.depthTextureView
         }
 
-        val clear = clearColor?.takeIf { it.size >= 4 }
-        val depthClear = if (target != null && depthView != null && clear != null) {
-            OptionalDouble.of(1.0)
-        } else {
-            OptionalDouble.empty()
-        }
         val pass = checkNotNull(encoder).createRenderPass(
             { LumaNames.RENDER_PASS },
             colorView,
-            if (clear != null) Optional.of(Vector4f(clear[0], clear[1], clear[2], clear[3])) else Optional.empty(),
+            Optional.empty(),
             depthView,
-            depthClear
+            OptionalDouble.empty()
         )
 
         currentPass = pass
@@ -87,6 +87,8 @@ internal class RenderPassEncoder(
         currentPass?.close()
         currentPass = null
         currentProgram = null
+        stagingVertexBufferBound = false
+        resetDirectBindings()
         val commandEncoder = checkNotNull(encoder)
         val colorTexture = if (target != null) {
             target.gpuTexture
@@ -156,11 +158,17 @@ internal class RenderPassEncoder(
 
     override fun onDraw(topology: PrimitiveTopology, vertexStart: Long, vertexBytes: Long, vertexCount: Int) {
         val pass = currentPass ?: return
-        pass.setVertexBuffer(0, vertexBuffer.slice(vertexStart, vertexBytes))
-
-        val program = currentProgram
-        if (program != null && program.layout.instanced) {
-            pass.draw(program.layout.baseVertexCount, vertexCount, 0, 0)
+        val program = currentProgram ?: return
+        val strideBytes = program.layout.strideFloats * Float.SIZE_BYTES
+        check(vertexStart % strideBytes == 0L) { "Vertex data is not aligned to its layout stride" }
+        val firstElement = Math.toIntExact(vertexStart / strideBytes)
+        if (!stagingVertexBufferBound) {
+            pass.setVertexBuffer(0, vertexBuffer.fullSlice())
+            stagingVertexBufferBound = true
+            resetDirectBindings()
+        }
+        if (program.layout.instanced) {
+            pass.draw(program.layout.baseVertexCount, vertexCount, 0, firstElement)
             return
         }
 
@@ -169,9 +177,10 @@ internal class RenderPassEncoder(
             val sequential = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS)
             val indexBuffer = sequential.getBuffer(indexCount)
             pass.setIndexBuffer(indexBuffer, sequential.type())
-            pass.drawIndexed(indexCount, 1, 0, 0, 0)
+            directIndexBuffer = null
+            pass.drawIndexed(indexCount, 1, 0, firstElement, 0)
         } else {
-            pass.draw(vertexCount, 1, 0, 0)
+            pass.draw(vertexCount, 1, firstElement, 0)
         }
     }
 
@@ -183,26 +192,42 @@ internal class RenderPassEncoder(
             val buffer = requireNotNull(bindings.buffers[binding]) { "Vertex binding $binding is not set" }
             buffer.requireOpen()
             val offset = bindings.offsets[binding]
-            pass.setVertexBuffer(binding, buffer.gpuBuffer.slice(offset, buffer.sizeBytes - offset))
+            if (directVertexBuffers[binding] !== buffer || directVertexOffsets[binding] != offset) {
+                pass.setVertexBuffer(binding, buffer.slice(offset, buffer.sizeBytes - offset))
+                directVertexBuffers[binding] = buffer
+                directVertexOffsets[binding] = offset
+            }
         }
         if (draw.indexed) {
             val indices = requireNotNull(draw.indexBuffer) { "Index buffer is not bound" }
             indices.requireOpen()
-            pass.setIndexBuffer(
-                indices.gpuBuffer,
-                if (indices.indexType == IndexType.UINT16) MinecraftIndexType.SHORT else MinecraftIndexType.INT
-            )
+            if (directIndexBuffer !== indices) {
+                pass.setIndexBuffer(
+                    indices.gpuBuffer,
+                    if (indices.indexType == IndexType.UINT16) MinecraftIndexType.SHORT else MinecraftIndexType.INT
+                )
+                directIndexBuffer = indices
+            }
             pass.drawIndexed(draw.vertexCount, draw.instanceCount, draw.firstIndex, draw.baseVertex, draw.firstInstance)
         } else {
             pass.draw(draw.vertexCount, draw.instanceCount, draw.firstVertex, draw.firstInstance)
         }
+        stagingVertexBufferBound = false
     }
 
     fun finish() {
         currentPass?.close()
         currentPass = null
         currentProgram = null
+        stagingVertexBufferBound = false
+        resetDirectBindings()
         device = null
         encoder = null
+    }
+
+    private fun resetDirectBindings() {
+        directVertexBuffers.fill(null)
+        directVertexOffsets.fill(0L)
+        directIndexBuffer = null
     }
 }

@@ -28,7 +28,6 @@ internal class DrawCall {
     var scissorHeight = 0
     var target: VulkanRenderTarget? = null
     var targetPassId: Int = 0
-    var clearColor: FloatArray? = null
     var vertexBindings: VertexBindingSnapshot? = null
     var indexBuffer: VulkanIndexBuffer? = null
     var firstVertex = 0
@@ -50,7 +49,6 @@ internal class DrawCall {
         program = null
         textures = NO_TEXTURES
         target = null
-        clearColor = null
         vertexBindings = null
         indexBuffer = null
         direct = false

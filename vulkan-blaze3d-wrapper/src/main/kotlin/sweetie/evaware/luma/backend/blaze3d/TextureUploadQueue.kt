@@ -1,10 +1,10 @@
 package sweetie.evaware.luma.backend.blaze3d
 
+import com.mojang.blaze3d.systems.CommandEncoder
+import com.mojang.blaze3d.textures.GpuTexture
 import java.awt.image.BufferedImage
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import com.mojang.blaze3d.systems.CommandEncoder
-import com.mojang.blaze3d.textures.GpuTexture
 import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.texture.RgbaTransferBuffer
 
@@ -39,8 +39,19 @@ internal class TextureUploadQueue(
         }
     }
 
+    private class RetiredBuffers(
+        private val owner: TextureUploadQueue
+    ) : AutoCloseable {
+        val buffers = ArrayList<ByteBuffer>()
+
+        override fun close() {
+            owner.recycle(this)
+        }
+    }
+
     private val pending = ArrayList<Pending>()
     private val recycledPending = ArrayDeque<Pending>()
+    private val recycledBatches = ArrayDeque<RetiredBuffers>()
     private val available = ArrayList<ByteBuffer>()
     private val transfer = RgbaTransferBuffer()
     private var pooledBytes = 0L
@@ -66,8 +77,10 @@ internal class TextureUploadQueue(
     @Synchronized
     fun record(encoder: CommandEncoder) {
         if (pending.isEmpty()) return
-        val recycledBuffers = ArrayList<ByteBuffer>(pending.size)
-        pending.forEach { upload ->
+        val batch = if (recycledBatches.isEmpty()) RetiredBuffers(this) else recycledBatches.removeFirst()
+        batch.buffers.ensureCapacity(pending.size)
+        for (index in pending.indices) {
+            val upload = pending[index]
             write(
                 encoder,
                 requireNotNull(upload.texture),
@@ -77,16 +90,12 @@ internal class TextureUploadQueue(
                 upload.width,
                 upload.height
             )
-            recycledBuffers += requireNotNull(upload.buffer)
+            batch.buffers.add(requireNotNull(upload.buffer))
             upload.reset()
-            recycledPending += upload
+            recycledPending.addLast(upload)
         }
         pending.clear()
-        VulkanResourceRetirement.defer {
-            synchronized(this) {
-                recycledBuffers.forEach(::recycle)
-            }
-        }
+        VulkanResourceRetirement.defer(batch)
     }
 
     @Synchronized
@@ -98,6 +107,7 @@ internal class TextureUploadQueue(
         }
         pending.clear()
         recycledPending.clear()
+        recycledBatches.clear()
         available.forEach(MemoryUtil::memFree)
         available.clear()
         pooledBytes = 0
@@ -154,5 +164,12 @@ internal class TextureUploadQueue(
         } else {
             MemoryUtil.memFree(buffer)
         }
+    }
+
+    @Synchronized
+    private fun recycle(batch: RetiredBuffers) {
+        for (index in batch.buffers.indices) recycle(batch.buffers[index])
+        batch.buffers.clear()
+        if (!closed) recycledBatches.addLast(batch)
     }
 }

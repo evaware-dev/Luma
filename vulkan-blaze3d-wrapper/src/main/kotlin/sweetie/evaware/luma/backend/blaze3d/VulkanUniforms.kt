@@ -1,14 +1,15 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import com.mojang.blaze3d.buffers.Std140Builder
 import org.joml.Matrix4f
 import sweetie.evaware.luma.uniform.*
 
 data class UniformInfo(val name: String, val type: String)
 
-abstract class VulkanUniform(
+internal abstract class VulkanUniform(
     name: String,
-    val type: String
+    val type: String,
+    val alignmentBytes: Int,
+    val sizeBytes: Int
 ) : UniformBinding(name) {
 
     fun isHandleDirty(uniforms: ShaderUniforms): Boolean =
@@ -18,65 +19,71 @@ abstract class VulkanUniform(
         getHandle(uniforms)?.isDirty = false
     }
 
-    abstract fun write(builder: Std140Builder, uniforms: ShaderUniforms)
+    abstract fun write(writer: Std140Writer, uniforms: ShaderUniforms)
 }
 
-class VulkanFloat1Uniform(name: String, type: String) : VulkanUniform(name, type) {
-    override fun write(builder: Std140Builder, uniforms: ShaderUniforms) {
+internal class VulkanFloat1Uniform(name: String, type: String) :
+    VulkanUniform(name, type, Float.SIZE_BYTES, Float.SIZE_BYTES) {
+    override fun write(writer: Std140Writer, uniforms: ShaderUniforms) {
         val handle = getHandle(uniforms) as? Float1Uniform
         val v = handle?.value ?: 0f
-        builder.putFloat(v)
+        writer.putFloat(v)
     }
 }
 
-class VulkanFloat2Uniform(name: String, type: String) : VulkanUniform(name, type) {
-    override fun write(builder: Std140Builder, uniforms: ShaderUniforms) {
+internal class VulkanFloat2Uniform(name: String, type: String) :
+    VulkanUniform(name, type, 2 * Float.SIZE_BYTES, 2 * Float.SIZE_BYTES) {
+    override fun write(writer: Std140Writer, uniforms: ShaderUniforms) {
         val handle = getHandle(uniforms) as? Float2Uniform
         if (handle != null) {
-            builder.putVec2(handle.first, handle.second)
+            writer.putVec2(handle.first, handle.second)
         } else {
-            builder.putVec2(0f, 0f)
+            writer.putVec2(0f, 0f)
         }
     }
 }
 
-class VulkanFloat3Uniform(name: String, type: String) : VulkanUniform(name, type) {
-    override fun write(builder: Std140Builder, uniforms: ShaderUniforms) {
+internal class VulkanFloat3Uniform(name: String, type: String) :
+    VulkanUniform(name, type, 4 * Float.SIZE_BYTES, 4 * Float.SIZE_BYTES) {
+    override fun write(writer: Std140Writer, uniforms: ShaderUniforms) {
         val handle = getHandle(uniforms) as? Float3Uniform
         if (handle != null) {
-            builder.putVec3(handle.first, handle.second, handle.third)
+            writer.putVec3(handle.first, handle.second, handle.third)
         } else {
-            builder.putVec3(0f, 0f, 0f)
+            writer.putVec3(0f, 0f, 0f)
         }
     }
 }
 
-class VulkanFloat4Uniform(name: String, type: String) : VulkanUniform(name, type) {
-    override fun write(builder: Std140Builder, uniforms: ShaderUniforms) {
+internal class VulkanFloat4Uniform(name: String, type: String) :
+    VulkanUniform(name, type, 4 * Float.SIZE_BYTES, 4 * Float.SIZE_BYTES) {
+    override fun write(writer: Std140Writer, uniforms: ShaderUniforms) {
         val handle = getHandle(uniforms) as? Float4Uniform
         if (handle != null) {
-            builder.putVec4(handle.first, handle.second, handle.third, handle.fourth)
+            writer.putVec4(handle.first, handle.second, handle.third, handle.fourth)
         } else {
-            builder.putVec4(0f, 0f, 0f, 0f)
+            writer.putVec4(0f, 0f, 0f, 0f)
         }
     }
 }
 
-class VulkanInt1Uniform(name: String, type: String) : VulkanUniform(name, type) {
-    override fun write(builder: Std140Builder, uniforms: ShaderUniforms) {
+internal class VulkanInt1Uniform(name: String, type: String) :
+    VulkanUniform(name, type, Int.SIZE_BYTES, Int.SIZE_BYTES) {
+    override fun write(writer: Std140Writer, uniforms: ShaderUniforms) {
         val handle = getHandle(uniforms) as? Int1Uniform
         val v = handle?.value ?: 0
-        builder.putInt(v)
+        writer.putInt(v)
     }
 }
 
 private val IDENTITY_MATRIX = Matrix4f()
 
-class VulkanMat4Uniform(name: String, type: String) : VulkanUniform(name, type) {
-    override fun write(builder: Std140Builder, uniforms: ShaderUniforms) {
+internal class VulkanMat4Uniform(name: String, type: String) :
+    VulkanUniform(name, type, 4 * Float.SIZE_BYTES, 16 * Float.SIZE_BYTES) {
+    override fun write(writer: Std140Writer, uniforms: ShaderUniforms) {
         val handle = getHandle(uniforms) as? Mat4Uniform
         val matrix = handle?.value ?: IDENTITY_MATRIX
-        builder.putMat4f(matrix)
+        writer.putMat4(matrix)
     }
 }
 

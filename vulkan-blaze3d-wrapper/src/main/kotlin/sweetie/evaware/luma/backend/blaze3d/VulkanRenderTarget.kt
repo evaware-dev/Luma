@@ -5,11 +5,11 @@ import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.textures.GpuTexture
 import com.mojang.blaze3d.textures.GpuTextureView
 import com.mojang.blaze3d.textures.GpuSampler
+import java.util.function.Supplier
 import sweetie.evaware.luma.LumaNames
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.TextureHandle
-import java.util.function.Supplier
 
 class VulkanRenderTarget(
     val gpuTexture: GpuTexture,
@@ -23,8 +23,13 @@ class VulkanRenderTarget(
 ) : RenderTargetHandle {
     override val colorTexture: TextureHandle get() = colorAsTexture
     override val depthTexture: TextureHandle? get() = depthAsTexture
+    private var closed = false
+
+    internal fun requireOpen() = check(!closed) { "Render target is closed" }
 
     override fun close() {
+        if (closed) return
+        closed = true
         colorAsTexture.close()
         depthAsTexture?.close()
         if (depthView != null || gpuDepthTexture != null) {

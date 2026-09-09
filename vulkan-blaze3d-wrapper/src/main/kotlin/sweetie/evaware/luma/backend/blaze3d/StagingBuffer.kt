@@ -43,6 +43,19 @@ internal class StagingBuffer(initialCapacity: Int) : AutoCloseable {
         return offset
     }
 
+    fun appendFromAddressAligned(sourceAddress: Long, bytes: Int, alignment: Int): Long {
+        require(alignment > 0) { "Alignment must be positive" }
+        val position = buffer.position()
+        val remainder = position % alignment
+        val padding = if (remainder == 0) 0 else alignment - remainder
+        ensure(Math.addExact(padding, bytes))
+        buffer.position(Math.addExact(position, padding))
+        val offset = buffer.position().toLong()
+        MemoryUtil.memCopy(sourceAddress, MemoryUtil.memAddress(buffer), bytes.toLong())
+        buffer.position(buffer.position() + bytes)
+        return offset
+    }
+
     fun append(source: ByteBuffer): Long {
         ensure(source.remaining())
         val offset = buffer.position().toLong()
@@ -60,6 +73,17 @@ internal class StagingBuffer(initialCapacity: Int) : AutoCloseable {
         val offset = buffer.position().toLong()
         buffer.put(source)
         return offset
+    }
+
+    fun beginAlignedWrite(maximumBytes: Int, alignment: Int): Long {
+        require(maximumBytes >= 0) { "Maximum byte count must not be negative" }
+        require(alignment > 0) { "Alignment must be positive" }
+        val position = buffer.position()
+        val remainder = position % alignment
+        val padding = if (remainder == 0) 0 else alignment - remainder
+        ensure(Math.addExact(padding, maximumBytes))
+        buffer.position(Math.addExact(position, padding))
+        return buffer.position().toLong()
     }
 
     override fun close() {

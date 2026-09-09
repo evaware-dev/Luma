@@ -6,7 +6,7 @@ import sweetie.evaware.luma.api.BlendFunction
 import sweetie.evaware.luma.api.TextureHandle
 
 internal interface GroupConsumer {
-    fun onTargetChanged(target: VulkanRenderTarget?, clearColor: FloatArray?)
+    fun onTargetChanged(target: VulkanRenderTarget?)
     fun onClear(
         target: VulkanRenderTarget?,
         color: Boolean,

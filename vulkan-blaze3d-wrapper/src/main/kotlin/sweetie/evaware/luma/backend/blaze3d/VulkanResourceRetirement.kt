@@ -4,13 +4,19 @@ import com.mojang.blaze3d.buffers.GpuFence
 import com.mojang.blaze3d.systems.CommandEncoder
 
 internal object VulkanResourceRetirement {
-    private class Submission(
-        val fence: GpuFence,
-        val resources: List<AutoCloseable>
-    )
+    internal class Submission {
+        var fence: GpuFence? = null
+        val resources = ArrayList<AutoCloseable>()
+
+        fun reset() {
+            fence = null
+            resources.clear()
+        }
+    }
 
     private val pending = ArrayList<AutoCloseable>()
     private val submissions = ArrayList<Submission>()
+    private val recycledSubmissions = ArrayDeque<Submission>()
 
     fun defer(resource: AutoCloseable) {
         pending += resource
@@ -26,16 +32,19 @@ internal object VulkanResourceRetirement {
         collect(wait = false)
     }
 
-    fun attachTo(encoder: CommandEncoder): Pair<GpuFence, List<AutoCloseable>>? {
+    fun attachTo(encoder: CommandEncoder): Submission? {
         if (pending.isEmpty()) return null
-        val resources = ArrayList(pending)
+        val submission = if (recycledSubmissions.isEmpty()) Submission() else recycledSubmissions.removeFirst()
+        submission.fence = encoder.createFence()
+        submission.resources.ensureCapacity(pending.size)
+        submission.resources.addAll(pending)
         pending.clear()
-        return encoder.createFence() to resources
+        return submission
     }
 
-    fun submitted(retirement: Pair<GpuFence, List<AutoCloseable>>?) {
+    fun submitted(retirement: Submission?) {
         if (retirement == null) return
-        submissions += Submission(retirement.first, retirement.second)
+        submissions.add(retirement)
     }
 
     fun closeAll(createEncoder: () -> CommandEncoder) {
@@ -53,13 +62,28 @@ internal object VulkanResourceRetirement {
         var index = 0
         while (index < submissions.size) {
             val submission = submissions[index]
-            if (!submission.fence.awaitCompletion(if (wait) Long.MAX_VALUE else 0L)) {
+            val fence = requireNotNull(submission.fence)
+            if (!fence.awaitCompletion(if (wait) Long.MAX_VALUE else 0L)) {
                 index++
                 continue
             }
-            submission.fence.close()
-            submission.resources.forEach(AutoCloseable::close)
+            var failure: Throwable? = null
+            try {
+                fence.close()
+            } catch (throwable: Throwable) {
+                failure = throwable
+            }
+            for (resourceIndex in submission.resources.indices) {
+                try {
+                    submission.resources[resourceIndex].close()
+                } catch (throwable: Throwable) {
+                    if (failure == null) failure = throwable else failure.addSuppressed(throwable)
+                }
+            }
             submissions.removeAt(index)
+            submission.reset()
+            recycledSubmissions.addLast(submission)
+            if (failure != null) throw failure
         }
     }
 }

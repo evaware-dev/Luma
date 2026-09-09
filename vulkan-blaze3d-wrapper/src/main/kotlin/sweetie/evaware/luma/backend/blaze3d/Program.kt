@@ -72,26 +72,27 @@ class Program(
     var uboCacheFrameId: Long = -1L
     var uboCacheOffset: Long = 0L
     var uboCacheBytes: Int = 0
+    var uboCacheUniforms: ShaderUniforms? = null
 
-    private var vulkanUniforms: List<VulkanUniform>? = null
-
-    fun getVulkanUniforms(uniforms: ShaderUniforms): List<VulkanUniform> {
-        var list = vulkanUniforms
-        if (list == null) {
-            list = uniformInfos.map { info ->
-                when (info.type) {
-                    "mat4" -> VulkanMat4Uniform(info.name, info.type)
-                    "vec4" -> VulkanFloat4Uniform(info.name, info.type)
-                    "vec3" -> VulkanFloat3Uniform(info.name, info.type)
-                    "vec2" -> VulkanFloat2Uniform(info.name, info.type)
-                    "float" -> VulkanFloat1Uniform(info.name, info.type)
-                    "int" -> VulkanInt1Uniform(info.name, info.type)
-                    else -> error("Unsupported Vulkan uniform type: ${info.type}")
-                }
-            }
-            vulkanUniforms = list
+    internal val vulkanUniforms = Array<VulkanUniform>(uniformInfos.size) { index ->
+        val info = uniformInfos[index]
+        when (info.type) {
+            "mat4" -> VulkanMat4Uniform(info.name, info.type)
+            "vec4" -> VulkanFloat4Uniform(info.name, info.type)
+            "vec3" -> VulkanFloat3Uniform(info.name, info.type)
+            "vec2" -> VulkanFloat2Uniform(info.name, info.type)
+            "float" -> VulkanFloat1Uniform(info.name, info.type)
+            "int" -> VulkanInt1Uniform(info.name, info.type)
+            else -> error("Unsupported Vulkan uniform type: ${info.type}")
         }
-        return list
+    }
+    internal val uniformBlockBytes = run {
+        var bytes = 0
+        for (index in vulkanUniforms.indices) {
+            val uniform = vulkanUniforms[index]
+            bytes = Math.addExact(align(bytes, uniform.alignmentBytes), uniform.sizeBytes)
+        }
+        bytes
     }
 
     internal fun getOrCreatePipeline(
@@ -212,6 +213,8 @@ class Program(
             pipelineGenerations[index] = Long.MIN_VALUE
         }
         pipelineCount = 0
+        uboCacheUniforms = null
+        uboCacheFrameId = -1L
     }
 
     private fun pipelineKey(
@@ -237,6 +240,11 @@ class Program(
         key = key * 2 + if (depthWrite) 1 else 0
         key = key * 2 + if (cullEnabled) 1 else 0
         return key * 2 + if (hasDepthAttachment) 1 else 0
+    }
+
+    private fun align(value: Int, alignment: Int): Int {
+        val remainder = value % alignment
+        return if (remainder == 0) value else Math.addExact(value, alignment - remainder)
     }
 
     private fun BlendFunction.toMinecraft() = MinecraftBlendFunction(

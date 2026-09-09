@@ -2,13 +2,11 @@ package sweetie.evaware.luma.backend.blaze3d
 
 import com.mojang.blaze3d.buffers.GpuBuffer
 import com.mojang.blaze3d.buffers.GpuFence
-import com.mojang.blaze3d.buffers.Std140Builder
 import com.mojang.blaze3d.platform.CompareOp
 import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.systems.RenderPass
 import com.mojang.blaze3d.textures.FilterMode
 import net.minecraft.resources.Identifier
-import org.lwjgl.system.MemoryStack
 import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.LumaNames
 import sweetie.evaware.luma.api.BlendFunction
@@ -58,6 +56,7 @@ class Backend(
 
     private val vertexStaging = StagingBuffer(config.initialVertexStagingBytes)
     private val uboStaging = StagingBuffer(config.initialUniformStagingBytes)
+    private val uniformWriter = Std140Writer()
     private val uniformOffsetAlignment = RenderSystem.getDevice().deviceInfo.limits.minUniformOffsetAlignment
 
     private val recorder = DrawCallRecorder()
@@ -78,7 +77,6 @@ class Backend(
     private var boundIndexBuffer: VulkanIndexBuffer? = null
 
     private val targetStack = ArrayList<VulkanRenderTarget?>()
-    private val targetClearColors = ArrayList<FloatArray?>()
     private var targetPassId = 0
     private var completionFenceRequested = false
     private var completionFence: GpuFence? = null
@@ -87,6 +85,8 @@ class Backend(
         VulkanResourceRetirement.collectCompleted()
         renderState.beginFrame()
         frameId++
+        vertexBuffer.beginFrame()
+        uboBuffer.beginFrame()
         recorder.reset()
         resetTextureSnapshots()
         vertexStaging.reset()
@@ -95,9 +95,7 @@ class Backend(
         resetVertexBindingSnapshots()
 
         targetStack.clear()
-        targetClearColors.clear()
         targetStack.add(null)
-        targetClearColors.add(null)
         targetPassId = 0
     }
 
@@ -203,8 +201,10 @@ class Backend(
         require(unit in boundTextures.indices) {
             "Texture unit $unit is outside 0..${boundTextures.lastIndex}"
         }
-        if (boundTextures[unit] === texture) return
-        boundTextures[unit] = texture
+        val vulkanTexture = texture as VulkanTexture
+        vulkanTexture.requireOpen()
+        if (boundTextures[unit] === vulkanTexture) return
+        boundTextures[unit] = vulkanTexture
         texturesDirty = true
     }
 
@@ -240,6 +240,7 @@ class Backend(
     override fun bindIndexBuffer(buffer: IndexBufferHandle) {
         val indexBuffer = buffer as VulkanIndexBuffer
         indexBuffer.requireOpen()
+        if (boundIndexBuffer === indexBuffer) return
         boundIndexBuffer = indexBuffer
     }
 
@@ -320,8 +321,8 @@ class Backend(
 
     override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) {
         val vulkanTarget = target as VulkanRenderTarget
+        vulkanTarget.requireOpen()
         targetStack.add(vulkanTarget)
-        targetClearColors.add(null)
         targetPassId++
         if (clearColor != null) {
             require(clearColor.size >= 4) { "Clear color must contain four components" }
@@ -340,7 +341,6 @@ class Backend(
     override fun endRenderTarget() {
         check(targetStack.size > 1) { "No render target to end" }
         targetStack.removeAt(targetStack.size - 1)
-        targetClearColors.removeAt(targetClearColors.size - 1)
         targetPassId++
     }
 
@@ -406,8 +406,13 @@ class Backend(
     ) {
         val prog = program as Program
         prog.requireOpen()
-        val vertexBytes = vertexCount * prog.layout.strideFloats * Float.SIZE_BYTES
-        val vertexOffset = vertexStaging.appendFromAddress(MemoryUtil.memAddress(vertices), vertexBytes)
+        val strideBytes = prog.layout.strideFloats * Float.SIZE_BYTES
+        val vertexBytes = vertexCount * strideBytes
+        val vertexOffset = vertexStaging.appendFromAddressAligned(
+            MemoryUtil.memAddress(vertices),
+            vertexBytes,
+            strideBytes
+        )
 
         val draw = recordDraw(prog, uniforms, primitiveType)
         draw.vertexOffset = vertexOffset
@@ -464,7 +469,7 @@ class Backend(
 
         val uboOffset: Long
         val uboBytes: Int
-        val vulkanUniforms = prog.getVulkanUniforms(uniforms)
+        val vulkanUniforms = prog.vulkanUniforms
         if (vulkanUniforms.isEmpty()) {
             uboOffset = 0L
             uboBytes = 0
@@ -477,32 +482,29 @@ class Backend(
                 }
             }
 
-            if (!anyDirty && prog.uboCacheFrameId == frameId) {
+            if (!anyDirty && prog.uboCacheFrameId == frameId && prog.uboCacheUniforms === uniforms) {
                 uboOffset = prog.uboCacheOffset
                 uboBytes = prog.uboCacheBytes
             } else {
-                val stack = MemoryStack.stackPush()
-                try {
-                    val builder = Std140Builder.onStack(stack, config.uniformScratchBytes)
-                    for (i in vulkanUniforms.indices) {
-                        vulkanUniforms[i].write(builder, uniforms)
-                    }
-                    val uboData = builder.get()
-                    uboBytes = uboData.remaining()
-                    uboOffset = uboStaging.appendAligned(uboData, uniformOffsetAlignment)
-                } finally {
-                    stack.pop()
+                uboOffset = uboStaging.beginAlignedWrite(
+                    maxOf(config.uniformScratchBytes, prog.uniformBlockBytes),
+                    uniformOffsetAlignment
+                )
+                uniformWriter.begin(uboStaging.buffer)
+                for (i in vulkanUniforms.indices) {
+                    vulkanUniforms[i].write(uniformWriter, uniforms)
                 }
+                uboBytes = uniformWriter.size()
                 for (i in vulkanUniforms.indices) {
                     vulkanUniforms[i].clearDirty(uniforms)
                 }
                 prog.uboCacheOffset = uboOffset
                 prog.uboCacheBytes = uboBytes
                 prog.uboCacheFrameId = frameId
+                prog.uboCacheUniforms = uniforms
             }
         }
 
-        val activeTargetIndex = targetStack.lastIndex
         val draw = recorder.obtain()
         draw.program = prog
         draw.uboOffset = uboOffset
@@ -520,11 +522,8 @@ class Backend(
         draw.scissorY = renderState.scissorY
         draw.scissorWidth = renderState.scissorWidth
         draw.scissorHeight = renderState.scissorHeight
-        draw.target = targetStack[activeTargetIndex]
+        draw.target = targetStack.last()
         draw.targetPassId = targetPassId
-        draw.clearColor = targetClearColors[activeTargetIndex]
-
-        targetClearColors[activeTargetIndex] = null
         return draw
     }
 

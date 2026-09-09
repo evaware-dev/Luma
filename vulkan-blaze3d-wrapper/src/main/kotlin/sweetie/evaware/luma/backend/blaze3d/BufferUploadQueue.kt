@@ -44,7 +44,7 @@ internal class BufferUploadQueue(initialCapacity: Int) : AutoCloseable {
             source.limit(upload.sourceOffset + upload.size)
             source.position(upload.sourceOffset)
             encoder.writeToBuffer(
-                upload.buffer!!.gpuBuffer.slice(upload.targetOffset, upload.size.toLong()),
+                upload.buffer!!.slice(upload.targetOffset, upload.size.toLong()),
                 source
             )
             upload.buffer = null

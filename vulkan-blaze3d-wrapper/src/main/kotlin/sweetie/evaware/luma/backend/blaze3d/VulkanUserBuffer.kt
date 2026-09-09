@@ -1,6 +1,7 @@
 package sweetie.evaware.luma.backend.blaze3d
 
 import com.mojang.blaze3d.buffers.GpuBuffer
+import com.mojang.blaze3d.buffers.GpuBufferSlice
 import com.mojang.blaze3d.systems.RenderSystem
 import sweetie.evaware.luma.api.BufferUsage
 import sweetie.evaware.luma.api.IndexBufferHandle
@@ -18,12 +19,26 @@ internal sealed class VulkanUserBuffer(
         sizeBytes
     )
     private var closed = false
+    private var cachedSlice: GpuBufferSlice? = null
+    private var cachedOffset = -1L
+    private var cachedLength = -1L
 
     fun requireOpen() = check(!closed) { "Buffer is closed" }
+
+    fun slice(offset: Long, length: Long): GpuBufferSlice {
+        val cached = cachedSlice
+        if (cached != null && cachedOffset == offset && cachedLength == length) return cached
+        return gpuBuffer.slice(offset, length).also {
+            cachedSlice = it
+            cachedOffset = offset
+            cachedLength = length
+        }
+    }
 
     override fun close() {
         if (closed) return
         closed = true
+        cachedSlice = null
         VulkanResourceRetirement.defer(gpuBuffer)
     }
 }
