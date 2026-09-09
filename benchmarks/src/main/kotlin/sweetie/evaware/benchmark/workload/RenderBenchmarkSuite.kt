@@ -1,17 +1,27 @@
 package sweetie.evaware.benchmark.workload
 
 import java.awt.image.BufferedImage
+import java.nio.ByteOrder
+import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.benchmark.core.BenchmarkRunner
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.BlendFunction
+import sweetie.evaware.luma.api.BufferUsage
 import sweetie.evaware.luma.api.DepthCompare
+import sweetie.evaware.luma.api.IndexBufferHandle
+import sweetie.evaware.luma.api.IndexType
 import sweetie.evaware.luma.api.PrimitiveType
+import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.api.VertexBufferHandle
 import sweetie.evaware.luma.shader.Shader
 import sweetie.evaware.luma.uniform.Float4Uniform
+import sweetie.evaware.luma.uniform.ShaderUniforms
+import sweetie.evaware.luma.vertex.ShaderVertType
+import sweetie.evaware.luma.vertex.VertexLayout
 
 internal class RenderBenchmarkSuite(
     private val backendName: String,
@@ -33,6 +43,13 @@ internal class RenderBenchmarkSuite(
     private lateinit var texturedShader: Shader
     private lateinit var firstTexture: TextureHandle
     private lateinit var secondTexture: TextureHandle
+    private lateinit var directProgram: ProgramHandle
+    private lateinit var directUniformProgram: ProgramHandle
+    private lateinit var directVertexBuffer: VertexBufferHandle
+    private lateinit var directIndexBuffer: IndexBufferHandle
+    private val directUniforms = ShaderUniforms()
+    private val firstDirectUniforms = ShaderUniforms()
+    private val secondDirectUniforms = ShaderUniforms()
 
     fun run() {
         prepareResources()
@@ -82,7 +99,51 @@ internal class RenderBenchmarkSuite(
         depthTarget = backend.createRenderTarget(64, 64, true, RenderTargetFormat.RGBA8)
         firstTexture = backend.createTexture(solidImage(0xFFFFFFFF.toInt()), false)
         secondTexture = backend.createTexture(solidImage(0xFF000000.toInt()), false)
+        prepareDirectResources(backend)
         synchronize()
+    }
+
+    private fun prepareDirectResources(backend: RenderBackend) {
+        val layout = VertexLayout().apply { add(ShaderVertType.FLOAT, 2, 0) }
+        val translated = Luma.shaderTranslator.translate(
+            resource("shaders/solid.vert"),
+            resource("shaders/solid.frag"),
+            layout
+        )
+        val uniformTranslated = Luma.shaderTranslator.translate(
+            resource("shaders/solid.vert"),
+            resource("shaders/uniform.frag"),
+            layout
+        )
+        directProgram = backend.createProgram(translated.vertexSource, translated.fragmentSource, layout)
+        directUniformProgram = backend.createProgram(
+            uniformTranslated.vertexSource,
+            uniformTranslated.fragmentSource,
+            layout
+        )
+        val firstColor = firstDirectUniforms.float4("uColor")
+        val secondColor = secondDirectUniforms.float4("uColor")
+        firstDirectUniforms.vec4(firstColor, 1f, 0f, 0f, 1f)
+        secondDirectUniforms.vec4(secondColor, 0f, 1f, 0f, 1f)
+        directVertexBuffer = backend.createVertexBuffer(6L * Float.SIZE_BYTES, BufferUsage.STATIC)
+        directIndexBuffer = backend.createIndexBuffer(3L * Short.SIZE_BYTES, IndexType.UINT16, BufferUsage.STATIC)
+
+        val vertices = MemoryUtil.memAlloc(6 * Float.SIZE_BYTES).order(ByteOrder.nativeOrder())
+        val indices = MemoryUtil.memAlloc(3 * Short.SIZE_BYTES).order(ByteOrder.nativeOrder())
+        try {
+            vertices.asFloatBuffer()
+                .put(2f).put(2f)
+                .put(2.001f).put(2f)
+                .put(2f).put(2.001f)
+            vertices.limit(6 * Float.SIZE_BYTES)
+            indices.asShortBuffer().put(0).put(1).put(2)
+            indices.limit(3 * Short.SIZE_BYTES)
+            backend.updateVertexBuffer(directVertexBuffer, 0L, vertices)
+            backend.updateIndexBuffer(directIndexBuffer, 0L, indices)
+        } finally {
+            MemoryUtil.memFree(indices)
+            MemoryUtil.memFree(vertices)
+        }
     }
 
     private fun createPositionShader(fragmentPath: String, load: Boolean = true): Shader {
@@ -236,6 +297,39 @@ internal class RenderBenchmarkSuite(
             }
         }
 
+        runner.measure("draw", "direct buffer submission", 2_000) {
+            renderToTarget(firstTarget) {
+                Luma.backend.bindVertexBuffer(0, directVertexBuffer)
+                repeat(2_000) {
+                    Luma.backend.draw(directProgram, directUniforms, PrimitiveType.TRIANGLES, 0, 3)
+                }
+            }
+        }
+
+        runner.measure("draw", "direct indexed submission", 2_000) {
+            renderToTarget(firstTarget) {
+                Luma.backend.bindVertexBuffer(0, directVertexBuffer)
+                Luma.backend.bindIndexBuffer(directIndexBuffer)
+                repeat(2_000) {
+                    Luma.backend.drawIndexed(directProgram, directUniforms, PrimitiveType.TRIANGLES, 0, 3)
+                }
+            }
+        }
+
+        runner.measure("draw", "alternating uniform sets", 2_000) {
+            renderToTarget(firstTarget) {
+                Luma.backend.bindVertexBuffer(0, directVertexBuffer)
+                repeat(2_000) { index ->
+                    Luma.backend.draw(
+                        directUniformProgram,
+                        if (index and 1 == 0) firstDirectUniforms else secondDirectUniforms,
+                        PrimitiveType.TRIANGLES,
+                        0,
+                        3
+                    )
+                }
+            }
+        }
 
         runner.measure("draw", "line submission", 2_000) {
             renderToTarget(firstTarget) {
@@ -379,6 +473,9 @@ internal class RenderBenchmarkSuite(
         }
     }
 
+    private fun resource(path: String): String =
+        javaClass.classLoader.getResourceAsStream(path)!!.bufferedReader().use { it.readText() }
+
     private fun synchronize() {
         beforeSubmit()
         Luma.render {}
@@ -386,6 +483,10 @@ internal class RenderBenchmarkSuite(
     }
 
     private fun closeResources() {
+        directIndexBuffer.close()
+        directVertexBuffer.close()
+        directUniformProgram.close()
+        directProgram.close()
         secondTexture.close()
         firstTexture.close()
         depthTarget.close()
