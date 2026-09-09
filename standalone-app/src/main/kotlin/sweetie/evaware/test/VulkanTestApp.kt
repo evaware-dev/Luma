@@ -27,6 +27,7 @@ open class VulkanTestApp : BackendTestApp(64, 64, "Luma Vulkan") {
         private set
     private lateinit var shader: Shader
     private lateinit var target: VulkanRenderTarget
+    private lateinit var directGeometry: DirectGeometryScene
     private var rendererInitialized = false
 
     override fun prepareRuntime() {
@@ -54,15 +55,22 @@ open class VulkanTestApp : BackendTestApp(64, 64, "Luma Vulkan") {
         shader.vertices.float2(0)
         shader.load()
         target = backend.createRenderTarget(64, 64, false, RenderTargetFormat.RGBA8) as VulkanRenderTarget
+        directGeometry = DirectGeometryScene(backend)
     }
 
     override fun runScene(window: Long, args: Array<String>) {
+        Luma.render {
+            backend.beginRenderTarget(target, floatArrayOf(0f, 0f, 1f, 1f))
+            directGeometry.draw()
+            backend.endRenderTarget()
+        }
+        verifyPixels(true)
         renderScene()
-        verifyPixels()
+        verifyPixels(true)
         device.clearPipelineCache()
         backend.invalidatePipelineCache()
         renderScene()
-        verifyPixels()
+        verifyPixels(true)
     }
 
     private fun renderScene() {
@@ -97,6 +105,7 @@ open class VulkanTestApp : BackendTestApp(64, 64, "Luma Vulkan") {
     }
 
     override fun closeBackend() {
+        if (::directGeometry.isInitialized) directGeometry.close()
         if (::target.isInitialized) target.close()
         if (::shader.isInitialized) shader.close()
         if (::backend.isInitialized) backend.close()
@@ -104,7 +113,7 @@ open class VulkanTestApp : BackendTestApp(64, 64, "Luma Vulkan") {
         else if (::device.isInitialized) device.close()
     }
 
-    private fun verifyPixels() {
+    private fun verifyPixels(requireBothSides: Boolean) {
         val size = 64
         val readback = device.createBuffer(
             { "Luma Vulkan readback" },
@@ -137,8 +146,10 @@ open class VulkanTestApp : BackendTestApp(64, 64, "Luma Vulkan") {
                 }
                 val left = colorAt(mapped.data(), size, size / 4, size / 2)
                 val right = colorAt(mapped.data(), size, size * 3 / 4, size / 2)
+                val center = colorAt(mapped.data(), size, size / 2, size / 2)
                 val corner = colorAt(mapped.data(), size, 2, 2)
-                check(isRed(left) && isRed(right) && isBlue(corner)) {
+                val expectedRed = if (requireBothSides) isRed(left) && isRed(right) else isRed(center)
+                check(expectedRed && isBlue(corner)) {
                     "Vulkan readback mismatch: left=${left.contentToString()}, right=${right.contentToString()}, corner=${corner.contentToString()}, redX=$minRedX..$maxRedX, redPixels=$redPixels"
                 }
                 println("[Info] Vulkan offscreen readback: left=${left.contentToString()} right=${right.contentToString()} corner=${corner.contentToString()} => PASS")
