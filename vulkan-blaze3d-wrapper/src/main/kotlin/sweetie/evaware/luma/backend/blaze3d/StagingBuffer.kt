@@ -4,12 +4,12 @@ import org.lwjgl.system.MemoryUtil
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-internal class StagingBuffer(initialCapacity: Int) {
+internal class StagingBuffer(initialCapacity: Int) : AutoCloseable {
     var buffer: ByteBuffer = allocate(initialCapacity)
         private set
 
     private fun allocate(capacity: Int): ByteBuffer =
-        ByteBuffer.allocateDirect(capacity).order(ByteOrder.nativeOrder())
+        MemoryUtil.memAlloc(capacity).order(ByteOrder.nativeOrder())
 
     fun reset() {
         buffer.clear()
@@ -31,6 +31,7 @@ internal class StagingBuffer(initialCapacity: Int) {
         buffer.flip()
         grown.put(buffer)
         grown.position(keptPosition)
+        MemoryUtil.memFree(buffer)
         buffer = grown
     }
 
@@ -59,6 +60,10 @@ internal class StagingBuffer(initialCapacity: Int) {
         val offset = buffer.position().toLong()
         buffer.put(source)
         return offset
+    }
+
+    override fun close() {
+        MemoryUtil.memFree(buffer)
     }
 
 }

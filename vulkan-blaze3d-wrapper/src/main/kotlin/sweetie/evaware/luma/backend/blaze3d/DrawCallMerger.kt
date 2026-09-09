@@ -36,6 +36,12 @@ internal class DrawCallMerger {
         var currentDepthWrite = false
         var currentDepthFunc = CompareOp.ALWAYS_PASS
         var currentCullEnabled = false
+        var currentScissorKnown = false
+        var currentScissorEnabled = false
+        var currentScissorX = 0
+        var currentScissorY = 0
+        var currentScissorWidth = 0
+        var currentScissorHeight = 0
         var currentTextures: Array<TextureHandle?> = DrawCall.NO_TEXTURES
         var currentUboOffset = -1L
         var currentUboBytes = -1L
@@ -45,6 +51,31 @@ internal class DrawCallMerger {
 
         for (i in 0 until draws.size) {
             val draw = draws[i]
+            if (draw.clearColorEnabled || draw.clearDepthEnabled) {
+                if (currentVertexCount > 0 && currentTopology != null) {
+                    consumer.onDraw(currentTopology, currentVertexOffset, currentVertexBytes, currentVertexCount)
+                }
+                currentVertexCount = 0
+                consumer.onClear(
+                    draw.target,
+                    draw.clearColorEnabled,
+                    draw.clearRed,
+                    draw.clearGreen,
+                    draw.clearBlue,
+                    draw.clearAlpha,
+                    draw.clearDepthEnabled,
+                    draw.clearDepth
+                )
+                currentTarget = null
+                currentTargetPassId = -1
+                currentProgram = null
+                currentTopology = null
+                currentTextures = DrawCall.NO_TEXTURES
+                currentUboOffset = -1L
+                currentUboBytes = -1L
+                currentScissorKnown = false
+                continue
+            }
             val program = draw.program ?: continue
             val topology = topologyOf(draw.primitiveType)
 
@@ -64,10 +95,11 @@ internal class DrawCallMerger {
                 currentTextures = DrawCall.NO_TEXTURES
                 currentUboOffset = -1L
                 currentUboBytes = -1L
+                currentScissorKnown = false
             }
 
             val texturesSame = currentProgram === program && sameTextures(draw.textures, currentTextures)
-            val canMerge = currentProgram === program &&
+            val canMerge = !draw.direct && currentProgram === program &&
                 currentTopology == topology &&
                 currentBlendEnabled == draw.blendEnabled &&
                 currentBlendFunction == draw.blendFunction &&
@@ -75,6 +107,14 @@ internal class DrawCallMerger {
                 currentDepthWrite == draw.depthWrite &&
                 currentDepthFunc == draw.depthFunc &&
                 currentCullEnabled == draw.cullEnabled &&
+                currentScissorKnown &&
+                currentScissorEnabled == draw.scissorEnabled &&
+                (!draw.scissorEnabled || (
+                    currentScissorX == draw.scissorX &&
+                    currentScissorY == draw.scissorY &&
+                    currentScissorWidth == draw.scissorWidth &&
+                    currentScissorHeight == draw.scissorHeight
+                )) &&
                 texturesSame &&
                 currentUboOffset == draw.uboOffset &&
                 currentUboBytes == draw.uboBytes &&
@@ -120,6 +160,24 @@ internal class DrawCallMerger {
                     consumer.onTextureChanged(program, draw.textures)
                 }
 
+                val scissorChanged = !currentScissorKnown ||
+                    currentScissorEnabled != draw.scissorEnabled ||
+                    (draw.scissorEnabled && (
+                        currentScissorX != draw.scissorX ||
+                        currentScissorY != draw.scissorY ||
+                        currentScissorWidth != draw.scissorWidth ||
+                        currentScissorHeight != draw.scissorHeight
+                    ))
+                if (scissorChanged) {
+                    consumer.onScissorChanged(
+                        draw.scissorEnabled,
+                        draw.scissorX,
+                        draw.scissorY,
+                        draw.scissorWidth,
+                        draw.scissorHeight
+                    )
+                }
+
                 currentProgram = program
                 currentTopology = topology
                 currentBlendEnabled = draw.blendEnabled
@@ -128,12 +186,25 @@ internal class DrawCallMerger {
                 currentDepthWrite = draw.depthWrite
                 currentDepthFunc = draw.depthFunc
                 currentCullEnabled = draw.cullEnabled
+                currentScissorKnown = true
+                currentScissorEnabled = draw.scissorEnabled
+                currentScissorX = draw.scissorX
+                currentScissorY = draw.scissorY
+                currentScissorWidth = draw.scissorWidth
+                currentScissorHeight = draw.scissorHeight
                 currentTextures = draw.textures
                 currentUboOffset = draw.uboOffset
                 currentUboBytes = draw.uboBytes
-                currentVertexOffset = draw.vertexOffset
-                currentVertexBytes = draw.vertexBytes
-                currentVertexCount = draw.vertexCount
+                if (draw.direct) {
+                    consumer.onDirectDraw(draw, topology)
+                    currentVertexOffset = -1L
+                    currentVertexBytes = 0L
+                    currentVertexCount = 0
+                } else {
+                    currentVertexOffset = draw.vertexOffset
+                    currentVertexBytes = draw.vertexBytes
+                    currentVertexCount = draw.vertexCount
+                }
             }
         }
 

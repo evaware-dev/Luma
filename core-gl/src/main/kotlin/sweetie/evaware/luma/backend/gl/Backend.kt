@@ -1,6 +1,7 @@
 package sweetie.evaware.luma.backend.gl
 
 import java.awt.image.BufferedImage
+import java.nio.ByteBuffer
 import java.nio.FloatBuffer
 import java.util.Arrays
 import org.lwjgl.BufferUtils
@@ -10,7 +11,10 @@ import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.BlendFactor
 import sweetie.evaware.luma.api.BlendFunction
 import sweetie.evaware.luma.api.BlendOp
+import sweetie.evaware.luma.api.BufferUsage
 import sweetie.evaware.luma.api.DepthCompare
+import sweetie.evaware.luma.api.IndexBufferHandle
+import sweetie.evaware.luma.api.IndexType
 import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.api.RenderBackend
@@ -18,17 +22,22 @@ import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.api.VertexBufferHandle
 import sweetie.evaware.luma.texture.RgbaTransferBuffer
 import sweetie.evaware.luma.uniform.*
 import sweetie.evaware.luma.vertex.VertexLayout
+import sweetie.evaware.luma.vertex.VertexInputLayout
 
 class Backend(
     private val config: GlBackendConfig = GlBackendConfig()
 ) : RenderBackend {
     private val frameSnapshot = GlStateSnapshot()
     private val viewportBuffer = IntArray(4)
+    private val scissorBuffer = IntArray(4)
     private val colorMaskBuffer = IntArray(4)
     private val scalarStateBuffer = BufferUtils.createIntBuffer(1)
+    private val clearColorBuffer = BufferUtils.createFloatBuffer(4)
+    private val clearDepthBuffer = BufferUtils.createFloatBuffer(1)
     private val targetBindings = ArrayList<IntArray>()
     private val pixelUnpackState = GlPixelUnpackState(config.statePolicy == GlStatePolicy.PRESERVE)
     private val textureTransfer = RgbaTransferBuffer()
@@ -44,6 +53,18 @@ class Backend(
     private var frameActive = false
     private var targetDepth = 0
     private var ownedFixedStateKnown = false
+    private var viewportX = 0
+    private var viewportY = 0
+    private var viewportWidth = 0
+    private var viewportHeight = 0
+    private var scissorEnabled = false
+    private var scissorX = 0
+    private var scissorY = 0
+    private var scissorWidth = 0
+    private var scissorHeight = 0
+    private val directVertexBuffers = arrayOfNulls<GlVertexBufferHandle>(16)
+    private val directVertexOffsets = LongArray(16)
+    private var directIndexBuffer: GlIndexBufferHandle? = null
 
     private fun useProgram(programId: Int) {
         if (boundProgramId == programId) return
@@ -88,6 +109,11 @@ class Backend(
             frameSnapshot.viewportWidth,
             frameSnapshot.viewportHeight
         )
+        viewportX = frameSnapshot.viewportX
+        viewportY = frameSnapshot.viewportY
+        viewportWidth = frameSnapshot.viewportWidth
+        viewportHeight = frameSnapshot.viewportHeight
+        scissorEnabled = false
         invalidateBindingCache()
         targetDepth = 0
         frameActive = true
@@ -116,7 +142,14 @@ class Backend(
         vertexSource: String,
         fragmentSource: String,
         layout: VertexLayout
+    ): ProgramHandle = createProgram(vertexSource, fragmentSource, VertexInputLayout().binding(layout))
+
+    override fun createProgram(
+        vertexSource: String,
+        fragmentSource: String,
+        layouts: VertexInputLayout
     ): ProgramHandle {
+        require(layouts.size() > 0) { "Program requires at least one vertex binding" }
         var vertShader = 0
         var fragShader = 0
         var programId = 0
@@ -130,9 +163,12 @@ class Backend(
             GL20.glAttachShader(programId, vertShader)
             GL20.glAttachShader(programId, fragShader)
 
-            for (index in 0 until layout.size()) {
-                val layoutPos = layout.layoutPos(index)
-                GL20.glBindAttribLocation(programId, layoutPos, "a$layoutPos")
+            for (binding in 0 until layouts.size()) {
+                val layout = layouts.layout(binding)
+                for (index in 0 until layout.size()) {
+                    val layoutPos = layout.layoutPos(index)
+                    GL20.glBindAttribLocation(programId, layoutPos, "a$layoutPos")
+                }
             }
 
             GL20.glLinkProgram(programId)
@@ -143,7 +179,7 @@ class Backend(
             }
 
             loaded = true
-            return Program(programId, layout)
+            return Program(programId, layouts)
         } finally {
             if (vertShader != 0) GL20.glDeleteShader(vertShader)
             if (fragShader != 0) GL20.glDeleteShader(fragShader)
@@ -199,6 +235,103 @@ class Backend(
             glTexture.bind(unit)
         }
         textureBindings.bind(unit, glTexture)
+    }
+
+    override fun createVertexBuffer(sizeBytes: Long, usage: BufferUsage): VertexBufferHandle =
+        GlVertexBufferHandle(sizeBytes, usage)
+
+    override fun createIndexBuffer(sizeBytes: Long, indexType: IndexType, usage: BufferUsage): IndexBufferHandle =
+        GlIndexBufferHandle(sizeBytes, indexType, usage)
+
+    override fun updateVertexBuffer(buffer: VertexBufferHandle, offsetBytes: Long, data: ByteBuffer) {
+        (buffer as GlVertexBufferHandle).update(offsetBytes, data)
+        boundArrayBufferId = -1
+    }
+
+    override fun updateIndexBuffer(buffer: IndexBufferHandle, offsetBytes: Long, data: ByteBuffer) {
+        (buffer as GlIndexBufferHandle).update(offsetBytes, data)
+        boundArrayBufferId = -1
+    }
+
+    override fun bindVertexBuffer(binding: Int, buffer: VertexBufferHandle, offsetBytes: Long) {
+        require(binding in directVertexBuffers.indices) { "Vertex binding $binding is out of range" }
+        require(offsetBytes >= 0L && offsetBytes < buffer.sizeBytes) { "Vertex buffer offset is out of bounds" }
+        directVertexBuffers[binding] = buffer as GlVertexBufferHandle
+        directVertexOffsets[binding] = offsetBytes
+    }
+
+    override fun bindIndexBuffer(buffer: IndexBufferHandle) {
+        directIndexBuffer = buffer as GlIndexBufferHandle
+    }
+
+    override fun draw(
+        program: ProgramHandle,
+        uniforms: ShaderUniforms,
+        primitiveType: PrimitiveType,
+        firstVertex: Int,
+        vertexCount: Int,
+        instanceCount: Int,
+        firstInstance: Int
+    ) {
+        require(firstVertex >= 0 && vertexCount >= 0 && instanceCount >= 0 && firstInstance >= 0)
+        require(primitiveType != PrimitiveType.QUADS) { "Direct QUADS require an index buffer" }
+        val glProgram = prepareDirectDraw(program, uniforms)
+        val mode = primitiveType.glPrimitive
+        if (firstInstance == 0) {
+            GL31.glDrawArraysInstanced(mode, firstVertex, vertexCount, instanceCount)
+        } else {
+            GL42.glDrawArraysInstancedBaseInstance(mode, firstVertex, vertexCount, instanceCount, firstInstance)
+        }
+        bindVertexArray(glProgram.directVertexArray)
+    }
+
+    override fun drawIndexed(
+        program: ProgramHandle,
+        uniforms: ShaderUniforms,
+        primitiveType: PrimitiveType,
+        firstIndex: Int,
+        indexCount: Int,
+        vertexOffset: Int,
+        instanceCount: Int,
+        firstInstance: Int
+    ) {
+        require(firstIndex >= 0 && indexCount >= 0 && instanceCount >= 0 && firstInstance >= 0)
+        require(primitiveType != PrimitiveType.QUADS) { "Indexed QUADS must use TRIANGLES topology" }
+        prepareDirectDraw(program, uniforms)
+        val indices = requireNotNull(directIndexBuffer) { "Index buffer is not bound" }
+        indices.requireOpen()
+        GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, indices.id)
+        GL42.glDrawElementsInstancedBaseVertexBaseInstance(
+            primitiveType.glPrimitive,
+            indexCount,
+            indices.indexType.glType,
+            firstIndex.toLong() * indices.indexType.byteSize,
+            instanceCount,
+            vertexOffset,
+            firstInstance
+        )
+    }
+
+    private fun prepareDirectDraw(program: ProgramHandle, uniforms: ShaderUniforms): Program {
+        val glProgram = program as Program
+        useProgram(glProgram.programId)
+        glProgram.configureDirectBindings(directVertexBuffers, directVertexOffsets)
+        boundVertexArrayId = glProgram.directVertexArray
+        boundArrayBufferId = -1
+        uploadUniforms(glProgram, uniforms)
+        return glProgram
+    }
+
+    private fun uploadUniforms(program: Program, uniforms: ShaderUniforms) {
+        val prepared = program.getPreparedUniforms(uniforms)
+        for (index in prepared.indices) {
+            val uniform = prepared[index]
+            val handle = uniform.uniform.getHandle(uniforms)
+            if (handle != null && handle.isDirty) {
+                uniform.uniform.upload(uniform.location, uniforms)
+                handle.isDirty = false
+            }
+        }
     }
 
     override fun draw(
@@ -282,9 +415,16 @@ class Backend(
         GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, glTarget.fbo)
         GL11.glViewport(0, 0, glTarget.width, glTarget.height)
         framebufferState.seed(glTarget.fbo, glTarget.fbo, 0, 0, glTarget.width, glTarget.height)
+        viewportX = 0
+        viewportY = 0
+        viewportWidth = glTarget.width
+        viewportHeight = glTarget.height
         if (clearColor != null) {
+            if (scissorEnabled) GL11.glDisable(GL11.GL_SCISSOR_TEST)
             GL30.glClearBufferfv(GL11.GL_COLOR, 0, clearColor)
+            if (scissorEnabled) GL11.glEnable(GL11.GL_SCISSOR_TEST)
         }
+        applyScissor()
     }
 
     override fun endRenderTarget() {
@@ -294,6 +434,11 @@ class Backend(
         GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, previous[1])
         GL11.glViewport(previous[2], previous[3], previous[4], previous[5])
         framebufferState.restoreFrom(previous)
+        viewportX = previous[2]
+        viewportY = previous[3]
+        viewportWidth = previous[4]
+        viewportHeight = previous[5]
+        applyScissor()
     }
 
     override fun blend(enabled: Boolean) {
@@ -330,6 +475,60 @@ class Backend(
     override fun cull(enabled: Boolean) {
         if (!renderState.cull(enabled)) return
         if (enabled) GL11.glEnable(GL11.GL_CULL_FACE) else GL11.glDisable(GL11.GL_CULL_FACE)
+    }
+
+    override fun scissor(x: Int, y: Int, width: Int, height: Int) {
+        require(x >= 0 && y >= 0 && width > 0 && height > 0)
+        require(x + width <= viewportWidth && y + height <= viewportHeight) {
+            "Scissor [$x, $y, $width, $height] exceeds viewport [$viewportWidth, $viewportHeight]"
+        }
+        scissorX = x
+        scissorY = y
+        scissorWidth = width
+        scissorHeight = height
+        if (!scissorEnabled) {
+            GL11.glEnable(GL11.GL_SCISSOR_TEST)
+            scissorEnabled = true
+        }
+        applyScissor()
+    }
+
+    override fun disableScissor() {
+        if (!scissorEnabled) return
+        GL11.glDisable(GL11.GL_SCISSOR_TEST)
+        scissorEnabled = false
+    }
+
+    override fun clearColor(red: Float, green: Float, blue: Float, alpha: Float) {
+        check(frameActive) { "Cannot clear outside a frame" }
+        clearColorBuffer.put(0, red).put(1, green).put(2, blue).put(3, alpha)
+        clearWithoutScissor { GL30.glClearBufferfv(GL11.GL_COLOR, 0, clearColorBuffer) }
+    }
+
+    override fun clearDepth(depth: Double) {
+        check(frameActive) { "Cannot clear outside a frame" }
+        require(depth in 0.0..1.0) { "Depth clear value must be in 0..1" }
+        clearDepthBuffer.put(0, depth.toFloat())
+        clearWithoutScissor { GL30.glClearBufferfv(GL11.GL_DEPTH, 0, clearDepthBuffer) }
+    }
+
+    private inline fun clearWithoutScissor(action: () -> Unit) {
+        if (scissorEnabled) GL11.glDisable(GL11.GL_SCISSOR_TEST)
+        try {
+            action()
+        } finally {
+            if (scissorEnabled) GL11.glEnable(GL11.GL_SCISSOR_TEST)
+        }
+    }
+
+    private fun applyScissor() {
+        if (!scissorEnabled) return
+        GL11.glScissor(
+            viewportX + scissorX,
+            viewportY + viewportHeight - scissorY - scissorHeight,
+            scissorWidth,
+            scissorHeight
+        )
     }
 
     override fun close() {
@@ -388,6 +587,11 @@ class Backend(
         snapshot.depthFunc = getInteger(GL11.GL_DEPTH_FUNC)
         snapshot.cullEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE)
         snapshot.scissorEnabled = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)
+        GL11.glGetIntegerv(GL11.GL_SCISSOR_BOX, scissorBuffer)
+        snapshot.scissorX = scissorBuffer[0]
+        snapshot.scissorY = scissorBuffer[1]
+        snapshot.scissorWidth = scissorBuffer[2]
+        snapshot.scissorHeight = scissorBuffer[3]
         GL11.glGetIntegerv(GL11.GL_COLOR_WRITEMASK, colorMaskBuffer)
         snapshot.colorMaskRed = colorMaskBuffer[0] != 0
         snapshot.colorMaskGreen = colorMaskBuffer[1] != 0
@@ -420,6 +624,7 @@ class Backend(
         GL11.glDepthFunc(snapshot.depthFunc)
         if (snapshot.cullEnabled) GL11.glEnable(GL11.GL_CULL_FACE) else GL11.glDisable(GL11.GL_CULL_FACE)
         if (snapshot.scissorEnabled) GL11.glEnable(GL11.GL_SCISSOR_TEST) else GL11.glDisable(GL11.GL_SCISSOR_TEST)
+        GL11.glScissor(snapshot.scissorX, snapshot.scissorY, snapshot.scissorWidth, snapshot.scissorHeight)
         GL11.glColorMask(
             snapshot.colorMaskRed,
             snapshot.colorMaskGreen,
@@ -578,6 +783,19 @@ class Backend(
             DepthCompare.GREATER -> GL11.GL_GREATER
             DepthCompare.NEVER -> GL11.GL_NEVER
         }
+
+        val PrimitiveType.glPrimitive: Int
+            get() = when (this) {
+                PrimitiveType.TRIANGLES -> GL11.GL_TRIANGLES
+                PrimitiveType.LINES -> GL11.GL_LINES
+                PrimitiveType.QUADS -> GL11.GL_TRIANGLES
+            }
+
+        val IndexType.glType: Int
+            get() = when (this) {
+                IndexType.UINT16 -> GL11.GL_UNSIGNED_SHORT
+                IndexType.UINT32 -> GL11.GL_UNSIGNED_INT
+            }
 
         fun blendFactor(factor: BlendFactor): Int = when (factor) {
             BlendFactor.ZERO -> GL11.GL_ZERO

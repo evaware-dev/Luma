@@ -16,6 +16,16 @@ internal class RenderStateTracker {
         private set
     var cullEnabled = false
         private set
+    var scissorEnabled = false
+        private set
+    var scissorX = 0
+        private set
+    var scissorY = 0
+        private set
+    var scissorWidth = 0
+        private set
+    var scissorHeight = 0
+        private set
 
     fun beginFrame() {
         blendEnabled = true
@@ -24,6 +34,7 @@ internal class RenderStateTracker {
         depthWrite = false
         depthFunc = CompareOp.ALWAYS_PASS
         cullEnabled = false
+        scissorEnabled = false
     }
 
     fun blend(enabled: Boolean) {
@@ -48,5 +59,18 @@ internal class RenderStateTracker {
 
     fun cull(enabled: Boolean) {
         cullEnabled = enabled
+    }
+
+    fun scissor(x: Int, y: Int, width: Int, height: Int) {
+        require(x >= 0 && y >= 0 && width > 0 && height > 0)
+        scissorEnabled = true
+        scissorX = x
+        scissorY = y
+        scissorWidth = width
+        scissorHeight = height
+    }
+
+    fun disableScissor() {
+        scissorEnabled = false
     }
 }

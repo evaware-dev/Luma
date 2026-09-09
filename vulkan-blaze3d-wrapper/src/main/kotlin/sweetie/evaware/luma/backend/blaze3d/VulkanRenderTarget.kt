@@ -15,19 +15,22 @@ class VulkanRenderTarget(
     val gpuTexture: GpuTexture,
     val colorView: GpuTextureView,
     private val colorAsTexture: VulkanTexture,
-    val depthTexture: GpuTexture?,
+    val gpuDepthTexture: GpuTexture?,
     val depthView: GpuTextureView?,
+    private val depthAsTexture: VulkanTexture?,
     override val width: Int,
     override val height: Int
 ) : RenderTargetHandle {
     override val colorTexture: TextureHandle get() = colorAsTexture
+    override val depthTexture: TextureHandle? get() = depthAsTexture
 
     override fun close() {
         colorAsTexture.close()
-        if (depthView != null || depthTexture != null) {
+        depthAsTexture?.close()
+        if (depthView != null || gpuDepthTexture != null) {
             VulkanResourceRetirement.defer {
                 depthView?.close()
-                depthTexture?.close()
+                gpuDepthTexture?.close()
             }
         }
     }
@@ -82,12 +85,18 @@ class VulkanRenderTarget(
                 }
 
                 val colorTexture = VulkanTexture(texture, textureView, sampler, width, height, uploads)
+                val depthAsTexture = if (depthTexture != null && depthView != null) {
+                    VulkanTexture(depthTexture, depthView, sampler, width, height, null, false, false)
+                } else {
+                    null
+                }
                 return VulkanRenderTarget(
                     texture,
                     textureView,
                     colorTexture,
                     depthTexture,
                     depthView,
+                    depthAsTexture,
                     width,
                     height
                 )

@@ -1,6 +1,7 @@
 package sweetie.evaware.luma.backend.blaze3d
 
 import com.mojang.blaze3d.PrimitiveTopology
+import com.mojang.blaze3d.IndexType as MinecraftIndexType
 import com.mojang.blaze3d.platform.CompareOp
 import com.mojang.blaze3d.systems.CommandEncoder
 import com.mojang.blaze3d.systems.GpuDevice
@@ -11,6 +12,7 @@ import net.minecraft.client.Minecraft
 import org.joml.Vector4f
 import sweetie.evaware.luma.LumaNames
 import sweetie.evaware.luma.api.BlendFunction
+import sweetie.evaware.luma.api.IndexType
 import sweetie.evaware.luma.api.TextureHandle
 import java.util.Optional
 import java.util.OptionalDouble
@@ -26,6 +28,7 @@ internal class RenderPassEncoder(
     private var currentProgram: Program? = null
     private var currentTargetHasDepth = false
     private var pipelineGeneration = 0L
+    private val clearColor = Vector4f()
 
     fun begin(device: GpuDevice, encoder: CommandEncoder, pipelineGeneration: Long): RenderPassEncoder {
         check(this.encoder == null) { "Render pass encoder is already active" }
@@ -71,6 +74,39 @@ internal class RenderPassEncoder(
         RenderSystem.bindDefaultUniforms(pass)
     }
 
+    override fun onClear(
+        target: VulkanRenderTarget?,
+        color: Boolean,
+        red: Float,
+        green: Float,
+        blue: Float,
+        alpha: Float,
+        depth: Boolean,
+        depthValue: Double
+    ) {
+        currentPass?.close()
+        currentPass = null
+        currentProgram = null
+        val commandEncoder = checkNotNull(encoder)
+        val colorTexture = if (target != null) {
+            target.gpuTexture
+        } else {
+            Minecraft.getInstance().gameRenderer.mainRenderTarget().colorTexture
+        }
+        val depthTexture = if (target != null) {
+            target.gpuDepthTexture
+        } else {
+            Minecraft.getInstance().gameRenderer.mainRenderTarget().depthTexture
+        }
+        if (color) clearColor.set(red, green, blue, alpha)
+        when {
+            color && depth && depthTexture != null ->
+                commandEncoder.clearColorAndDepthTextures(requireNotNull(colorTexture), clearColor, depthTexture, depthValue)
+            color -> commandEncoder.clearColorTexture(requireNotNull(colorTexture), clearColor)
+            depth && depthTexture != null -> commandEncoder.clearDepthTexture(depthTexture, depthValue)
+        }
+    }
+
     override fun onPipelineChanged(
         program: Program,
         topology: PrimitiveTopology,
@@ -113,6 +149,11 @@ internal class RenderPassEncoder(
         }
     }
 
+    override fun onScissorChanged(enabled: Boolean, x: Int, y: Int, width: Int, height: Int) {
+        val pass = currentPass ?: return
+        if (enabled) pass.enableScissor(x, y, width, height) else pass.disableScissor()
+    }
+
     override fun onDraw(topology: PrimitiveTopology, vertexStart: Long, vertexBytes: Long, vertexCount: Int) {
         val pass = currentPass ?: return
         pass.setVertexBuffer(0, vertexBuffer.slice(vertexStart, vertexBytes))
@@ -131,6 +172,29 @@ internal class RenderPassEncoder(
             pass.drawIndexed(indexCount, 1, 0, 0, 0)
         } else {
             pass.draw(vertexCount, 1, 0, 0)
+        }
+    }
+
+    override fun onDirectDraw(draw: DrawCall, topology: PrimitiveTopology) {
+        val pass = currentPass ?: return
+        val bindings = requireNotNull(draw.vertexBindings)
+        val program = requireNotNull(draw.program)
+        for (binding in 0 until program.layouts.size()) {
+            val buffer = requireNotNull(bindings.buffers[binding]) { "Vertex binding $binding is not set" }
+            buffer.requireOpen()
+            val offset = bindings.offsets[binding]
+            pass.setVertexBuffer(binding, buffer.gpuBuffer.slice(offset, buffer.sizeBytes - offset))
+        }
+        if (draw.indexed) {
+            val indices = requireNotNull(draw.indexBuffer) { "Index buffer is not bound" }
+            indices.requireOpen()
+            pass.setIndexBuffer(
+                indices.gpuBuffer,
+                if (indices.indexType == IndexType.UINT16) MinecraftIndexType.SHORT else MinecraftIndexType.INT
+            )
+            pass.drawIndexed(draw.vertexCount, draw.instanceCount, draw.firstIndex, draw.baseVertex, draw.firstInstance)
+        } else {
+            pass.draw(draw.vertexCount, draw.instanceCount, draw.firstVertex, draw.firstInstance)
         }
     }
 

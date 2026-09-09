@@ -22,6 +22,7 @@ import sweetie.evaware.luma.api.BlendOp
 import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.uniform.*
 import sweetie.evaware.luma.vertex.VertexLayout
+import sweetie.evaware.luma.vertex.VertexInputLayout
 
 class LumaShaderSource(
     val vertexCode: String,
@@ -37,9 +38,18 @@ class Program(
     val id: Identifier,
     val vertexSource: String,
     val fragmentSource: String,
-    val layout: VertexLayout,
+    val layouts: VertexInputLayout,
     private val scheduleClose: ((() -> Unit) -> Unit) = { action -> action() }
 ) : ProgramHandle {
+    constructor(
+        id: Identifier,
+        vertexSource: String,
+        fragmentSource: String,
+        layout: VertexLayout,
+        scheduleClose: ((() -> Unit) -> Unit) = { action -> action() }
+    ) : this(id, vertexSource, fragmentSource, VertexInputLayout().binding(layout), scheduleClose)
+
+    val layout = layouts.layout(0)
     private val shaderSource = LumaShaderSource(vertexSource, fragmentSource)
     private var pipelineKeys = LongArray(4)
     private var pipelines = arrayOfNulls<RenderPipeline>(4)
@@ -109,7 +119,6 @@ class Program(
         }
 
         val pipeline = run {
-            val fmt = convertLayout(layout, attributeNames)
             val layoutBuilder = BindGroupLayout.builder()
             if (uniformInfos.isNotEmpty()) {
                 layoutBuilder.withUniform(LumaNames.UNIFORMS_BLOCK, UniformType.UNIFORM_BUFFER)
@@ -128,7 +137,6 @@ class Program(
                 .withLocation(id)
                 .withVertexShader(id)
                 .withFragmentShader(id)
-                .withVertexBinding(0, fmt)
                 .withBindGroupLayout(bindGroupLayout)
                 .withCull(cullEnabled)
                 .withDepthStencilState(
@@ -136,10 +144,17 @@ class Program(
                 )
                 .withColorTargetState(if (blendEnabled) ColorTargetState(blendFunction.toMinecraft()) else ColorTargetState.DEFAULT)
                 .withPrimitiveTopology(topology)
-                .build()
 
-            compile(device, pipelineBuilder)
-            pipelineBuilder
+            for (binding in 0 until layouts.size()) {
+                pipelineBuilder.withVertexBinding(
+                    binding,
+                    convertLayout(layouts.layout(binding), attributeNames, layouts.stepRate(binding))
+                )
+            }
+
+            val built = pipelineBuilder.build()
+            compile(device, built)
+            built
         }
 
         if (pipelineCount == pipelines.size) {

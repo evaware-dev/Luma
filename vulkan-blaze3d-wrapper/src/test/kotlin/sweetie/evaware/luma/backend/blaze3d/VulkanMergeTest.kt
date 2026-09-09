@@ -130,6 +130,17 @@ class VulkanMergeTest {
             targetChanges.add(target to clearColor)
         }
 
+        override fun onClear(
+            target: VulkanRenderTarget?,
+            color: Boolean,
+            red: Float,
+            green: Float,
+            blue: Float,
+            alpha: Float,
+            depth: Boolean,
+            depthValue: Double
+        ) {}
+
         override fun onPipelineChanged(
             program: Program,
             topology: PrimitiveTopology,
@@ -153,8 +164,14 @@ class VulkanMergeTest {
             textureChanges.add(program to textures[0])
         }
 
+        override fun onScissorChanged(enabled: Boolean, x: Int, y: Int, width: Int, height: Int) {}
+
         override fun onDraw(topology: PrimitiveTopology, vertexStart: Long, vertexBytes: Long, vertexCount: Int) {
             draws.add(DrawParams(topology, vertexStart, vertexBytes, vertexCount))
+        }
+
+        override fun onDirectDraw(draw: DrawCall, topology: PrimitiveTopology) {
+            draws.add(DrawParams(topology, draw.firstVertex.toLong(), 0L, draw.vertexCount))
         }
     }
 

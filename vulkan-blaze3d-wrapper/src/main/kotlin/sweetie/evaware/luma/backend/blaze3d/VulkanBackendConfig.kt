@@ -5,6 +5,7 @@ data class VulkanBackendConfig(
     val initialUniformBufferBytes: Int = 1 shl 8,
     val initialVertexStagingBytes: Int = 1 shl 20,
     val initialUniformStagingBytes: Int = 1 shl 16,
+    val initialBufferUploadBytes: Int = 1 shl 16,
     val uniformScratchBytes: Int = 1 shl 8,
     val maxPooledUploadBytes: Long = 64L shl 20,
     val precompileDefaultPipeline: Boolean = true
@@ -14,6 +15,7 @@ data class VulkanBackendConfig(
         require(initialUniformBufferBytes > 0) { "Initial uniform buffer capacity must be positive" }
         require(initialVertexStagingBytes > 0) { "Initial vertex staging capacity must be positive" }
         require(initialUniformStagingBytes > 0) { "Initial uniform staging capacity must be positive" }
+        require(initialBufferUploadBytes > 0) { "Initial buffer upload capacity must be positive" }
         require(uniformScratchBytes > 0) { "Uniform scratch capacity must be positive" }
         require(maxPooledUploadBytes >= 0) { "Upload pool capacity must be non-negative" }
     }

@@ -14,15 +14,14 @@ class GlRenderTarget(
     override val width: Int,
     override val height: Int,
     val color: GlTexture,
-    private val depthRenderbuffer: Int
+    val depth: GlTexture?
 ) : RenderTargetHandle {
     override val colorTexture: TextureHandle get() = color
+    override val depthTexture: TextureHandle? get() = depth
 
     override fun close() {
         GL30.glDeleteFramebuffers(fbo)
-        if (depthRenderbuffer != 0) {
-            GL30.glDeleteRenderbuffers(depthRenderbuffer)
-        }
+        depth?.close()
         color.close()
     }
 
@@ -44,7 +43,6 @@ class GlRenderTarget(
             val previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
             val previousDrawFramebuffer = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING)
             val previousReadFramebuffer = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING)
-            val previousRenderbuffer = GL11.glGetInteger(GL30.GL_RENDERBUFFER_BINDING)
             val internalFormat = when (format) {
                 RenderTargetFormat.RGBA8 -> GL11.GL_RGBA8
                 RenderTargetFormat.RGBA16F -> GL30.GL_RGBA16F
@@ -56,7 +54,7 @@ class GlRenderTarget(
 
             var textureId = 0
             var fboId = 0
-            var depthRenderbuffer = 0
+            var depthTextureId = 0
             try {
                 textureId = GL11.glGenTextures()
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
@@ -80,27 +78,34 @@ class GlRenderTarget(
                 )
 
                 if (useDepth) {
-                    depthRenderbuffer = GL30.glGenRenderbuffers()
-                    GL30.glBindRenderbuffer(GL30.GL_RENDERBUFFER, depthRenderbuffer)
-                    GL30.glRenderbufferStorage(GL30.GL_RENDERBUFFER, GL14.GL_DEPTH_COMPONENT24, width, height)
-                    GL30.glFramebufferRenderbuffer(
-                        GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT, GL30.GL_RENDERBUFFER, depthRenderbuffer
+                    depthTextureId = GL11.glGenTextures()
+                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, depthTextureId)
+                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST)
+                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST)
+                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL14.GL_CLAMP_TO_EDGE)
+                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL14.GL_CLAMP_TO_EDGE)
+                    GL11.glTexImage2D(
+                        GL11.GL_TEXTURE_2D, 0, GL14.GL_DEPTH_COMPONENT24, width, height, 0,
+                        GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, null as ByteBuffer?
+                    )
+                    GL30.glFramebufferTexture2D(
+                        GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT, GL11.GL_TEXTURE_2D, depthTextureId, 0
                     )
                 }
 
                 val status = GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER)
                 if (status != GL30.GL_FRAMEBUFFER_COMPLETE) {
-                    if (depthRenderbuffer != 0) GL30.glDeleteRenderbuffers(depthRenderbuffer)
+                    if (depthTextureId != 0) GL11.glDeleteTextures(depthTextureId)
                     GL30.glDeleteFramebuffers(fboId)
                     GL11.glDeleteTextures(textureId)
                     error("Framebuffer status error: " + Integer.toString(status, 16))
                 }
 
                 val glTexture = GlTexture(textureId, width, height)
-                return GlRenderTarget(fboId, width, height, glTexture, depthRenderbuffer)
+                val glDepth = depthTextureId.takeIf { it != 0 }?.let { GlTexture(it, width, height) }
+                return GlRenderTarget(fboId, width, height, glTexture, glDepth)
             } finally {
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture)
-                GL30.glBindRenderbuffer(GL30.GL_RENDERBUFFER, previousRenderbuffer)
                 GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, previousDrawFramebuffer)
                 GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, previousReadFramebuffer)
             }

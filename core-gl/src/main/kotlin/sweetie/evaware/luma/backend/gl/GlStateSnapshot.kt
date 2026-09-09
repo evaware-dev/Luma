@@ -23,6 +23,10 @@ class GlStateSnapshot {
     var activeTexture = 0
     var arrayBuffer = 0
     var scissorEnabled = false
+    var scissorX = 0
+    var scissorY = 0
+    var scissorWidth = 0
+    var scissorHeight = 0
     var colorMaskRed = true
     var colorMaskGreen = true
     var colorMaskBlue = true
