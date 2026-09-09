@@ -1,9 +1,13 @@
 package sweetie.evaware.luma.tools
 
 import java.awt.image.BufferedImage
+import java.nio.ByteBuffer
 import java.nio.FloatBuffer
 import sweetie.evaware.luma.api.BlendFunction
+import sweetie.evaware.luma.api.BufferUsage
 import sweetie.evaware.luma.api.DepthCompare
+import sweetie.evaware.luma.api.IndexBufferHandle
+import sweetie.evaware.luma.api.IndexType
 import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.api.RenderBackend
@@ -11,8 +15,10 @@ import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.api.VertexBufferHandle
 import sweetie.evaware.luma.uniform.ShaderUniforms
 import sweetie.evaware.luma.vertex.VertexLayout
+import sweetie.evaware.luma.vertex.VertexInputLayout
 
 class StatsBackend(
     val delegate: RenderBackend
@@ -60,6 +66,17 @@ class StatsBackend(
         return TrackedProgram(this, program, layout)
     }
 
+    override fun createProgram(
+        vertexSource: String,
+        fragmentSource: String,
+        layouts: VertexInputLayout
+    ): ProgramHandle {
+        val program = delegate.createProgram(vertexSource, fragmentSource, layouts)
+        countFrame(FrameStats::programCreated)
+        lifetime.programsCreated++
+        return TrackedProgram(this, program, null)
+    }
+
     override fun bindProgram(program: ProgramHandle) {
         delegate.bindProgram(program.unwrap())
     }
@@ -92,6 +109,23 @@ class StatsBackend(
         if (frameActive) currentFrame.textureBind(changed)
     }
 
+    override fun createVertexBuffer(sizeBytes: Long, usage: BufferUsage) =
+        delegate.createVertexBuffer(sizeBytes, usage)
+
+    override fun createIndexBuffer(sizeBytes: Long, indexType: IndexType, usage: BufferUsage) =
+        delegate.createIndexBuffer(sizeBytes, indexType, usage)
+
+    override fun updateVertexBuffer(buffer: VertexBufferHandle, offsetBytes: Long, data: ByteBuffer) =
+        delegate.updateVertexBuffer(buffer, offsetBytes, data)
+
+    override fun updateIndexBuffer(buffer: IndexBufferHandle, offsetBytes: Long, data: ByteBuffer) =
+        delegate.updateIndexBuffer(buffer, offsetBytes, data)
+
+    override fun bindVertexBuffer(binding: Int, buffer: VertexBufferHandle, offsetBytes: Long) =
+        delegate.bindVertexBuffer(binding, buffer, offsetBytes)
+
+    override fun bindIndexBuffer(buffer: IndexBufferHandle) = delegate.bindIndexBuffer(buffer)
+
     override fun draw(
         program: ProgramHandle,
         vertices: FloatBuffer,
@@ -101,7 +135,7 @@ class StatsBackend(
     ) {
         val tracked = (program as? TrackedProgram)?.takeIf { it.owner === this }
             ?: throw IllegalArgumentException("Program was not created by this StatsBackend")
-        val layout = tracked.layout
+        val layout = requireNotNull(tracked.layout) { "Streaming draw requires a single vertex layout" }
         val instances = if (layout.instanced) vertexCount.toLong() else 0L
         val submittedVertices = if (layout.instanced) {
             layout.baseVertexCount.toLong() * vertexCount.toLong()
@@ -116,6 +150,64 @@ class StatsBackend(
         if (frameActive) currentFrame.draw(submittedVertices, instances, primitives, programChanged)
         lifetime.drawCalls++
         lifetime.vertices += submittedVertices
+        lifetime.instances += instances
+        lifetime.primitives += primitives
+    }
+
+    override fun draw(
+        program: ProgramHandle,
+        uniforms: ShaderUniforms,
+        primitiveType: PrimitiveType,
+        firstVertex: Int,
+        vertexCount: Int,
+        instanceCount: Int,
+        firstInstance: Int
+    ) {
+        val tracked = program.tracked()
+        delegate.draw(
+            tracked.delegate, uniforms, primitiveType, firstVertex, vertexCount, instanceCount, firstInstance
+        )
+        countDirectDraw(tracked, primitiveType, vertexCount, instanceCount)
+    }
+
+    override fun drawIndexed(
+        program: ProgramHandle,
+        uniforms: ShaderUniforms,
+        primitiveType: PrimitiveType,
+        firstIndex: Int,
+        indexCount: Int,
+        vertexOffset: Int,
+        instanceCount: Int,
+        firstInstance: Int
+    ) {
+        val tracked = program.tracked()
+        delegate.drawIndexed(
+            tracked.delegate,
+            uniforms,
+            primitiveType,
+            firstIndex,
+            indexCount,
+            vertexOffset,
+            instanceCount,
+            firstInstance
+        )
+        countDirectDraw(tracked, primitiveType, indexCount, instanceCount)
+    }
+
+    private fun countDirectDraw(
+        program: TrackedProgram,
+        primitiveType: PrimitiveType,
+        elementCount: Int,
+        instanceCount: Int
+    ) {
+        val submitted = elementCount.toLong() * instanceCount
+        val instances = if (instanceCount > 1) instanceCount.toLong() else 0L
+        val primitives = primitiveCount(primitiveType, submitted)
+        val programChanged = lastDrawProgram !== program
+        lastDrawProgram = program
+        if (frameActive) currentFrame.draw(submitted, instances, primitives, programChanged)
+        lifetime.drawCalls++
+        lifetime.vertices += submitted
         lifetime.instances += instances
         lifetime.primitives += primitives
     }
@@ -161,6 +253,15 @@ class StatsBackend(
 
     override fun cull(enabled: Boolean) = delegate.cull(enabled)
 
+    override fun scissor(x: Int, y: Int, width: Int, height: Int) = delegate.scissor(x, y, width, height)
+
+    override fun disableScissor() = delegate.disableScissor()
+
+    override fun clearColor(red: Float, green: Float, blue: Float, alpha: Float) =
+        delegate.clearColor(red, green, blue, alpha)
+
+    override fun clearDepth(depth: Double) = delegate.clearDepth(depth)
+
     override fun close() = delegate.close()
 
     override fun hasContext(): Boolean = delegate.hasContext()
@@ -185,6 +286,10 @@ class StatsBackend(
         return delegate
     }
 
+    private fun ProgramHandle.tracked(): TrackedProgram =
+        (this as? TrackedProgram)?.takeIf { it.owner === this@StatsBackend }
+            ?: throw IllegalArgumentException("Program was not created by this StatsBackend")
+
     private fun primitiveCount(type: PrimitiveType, vertices: Long): Long = when (type) {
         PrimitiveType.TRIANGLES -> vertices / 3L
         PrimitiveType.LINES -> vertices / 2L
@@ -194,7 +299,7 @@ class StatsBackend(
     private class TrackedProgram(
         val owner: StatsBackend,
         val delegate: ProgramHandle,
-        val layout: VertexLayout
+        val layout: VertexLayout?
     ) : ProgramHandle {
         override fun close() = delegate.close()
     }
