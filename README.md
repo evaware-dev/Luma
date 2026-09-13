@@ -40,10 +40,10 @@ repositories {
 }
 
 dependencies {
-    implementation 'sweetie.evaware:api:VERSION'
-    implementation 'sweetie.evaware:core-gl:VERSION'
-    implementation 'sweetie.evaware:vulkan-blaze3d-wrapper:VERSION'
-    implementation 'sweetie.evaware:developer-tools:VERSION'
+    implementation 'sweetie.evaware.luma:api:VERSION'
+    implementation 'sweetie.evaware.luma:core-gl:VERSION'
+    implementation 'sweetie.evaware.luma:vulkan-blaze3d-wrapper:VERSION'
+    implementation 'sweetie.evaware.luma:developer-tools:VERSION'
 }
 ```
 
