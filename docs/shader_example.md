@@ -56,3 +56,8 @@ void main() {
     fragColor = texture(uTexture, vUv) * vColor;
 }
 ```
+
+## Backend Translation Notes
+
+- **Vulkan / SPIR-V (Blaze3D)**: Vertex attributes and varyings are assigned explicit `layout(location = ...)` indices. Built-in `gl_VertexID` is automatically rewritten to `gl_VertexIndex`, and `@uniforms` blocks are translated into `layout(std140, binding = ...)` uniform buffer blocks.
+- **OpenGL**: Directives are lowered into standard GLSL 330 core uniform blocks and vertex attribute bindings.
