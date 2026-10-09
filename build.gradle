@@ -1,7 +1,8 @@
 plugins {
-    id 'net.fabricmc.fabric-loom-remap' version "${loom_version}" apply false
-    id "org.jetbrains.kotlin.jvm" version "2.4.0" apply false
+    id 'net.fabricmc.fabric-loom-remap' apply false
+    id "org.jetbrains.kotlin.jvm" apply false
 }
+
 
 def jitPackBuild = System.getenv("JITPACK") == "true"
 def publishedGroup = jitPackBuild && System.getenv("GROUP") != null
@@ -11,59 +12,6 @@ def githubRepository = System.getenv("GITHUB_REPOSITORY")
 
 allprojects {
     ext.maven_group = publishedGroup
-}
-
-tasks.register("release") {
-    group = "publishing"
-    description = "Upload new version: update version, commit, tag, push"
-
-    doLast {
-        def newVersion = project.findProperty("newVersion")
-        if (newVersion == null || newVersion.toString().trim().isEmpty()) {
-            throw new GradleException("./gradlew release -PnewVersion=<version>")
-        }
-
-        def propertiesFile = file("gradle.properties")
-        def propertiesContent = propertiesFile.text
-        def updatedContent = propertiesContent.replaceAll("mod_version=.*", "mod_version=${newVersion}")
-        propertiesFile.text = updatedContent
-
-        println "Version updated to ${newVersion} in gradle.properties"
-
-        def git = { String... args ->
-            def process = new ProcessBuilder(["git"] + args.toList())
-                .directory(project.projectDir)
-                .start()
-            def output = process.inputStream.text.trim()
-            def errorOutput = process.errorStream.text.trim()
-            def exitCode = process.waitFor()
-            if (exitCode != 0 && args[0] != "tag") {
-                throw new GradleException("Error: git ${args.join(' ')}\nStdout: ${output}\nStderr: ${errorOutput}")
-            }
-            return output
-        }
-
-        def status = git("status", "--porcelain")
-        if (!status.isEmpty()) {
-            println "Saving changes"
-            git("add", "gradle.properties")
-            git("commit", "-m", "Update ${newVersion}")
-        }
-
-        println "Creating tag v${newVersion}..."
-        try {
-            git("tag", "-d", "v${newVersion}")
-        } catch (Exception e) {}
-        git("tag", "-a", "v${newVersion}", "-m", "Update ${newVersion}")
-
-        println "Pushing to repository..."
-        def branch = git("branch", "--show-current")
-        git("push", "origin", branch)
-        git("push", "-f", "origin", "v${newVersion}")
-
-        println "\nRelease completed successfully!"
-        println "Upload package will trigger automatically in GitHub Actions."
-    }
 }
 
 subprojects {
