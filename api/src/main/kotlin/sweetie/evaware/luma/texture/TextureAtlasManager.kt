@@ -39,11 +39,17 @@ object TextureAtlasManager : Preparable, AutoCloseable {
     fun ids(): Set<String> = LinkedHashSet(atlases.keys)
 
     override fun prepare() {
-        atlasSnapshot.forEach(TextureAtlas::prepare)
+        val snapshot = atlasSnapshot
+        for (index in snapshot.indices) {
+            snapshot[index].prepare()
+        }
     }
 
     fun processPending() {
-        atlasSnapshot.forEach(TextureAtlas::processPending)
+        val snapshot = atlasSnapshot
+        for (index in snapshot.indices) {
+            snapshot[index].processPending()
+        }
     }
 
     fun remove(id: String, close: Boolean = true): TextureAtlas? {

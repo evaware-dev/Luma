@@ -50,9 +50,16 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
     }
 
     fun upload(vertices: FloatBuffer) {
+        val limit = vertices.limit()
         vertices.position(0)
-        GL15.glBufferData(GL15.GL_ARRAY_BUFFER, vertices, GL15.GL_STREAM_DRAW)
-        capacityFloats = vertices.limit()
+        if (limit <= capacityFloats) {
+            GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, 0L, vertices)
+        } else {
+            val newCapacity = maxOf(limit, capacityFloats * 2, 1024)
+            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, newCapacity.toLong() * Float.SIZE_BYTES, GL15.GL_STREAM_DRAW)
+            GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, 0L, vertices)
+            capacityFloats = newCapacity
+        }
     }
 
     fun bindQuadIndices(vertexCount: Int): Int {

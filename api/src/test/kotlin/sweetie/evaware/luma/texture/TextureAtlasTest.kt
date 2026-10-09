@@ -168,4 +168,31 @@ class TextureAtlasTest {
         assertEquals(2, mock.createdTextures)
         assertEquals(1, mock.textureUpdates)
     }
+
+    @Test
+    fun testEmptyAtlasDoesNotCreateTextures() {
+        val mock = MockBackend()
+        Luma.backend = mock
+
+        atlas.prepare()
+
+        assertEquals(0, mock.createdTextures)
+        assertEquals(null, mock.lastCreatedImage)
+    }
+
+    @Test
+    fun testWhiteFallbackIsOneByOne() {
+        val mock = MockBackend()
+        Luma.backend = mock
+
+        atlas.prepare()
+        assertEquals(0, mock.createdTextures)
+
+        val texture = atlas.texture()
+        assertEquals(1, mock.createdTextures)
+        assertEquals(1, texture.width)
+        assertEquals(1, texture.height)
+        assertEquals(1, mock.lastCreatedImage?.width)
+        assertEquals(1, mock.lastCreatedImage?.height)
+    }
 }

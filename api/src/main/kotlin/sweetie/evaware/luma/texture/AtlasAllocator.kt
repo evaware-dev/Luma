@@ -12,8 +12,9 @@ internal class ShelfAtlasAllocator(private val padding: Int) : AtlasAllocator {
     private var rowHeight = 0
 
     override fun allocate(width: Int, height: Int, atlasSize: TextureAtlasSize): AtlasAllocation? {
-        val paddedWidth = width + padding
-        val paddedHeight = height + padding
+        val effectivePadding = if (width == atlasSize.width && height == atlasSize.height) 0 else padding
+        val paddedWidth = width + effectivePadding
+        val paddedHeight = height + effectivePadding
         if (paddedWidth > atlasSize.width || paddedHeight > atlasSize.height) return null
 
         var nextX = cursorX

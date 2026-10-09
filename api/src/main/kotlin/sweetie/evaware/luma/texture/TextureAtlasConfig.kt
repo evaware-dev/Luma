@@ -59,7 +59,7 @@ data class TextureAtlasConfig(
     }
 
     companion object {
-        const val DEFAULT_INITIAL_SIZE = 256
+        const val DEFAULT_INITIAL_SIZE = 1
         const val DEFAULT_MAXIMUM_SIZE = 16384
         const val DEFAULT_PADDING = 2
     }

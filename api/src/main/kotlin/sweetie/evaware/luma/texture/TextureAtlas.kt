@@ -1,6 +1,7 @@
 package sweetie.evaware.luma.texture
 
 import sweetie.evaware.luma.Luma
+import sweetie.evaware.luma.LumaNames
 import sweetie.evaware.luma.api.Preparable
 import java.awt.image.BufferedImage
 import java.awt.image.DataBufferInt
@@ -87,9 +88,11 @@ class TextureAtlas(
     @Synchronized
     override fun prepare() {
         if (isPrepared) return
-        ensureWhiteSource()
-        val work = loadPending(sortByHeight = backingImage == null)
-        apply(work, recreateTexture = true)
+        if (pending.isNotEmpty()) {
+            ensureWhiteSource()
+            val work = loadPending(sortByHeight = backingImage == null)
+            apply(work, recreateTexture = true)
+        }
         isPrepared = true
     }
 
@@ -97,11 +100,21 @@ class TextureAtlas(
         if (!isPrepared || !hasPending) return
         synchronized(this) {
             if (!isPrepared || !hasPending) return
-            apply(loadPending(sortByHeight = false), recreateTexture = false)
+            ensureWhiteSource()
+            val initial = backingImage == null
+            apply(loadPending(sortByHeight = initial), recreateTexture = initial)
         }
     }
 
-    fun texture(): Texture = texture ?: error("Texture atlas is not prepared")
+    @Synchronized
+    fun texture(): Texture {
+        if (!isPrepared) error("Texture atlas is not prepared")
+        texture?.let { return it }
+        ensureWhiteSource()
+        val work = loadPending(sortByHeight = backingImage == null)
+        apply(work, recreateTexture = true)
+        return texture ?: error("Texture atlas has no texture")
+    }
 
     @Synchronized
     fun region(id: String): Region = regions[id] ?: error("Missing texture atlas region: $id")
@@ -126,9 +139,11 @@ class TextureAtlas(
     }
 
     private fun apply(sources: List<LoadedSource>, recreateTexture: Boolean) {
+        if (sources.isEmpty()) return
+        val onlyWhite = sources.size == 1 && sources[0].region.id == WHITE_ID
         var resized = ensureBackingImage(sources)
         for (source in sources) {
-            val allocation = allocate(source.image)
+            val allocation = allocate(source.image, onlyWhite)
             resized = resized || allocation.resized
             val position = allocation.allocation
             copy(source.image, position.x, position.y)
@@ -153,10 +168,11 @@ class TextureAtlas(
         }
     }
 
-    private fun allocate(image: BufferedImage): Placement {
+    private fun allocate(image: BufferedImage, onlyWhite: Boolean = false): Placement {
+        val pad = if (onlyWhite) 0 else config.padding
         val required = TextureAtlasSize(
-            image.width + config.padding,
-            image.height + config.padding
+            image.width + pad,
+            image.height + pad
         )
         var resized = false
         while (true) {
@@ -173,14 +189,16 @@ class TextureAtlas(
 
     private fun ensureBackingImage(sources: List<LoadedSource>): Boolean {
         if (backingImage != null) return false
-        var target = config.initialSize
+        val onlyWhite = sources.isEmpty() || (sources.size == 1 && sources[0].region.id == WHITE_ID)
+        var target = if (onlyWhite) TextureAtlasSize(1, 1) else config.initialSize
+        val padding = if (onlyWhite) 0 else config.padding
         val required = TextureAtlasSize(
-            maxOf(target.width, sources.maxOfOrNull { it.image.width + config.padding } ?: 1),
-            maxOf(target.height, sources.maxOfOrNull { it.image.height + config.padding } ?: 1)
+            maxOf(target.width, sources.maxOfOrNull { it.image.width + padding } ?: 1),
+            maxOf(target.height, sources.maxOfOrNull { it.image.height + padding } ?: 1)
         )
         val requiredArea = sources.sumOf { source ->
-            (source.image.width + config.padding).toLong() *
-                (source.image.height + config.padding).toLong()
+            (source.image.width + padding).toLong() *
+                (source.image.height + padding).toLong()
         }
         while (
             target.width < required.width ||
@@ -246,6 +264,6 @@ class TextureAtlas(
     }
 
     companion object {
-        private const val WHITE_ID = "luma:white"
+        private const val WHITE_ID = LumaNames.WHITE_TEXTURE_ID
     }
 }

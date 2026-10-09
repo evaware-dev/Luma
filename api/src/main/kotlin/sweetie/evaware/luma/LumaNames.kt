@@ -1,6 +1,10 @@
 package sweetie.evaware.luma
 
 object LumaNames {
+    const val NAMESPACE = "luma"
+    const val OPENGL_BACKEND_NAME = "OpenGL"
+    const val WHITE_TEXTURE_ID = "$NAMESPACE:white"
+
     const val VERTEX_BUFFER = "luma_vertex_buffer"
     const val UBO_BUFFER = "luma_ubo_buffer"
     const val RENDER_PASS = "luma_draw"
