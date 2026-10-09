@@ -13,6 +13,8 @@ import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.backend.blaze3d.Backend
 import sweetie.evaware.luma.backend.blaze3d.VulkanRenderTarget
+import sweetie.evaware.luma.backend.blaze3d.preset.Blaze3dPreset
+import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPresets
 import sweetie.evaware.luma.shader.Shader
 import sweetie.evaware.luma.shader.translator.DefaultShaderTranslator
 import sweetie.evaware.luma.shader.translator.ShaderTarget
@@ -48,7 +50,9 @@ open class VulkanTestApp : BackendTestApp(64, 64, "Luma Vulkan") {
         rendererInitialized = true
 
         println("[Info] Blaze3D device: ${device.deviceInfo}")
-        backend = Backend()
+        val preset = Blaze3dPreset()
+        VulkanPresets.active = preset
+        backend = Backend(preset)
         Luma.backend = backend
         Luma.shaderTranslator = DefaultShaderTranslator(ShaderTarget.BLAZE3D)
         shader = Shader("shaders/triangle.frag", "shaders/triangle.vert")
@@ -127,7 +131,7 @@ open class VulkanTestApp : BackendTestApp(64, 64, "Luma Vulkan") {
         )
         try {
             val encoder = device.createCommandEncoder()
-            encoder.copyTextureToBuffer(target.gpuTexture, readback, 0, {}, 0)
+            encoder.copyTextureToBuffer(target.gpuTexture.unwrap(), readback, 0, {}, 0)
             val fence = encoder.createFence()
             try {
                 encoder.submit()

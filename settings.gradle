@@ -7,6 +7,11 @@ pluginManagement {
 		mavenCentral()
 		gradlePluginPortal()
 	}
+	plugins {
+		id 'net.fabricmc.fabric-loom' version '1.17-SNAPSHOT'
+		id 'net.fabricmc.fabric-loom-remap' version '1.17-SNAPSHOT'
+		id 'org.jetbrains.kotlin.jvm' version '2.4.0'
+	}
 }
 
 rootProject.name = 'Luma'
@@ -15,8 +20,10 @@ include 'api'
 include 'core-gl'
 include 'vulkan-blaze3d-wrapper'
 include 'shader-translator'
-include 'minecraft-render-library'
-include 'minecraft-implementation'
+include 'minecraft-render-library:minecraft-26.2'
+include 'minecraft-render-library:minecraft-26.3'
+include 'minecraft-implementation:26.2'
+include 'minecraft-implementation:26.3'
 include 'developer-tools'
 include 'standalone-app'
 include 'benchmarks'

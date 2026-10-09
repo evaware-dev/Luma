@@ -1,0 +1,93 @@
+plugins {
+    id 'net.fabricmc.fabric-loom'
+    id 'org.jetbrains.kotlin.jvm'
+}
+
+def minecraft_version = "26.3"
+def loader_version = "0.19.5"
+def fabric_api_version = "0.162.0+26.3"
+def fabric_kotlin_version = "1.13.12+kotlin.2.4.0"
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = "minecraft-implementation-26.3"
+}
+
+loom {
+    runs {
+        client {
+            programArgs "--graphicsBackend", "vulkan"
+        }
+    }
+}
+
+sourceSets {
+    main {
+        kotlin {
+            srcDir "../common/src/main/kotlin"
+        }
+        resources {
+            srcDir "../common/src/main/resources"
+        }
+    }
+    test {
+        kotlin {
+            srcDir "../common/src/test/kotlin"
+        }
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+
+    implementation "net.fabricmc:fabric-loader:${loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${fabric_api_version}"
+    implementation "net.fabricmc:fabric-language-kotlin:${fabric_kotlin_version}"
+
+    implementation project(":minecraft-render-library:minecraft-26.3")
+    testImplementation project(":shader-translator")
+    testImplementation project(":vulkan-blaze3d-wrapper")
+    testImplementation "org.jetbrains.kotlin:kotlin-test"
+}
+
+tasks.named("test") {
+    useJUnitPlatform()
+}
+
+processResources {
+    inputs.property "version", project.version
+
+    filesMatching("fabric.mod.json") {
+        expand "version": inputs.properties.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 25
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_25
+    }
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
+
+jar {
+    inputs.property "archivesName", project.base.archivesName
+
+    from("LICENSE") {
+        rename { "${it}_${inputs.properties.archivesName}"}
+    }
+}

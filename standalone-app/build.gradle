@@ -3,17 +3,20 @@ plugins {
     id 'org.jetbrains.kotlin.jvm'
 }
 
+def minecraft_version = "26.2"
+
 repositories {
     mavenCentral()
 }
 
 dependencies {
-    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    minecraft "com.mojang:minecraft:${minecraft_version}"
 
     implementation project(":api")
     implementation project(":core-gl")
     implementation project(":shader-translator")
     implementation project(":vulkan-blaze3d-wrapper")
+    implementation project(":minecraft-render-library:minecraft-26.2")
 
     def osName = System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT)
     def osArch = System.getProperty("os.arch").toLowerCase(java.util.Locale.ROOT)

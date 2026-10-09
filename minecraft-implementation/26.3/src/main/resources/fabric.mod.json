@@ -1,0 +1,31 @@
+{
+	"schemaVersion": 1,
+	"id": "luma",
+	"version": "${version}",
+	"name": "Luma Renderer",
+	"description": "OpenGL wrapper",
+	"authors": [
+		"Remila"
+	],
+	"license": "MIT",
+	"icon": "assets/luma/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			{
+				"value": "sweetie.evaware.LumaRenderer",
+				"adapter": "kotlin"
+			}
+		]
+	},
+	"mixins": [
+		"luma.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*",
+		"fabric-language-kotlin": "*"
+	}
+}
