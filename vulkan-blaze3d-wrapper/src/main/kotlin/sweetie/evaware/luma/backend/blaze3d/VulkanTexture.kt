@@ -1,22 +1,22 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import com.mojang.blaze3d.GpuFormat
-import com.mojang.blaze3d.systems.RenderSystem
-import com.mojang.blaze3d.textures.AddressMode
-import com.mojang.blaze3d.textures.FilterMode
-import com.mojang.blaze3d.textures.GpuSampler
-import com.mojang.blaze3d.textures.GpuTexture
-import com.mojang.blaze3d.textures.GpuTextureView
 import java.awt.image.BufferedImage
-import java.util.OptionalDouble
 import sweetie.evaware.luma.LumaNames
 import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetAddressMode
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetFilterMode
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetFormat
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuSampler
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuTexture
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuTextureView
+import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPreset
+import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPresets
 
 class VulkanTexture internal constructor(
-    val gpuTexture: GpuTexture,
-    val view: GpuTextureView,
-    val sampler: GpuSampler,
+    val gpuTexture: PresetGpuTexture,
+    val view: PresetGpuTextureView,
+    val sampler: PresetGpuSampler,
     override val width: Int,
     override val height: Int,
     private val uploads: TextureUploadQueue?,
@@ -44,25 +44,27 @@ class VulkanTexture internal constructor(
     }
 
     companion object {
-        fun borrow(view: GpuTextureView, filter: RenderTargetFilter): VulkanTexture {
-            val gpuFilter = when (filter) {
-                RenderTargetFilter.NEAREST -> FilterMode.NEAREST
-                RenderTargetFilter.LINEAR -> FilterMode.LINEAR
+        fun borrow(
+            view: Any,
+            filter: RenderTargetFilter = RenderTargetFilter.NEAREST,
+            preset: VulkanPreset = VulkanPresets.active
+        ): VulkanTexture {
+            val wrapped = preset.wrapTextureView(view)
+            val presetFilter = when (filter) {
+                RenderTargetFilter.NEAREST -> PresetFilterMode.NEAREST
+                RenderTargetFilter.LINEAR -> PresetFilterMode.LINEAR
             }
-            val sampler = RenderSystem.getDevice().createSampler(
-                AddressMode.CLAMP_TO_EDGE,
-                AddressMode.CLAMP_TO_EDGE,
-                gpuFilter,
-                gpuFilter,
-                1,
-                OptionalDouble.empty()
+            val sampler = preset.createSampler(
+                PresetAddressMode.CLAMP_TO_EDGE,
+                presetFilter,
+                1
             )
             return VulkanTexture(
-                view.texture(),
-                view,
+                wrapped.texture,
+                wrapped,
                 sampler,
-                view.getWidth(0),
-                view.getHeight(0),
+                wrapped.getWidth(0),
+                wrapped.getHeight(0),
                 null,
                 false,
                 false,
@@ -70,32 +72,31 @@ class VulkanTexture internal constructor(
             )
         }
 
-        internal fun create(image: BufferedImage, sampler: GpuSampler, uploads: TextureUploadQueue): VulkanTexture {
-            val device = RenderSystem.getDevice()
+        internal fun create(
+            image: BufferedImage,
+            sampler: PresetGpuSampler,
+            uploads: TextureUploadQueue,
+            preset: VulkanPreset = VulkanPresets.active
+        ): VulkanTexture {
             val w = image.width
             val h = image.height
-            val format = GpuFormat.RGBA8_UNORM
+            val format = PresetFormat.RGBA8_UNORM
 
-            var texture: GpuTexture? = null
-            var view: GpuTextureView? = null
+            val texture = preset.createTexture(
+                { LumaNames.TEXTURE },
+                5,
+                format,
+                w,
+                h
+            )
+            var view: PresetGpuTextureView? = null
             try {
-                texture = device.createTexture(
-                    { LumaNames.TEXTURE },
-                    GpuTexture.USAGE_COPY_DST or GpuTexture.USAGE_TEXTURE_BINDING,
-                    format,
-                    w,
-                    h,
-                    1,
-                    1
-                )
-                view = device.createTextureView(texture)
-
+                view = preset.createTextureView(texture)
                 uploads.enqueue(texture, image, 0, 0)
-
                 return VulkanTexture(texture, view, sampler, w, h, uploads)
             } catch (t: Throwable) {
                 view?.close()
-                texture?.close()
+                texture.close()
                 throw t
             }
         }

@@ -1,8 +1,7 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import com.mojang.blaze3d.platform.CompareOp
-import com.mojang.blaze3d.systems.RenderPass
 import sweetie.evaware.luma.api.BlendFunction
+import sweetie.evaware.luma.api.DepthCompare
 import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.TextureHandle
 
@@ -13,13 +12,14 @@ internal class DrawCall {
     var vertexCount: Int = 0
     var uboOffset: Long = 0
     var uboBytes: Long = 0
-    var textures: Array<TextureHandle?> = NO_TEXTURES
+    val textures: Array<TextureHandle?> = arrayOfNulls(TEXTURE_UNITS)
+    var textureMask: Int = 0
     var primitiveType: PrimitiveType = PrimitiveType.TRIANGLES
     var blendEnabled: Boolean = true
     var blendFunction: BlendFunction = BlendFunction.TRANSLUCENT
     var depthEnabled: Boolean = false
     var depthWrite: Boolean = false
-    var depthFunc: CompareOp = CompareOp.ALWAYS_PASS
+    var depthFunc: DepthCompare = DepthCompare.ALWAYS
     var cullEnabled: Boolean = false
     var scissorEnabled = false
     var scissorX = 0
@@ -28,7 +28,9 @@ internal class DrawCall {
     var scissorHeight = 0
     var target: VulkanRenderTarget? = null
     var targetPassId: Int = 0
-    var vertexBindings: VertexBindingSnapshot? = null
+    val vertexBuffers: Array<VulkanVertexBuffer?> = arrayOfNulls(16)
+    val vertexOffsets: LongArray = LongArray(16)
+    var vertexBindingsMask: Int = 0
     var indexBuffer: VulkanIndexBuffer? = null
     var firstVertex = 0
     var firstIndex = 0
@@ -47,9 +49,16 @@ internal class DrawCall {
 
     fun releaseReferences() {
         program = null
-        textures = NO_TEXTURES
+        if (textureMask != 0) {
+            textures.fill(null)
+            textureMask = 0
+        }
+        if (vertexBindingsMask != 0) {
+            vertexBuffers.fill(null)
+            vertexOffsets.fill(0L)
+            vertexBindingsMask = 0
+        }
         target = null
-        vertexBindings = null
         indexBuffer = null
         direct = false
         indexed = false
@@ -60,16 +69,6 @@ internal class DrawCall {
     companion object {
         const val TEXTURE_UNITS = 16
         val NO_TEXTURES: Array<TextureHandle?> = arrayOfNulls(TEXTURE_UNITS)
-    }
-}
-
-internal class VertexBindingSnapshot {
-    val buffers = arrayOfNulls<VulkanVertexBuffer>(RenderPass.MAX_VERTEX_BUFFERS)
-    val offsets = LongArray(RenderPass.MAX_VERTEX_BUFFERS)
-
-    fun clear() {
-        buffers.fill(null)
-        offsets.fill(0L)
     }
 }
 

@@ -1,13 +1,11 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import com.mojang.blaze3d.PrimitiveTopology
-import com.mojang.blaze3d.platform.CompareOp
-import net.minecraft.resources.Identifier
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import sun.misc.Unsafe
 import sweetie.evaware.luma.api.BlendFunction
+import sweetie.evaware.luma.api.DepthCompare
 import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.vertex.VertexLayout
@@ -23,14 +21,14 @@ class VulkanMergeTest {
     private val layout = VertexLayout()
 
     private val program1 = Program(
-        Identifier.fromNamespaceAndPath("test", "shader1"),
+        "test:shader1",
         shaderSource,
         shaderSource,
         layout
     )
 
     private val program2 = Program(
-        Identifier.fromNamespaceAndPath("test", "shader2"),
+        "test:shader2",
         shaderSource,
         shaderSource,
         layout
@@ -65,7 +63,7 @@ class VulkanMergeTest {
         blendFunction: BlendFunction = BlendFunction.TRANSLUCENT,
         depthEnabled: Boolean = false,
         depthWrite: Boolean = false,
-        depthFunc: CompareOp = CompareOp.ALWAYS_PASS,
+        depthFunc: DepthCompare = DepthCompare.ALWAYS,
         cullEnabled: Boolean = false,
         target: VulkanRenderTarget? = null,
         targetPassId: Int = 0
@@ -77,10 +75,12 @@ class VulkanMergeTest {
         draw.vertexCount = vertexCount
         draw.uboOffset = uboOffset
         draw.uboBytes = uboBytes
-        draw.textures = if (texture == null) {
-            DrawCall.NO_TEXTURES
+        draw.textures.fill(null)
+        if (texture != null) {
+            draw.textures[0] = texture
+            draw.textureMask = 1
         } else {
-            arrayOfNulls<TextureHandle>(DrawCall.TEXTURE_UNITS).also { it[0] = texture }
+            draw.textureMask = 0
         }
         draw.primitiveType = primitiveType
         draw.blendEnabled = blendEnabled
@@ -109,17 +109,17 @@ class VulkanMergeTest {
 
         class PipelineParams(
             val program: Program,
-            val topology: PrimitiveTopology,
+            val topology: PrimitiveType,
             val blendEnabled: Boolean,
             val blendFunction: BlendFunction,
             val depthEnabled: Boolean,
             val depthWrite: Boolean,
-            val depthFunc: CompareOp,
+            val depthFunc: DepthCompare,
             val cullEnabled: Boolean
         )
 
         class DrawParams(
-            val topology: PrimitiveTopology,
+            val topology: PrimitiveType,
             val vertexStart: Long,
             val vertexBytes: Long,
             val vertexCount: Int
@@ -144,12 +144,12 @@ class VulkanMergeTest {
 
         override fun onPipelineChanged(
             program: Program,
-            topology: PrimitiveTopology,
+            topology: PrimitiveType,
             blendEnabled: Boolean,
             blendFunction: BlendFunction,
             depthEnabled: Boolean,
             depthWrite: Boolean,
-            depthFunc: CompareOp,
+            depthFunc: DepthCompare,
             cullEnabled: Boolean
         ) {
             pipelineChanges.add(
@@ -167,11 +167,11 @@ class VulkanMergeTest {
 
         override fun onScissorChanged(enabled: Boolean, x: Int, y: Int, width: Int, height: Int) {}
 
-        override fun onDraw(topology: PrimitiveTopology, vertexStart: Long, vertexBytes: Long, vertexCount: Int) {
+        override fun onDraw(topology: PrimitiveType, vertexStart: Long, vertexBytes: Long, vertexCount: Int) {
             draws.add(DrawParams(topology, vertexStart, vertexBytes, vertexCount))
         }
 
-        override fun onDirectDraw(draw: DrawCall, topology: PrimitiveTopology) {
+        override fun onDirectDraw(draw: DrawCall, topology: PrimitiveType) {
             draws.add(DrawParams(topology, draw.firstVertex.toLong(), 0L, draw.vertexCount))
         }
     }
@@ -200,7 +200,7 @@ class VulkanMergeTest {
         assertEquals(1, consumer.draws.size)
 
         val draw = consumer.draws[0]
-        assertEquals(PrimitiveTopology.QUADS, draw.topology)
+        assertEquals(PrimitiveType.QUADS, draw.topology)
         assertEquals(0L, draw.vertexStart)
         assertEquals(64L, draw.vertexBytes)
         assertEquals(4, draw.vertexCount)

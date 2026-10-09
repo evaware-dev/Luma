@@ -1,7 +1,7 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import com.mojang.blaze3d.platform.CompareOp
 import sweetie.evaware.luma.api.BlendFunction
+import sweetie.evaware.luma.api.DepthCompare
 
 internal class RenderStateTracker {
     var blendEnabled = true
@@ -12,7 +12,7 @@ internal class RenderStateTracker {
         private set
     var depthWrite = false
         private set
-    var depthFunc = CompareOp.ALWAYS_PASS
+    var depthFunc = DepthCompare.ALWAYS
         private set
     var cullEnabled = false
         private set
@@ -32,7 +32,7 @@ internal class RenderStateTracker {
         blendFunction = BlendFunction.TRANSLUCENT
         depthEnabled = false
         depthWrite = false
-        depthFunc = CompareOp.ALWAYS_PASS
+        depthFunc = DepthCompare.ALWAYS
         cullEnabled = false
         scissorEnabled = false
     }
@@ -53,7 +53,7 @@ internal class RenderStateTracker {
         depthWrite = enabled
     }
 
-    fun depthCompare(compare: CompareOp) {
+    fun depthCompare(compare: DepthCompare) {
         depthFunc = compare
     }
 

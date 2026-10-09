@@ -1,25 +1,25 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import com.mojang.blaze3d.systems.CommandEncoder
-import com.mojang.blaze3d.textures.GpuTexture
 import java.awt.image.BufferedImage
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import org.lwjgl.system.MemoryUtil
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetCommandEncoder
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuTexture
 import sweetie.evaware.luma.texture.RgbaTransferBuffer
 
 internal class TextureUploadQueue(
     private val maxPooledBytes: Long
 ) : AutoCloseable {
     private class Pending {
-        var texture: GpuTexture? = null
+        var texture: PresetGpuTexture? = null
         var buffer: ByteBuffer? = null
         var x = 0
         var y = 0
         var width = 0
         var height = 0
 
-        fun set(texture: GpuTexture, buffer: ByteBuffer, x: Int, y: Int, width: Int, height: Int): Pending {
+        fun set(texture: PresetGpuTexture, buffer: ByteBuffer, x: Int, y: Int, width: Int, height: Int): Pending {
             this.texture = texture
             this.buffer = buffer
             this.x = x
@@ -58,7 +58,7 @@ internal class TextureUploadQueue(
     private var closed = false
 
     @Synchronized
-    fun enqueue(texture: GpuTexture, image: BufferedImage, x: Int, y: Int) {
+    fun enqueue(texture: PresetGpuTexture, image: BufferedImage, x: Int, y: Int) {
         check(!closed) { "Texture upload queue is closed" }
         val buffer = acquire(Math.multiplyExact(Math.multiplyExact(image.width, image.height), 4))
         pending += obtainPending().set(
@@ -75,7 +75,7 @@ internal class TextureUploadQueue(
     fun hasPending(): Boolean = pending.isNotEmpty()
 
     @Synchronized
-    fun record(encoder: CommandEncoder) {
+    fun record(encoder: PresetCommandEncoder) {
         if (pending.isEmpty()) return
         val batch = if (recycledBatches.isEmpty()) RetiredBuffers(this) else recycledBatches.removeFirst()
         batch.buffers.ensureCapacity(pending.size)
@@ -115,8 +115,8 @@ internal class TextureUploadQueue(
     }
 
     private fun write(
-        encoder: CommandEncoder,
-        texture: GpuTexture,
+        encoder: PresetCommandEncoder,
+        texture: PresetGpuTexture,
         buffer: ByteBuffer,
         x: Int,
         y: Int,

@@ -1,6 +1,5 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import net.minecraft.resources.Identifier
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertThrows
@@ -13,7 +12,7 @@ class ProgramLifecycleTest {
         var scheduled: (() -> Unit)? = null
         var schedules = 0
         val program = Program(
-            Identifier.fromNamespaceAndPath("test", "lifecycle"),
+            "test:lifecycle",
             "",
             "",
             VertexLayout()

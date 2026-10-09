@@ -1,23 +1,23 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import com.mojang.blaze3d.GpuFormat
-import com.mojang.blaze3d.systems.RenderSystem
-import com.mojang.blaze3d.textures.GpuTexture
-import com.mojang.blaze3d.textures.GpuTextureView
-import com.mojang.blaze3d.textures.GpuSampler
-import java.util.function.Supplier
 import sweetie.evaware.luma.LumaNames
 import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetFormat
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuSampler
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuTexture
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuTextureView
+import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPreset
+import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPresets
 
 class VulkanRenderTarget(
-    val gpuTexture: GpuTexture,
-    val colorView: GpuTextureView,
+    val gpuTexture: PresetGpuTexture,
+    val colorView: PresetGpuTextureView,
     private val colorAsTexture: VulkanTexture,
-    val gpuDepthTexture: GpuTexture?,
-    val depthView: GpuTextureView?,
+    val gpuDepthTexture: PresetGpuTexture?,
+    val depthView: PresetGpuTextureView?,
     private val depthAsTexture: VulkanTexture?,
     override val width: Int,
     override val height: Int,
@@ -43,52 +43,45 @@ class VulkanRenderTarget(
     }
 
     companion object {
-        private const val COLOR_USAGE = GpuTexture.USAGE_COPY_DST or
-            GpuTexture.USAGE_COPY_SRC or
-            GpuTexture.USAGE_RENDER_ATTACHMENT or GpuTexture.USAGE_TEXTURE_BINDING
-        private const val DEPTH_USAGE = GpuTexture.USAGE_COPY_DST or GpuTexture.USAGE_COPY_SRC or
-            GpuTexture.USAGE_TEXTURE_BINDING or GpuTexture.USAGE_RENDER_ATTACHMENT
+        private const val COLOR_USAGE = 1 or 2 or 4 or 8
+        private const val DEPTH_USAGE = 1 or 2 or 4 or 8
 
         internal fun create(
             width: Int,
             height: Int,
             useDepth: Boolean,
             format: RenderTargetFormat,
-            sampler: GpuSampler,
-            uploads: TextureUploadQueue
+            sampler: PresetGpuSampler,
+            uploads: TextureUploadQueue,
+            preset: VulkanPreset = VulkanPresets.active
         ): VulkanRenderTarget {
-            val device = RenderSystem.getDevice()
-            val gpuFormat = when (format) {
-                RenderTargetFormat.RGBA8 -> GpuFormat.RGBA8_UNORM
-                RenderTargetFormat.RGBA16F -> GpuFormat.RGBA16_FLOAT
+            val presetFormat = when (format) {
+                RenderTargetFormat.RGBA8 -> PresetFormat.RGBA8_UNORM
+                RenderTargetFormat.RGBA16F -> PresetFormat.RGBA16_FLOAT
             }
 
-            var texture: GpuTexture? = null
-            var textureView: GpuTextureView? = null
-            var depthTexture: GpuTexture? = null
-            var depthView: GpuTextureView? = null
+            var texture: PresetGpuTexture? = null
+            var textureView: PresetGpuTextureView? = null
+            var depthTexture: PresetGpuTexture? = null
+            var depthView: PresetGpuTextureView? = null
             try {
-                texture = device.createTexture(
-                    Supplier { LumaNames.TEXTURE },
+                texture = preset.createTexture(
+                    { LumaNames.TEXTURE },
                     COLOR_USAGE,
-                    gpuFormat,
+                    presetFormat,
                     width,
-                    height,
-                    1,
-                    1
+                    height
                 )
-                textureView = device.createTextureView(texture)
+                textureView = preset.createTextureView(texture)
                 if (useDepth) {
-                    depthTexture = device.createTexture(
-                        Supplier { LumaNames.DEPTH_TEXTURE },
+                    depthTexture = preset.createTexture(
+                        { LumaNames.DEPTH_TEXTURE },
                         DEPTH_USAGE,
-                        GpuFormat.D32_FLOAT,
+                        PresetFormat.D32_FLOAT,
                         width,
-                        height,
-                        1,
-                        1
+                        height
                     )
-                    depthView = device.createTextureView(depthTexture)
+                    depthView = preset.createTextureView(depthTexture)
                 }
 
                 val colorTexture = VulkanTexture(texture, textureView, sampler, width, height, uploads)
@@ -117,23 +110,26 @@ class VulkanRenderTarget(
         }
 
         fun borrow(
-            colorView: GpuTextureView,
-            depthView: GpuTextureView? = null,
-            filter: RenderTargetFilter = RenderTargetFilter.NEAREST
+            colorView: Any,
+            depthView: Any? = null,
+            filter: RenderTargetFilter = RenderTargetFilter.NEAREST,
+            preset: VulkanPreset = VulkanPresets.active
         ): VulkanRenderTarget {
-            val color = VulkanTexture.borrow(colorView, filter)
+            val color = VulkanTexture.borrow(colorView, filter, preset)
             var depth: VulkanTexture? = null
             try {
-                depth = depthView?.let { VulkanTexture.borrow(it, RenderTargetFilter.NEAREST) }
+                depth = depthView?.let { VulkanTexture.borrow(it, RenderTargetFilter.NEAREST, preset) }
+                val wrappedColor = color.view
+                val wrappedDepth = depth?.view
                 return VulkanRenderTarget(
-                    colorView.texture(),
-                    colorView,
+                    wrappedColor.texture,
+                    wrappedColor,
                     color,
-                    depthView?.texture(),
-                    depthView,
+                    wrappedDepth?.texture,
+                    wrappedDepth,
                     depth,
-                    colorView.getWidth(0),
-                    colorView.getHeight(0),
+                    wrappedColor.getWidth(0),
+                    wrappedColor.getHeight(0),
                     false
                 )
             } catch (failure: Throwable) {

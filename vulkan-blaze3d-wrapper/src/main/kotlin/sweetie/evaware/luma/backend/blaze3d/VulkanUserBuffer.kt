@@ -1,31 +1,33 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import com.mojang.blaze3d.buffers.GpuBuffer
-import com.mojang.blaze3d.buffers.GpuBufferSlice
-import com.mojang.blaze3d.systems.RenderSystem
 import sweetie.evaware.luma.api.BufferUsage
 import sweetie.evaware.luma.api.IndexBufferHandle
 import sweetie.evaware.luma.api.IndexType
 import sweetie.evaware.luma.api.VertexBufferHandle
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuBuffer
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuBufferSlice
+import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPreset
+import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPresets
 
 internal sealed class VulkanUserBuffer(
     val sizeBytes: Long,
     usageFlag: Int,
-    usage: BufferUsage
+    usage: BufferUsage,
+    preset: VulkanPreset = VulkanPresets.active
 ) : AutoCloseable {
-    val gpuBuffer: GpuBuffer = RenderSystem.getDevice().createBuffer(
+    val gpuBuffer: PresetGpuBuffer = preset.createBuffer(
         { "Luma user buffer" },
-        usageFlag or GpuBuffer.USAGE_COPY_DST or usage.hint,
+        usageFlag or 8 or usage.hint,
         sizeBytes
     )
     private var closed = false
-    private var cachedSlice: GpuBufferSlice? = null
+    private var cachedSlice: PresetGpuBufferSlice? = null
     private var cachedOffset = -1L
     private var cachedLength = -1L
 
     fun requireOpen() = check(!closed) { "Buffer is closed" }
 
-    fun slice(offset: Long, length: Long): GpuBufferSlice {
+    fun slice(offset: Long, length: Long): PresetGpuBufferSlice {
         val cached = cachedSlice
         if (cached != null && cachedOffset == offset && cachedLength == length) return cached
         return gpuBuffer.slice(offset, length).also {
@@ -43,17 +45,21 @@ internal sealed class VulkanUserBuffer(
     }
 }
 
-internal class VulkanVertexBuffer(sizeBytes: Long, usage: BufferUsage) :
-    VulkanUserBuffer(sizeBytes, GpuBuffer.USAGE_VERTEX, usage), VertexBufferHandle
+internal class VulkanVertexBuffer(
+    sizeBytes: Long,
+    usage: BufferUsage,
+    preset: VulkanPreset = VulkanPresets.active
+) : VulkanUserBuffer(sizeBytes, 32, usage, preset), VertexBufferHandle
 
 internal class VulkanIndexBuffer(
     sizeBytes: Long,
     override val indexType: IndexType,
-    usage: BufferUsage
-) : VulkanUserBuffer(sizeBytes, GpuBuffer.USAGE_INDEX, usage), IndexBufferHandle
+    usage: BufferUsage,
+    preset: VulkanPreset = VulkanPresets.active
+) : VulkanUserBuffer(sizeBytes, 64, usage, preset), IndexBufferHandle
 
 private val BufferUsage.hint: Int
     get() = when (this) {
         BufferUsage.STATIC -> 0
-        BufferUsage.DYNAMIC, BufferUsage.STREAM -> GpuBuffer.USAGE_HINT_CLIENT_STORAGE
+        BufferUsage.DYNAMIC, BufferUsage.STREAM -> 4
     }

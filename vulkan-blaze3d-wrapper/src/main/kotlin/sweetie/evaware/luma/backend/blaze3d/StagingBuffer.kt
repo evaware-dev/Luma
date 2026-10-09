@@ -49,6 +49,9 @@ internal class StagingBuffer(initialCapacity: Int) : AutoCloseable {
         val remainder = position % alignment
         val padding = if (remainder == 0) 0 else alignment - remainder
         ensure(Math.addExact(padding, bytes))
+        if (padding > 0) {
+            MemoryUtil.memSet(MemoryUtil.memAddress(buffer), 0, padding.toLong())
+        }
         buffer.position(Math.addExact(position, padding))
         val offset = buffer.position().toLong()
         MemoryUtil.memCopy(sourceAddress, MemoryUtil.memAddress(buffer), bytes.toLong())
@@ -69,6 +72,9 @@ internal class StagingBuffer(initialCapacity: Int) : AutoCloseable {
         val remainder = position % alignment
         val padding = if (remainder == 0) 0 else alignment - remainder
         ensure(Math.addExact(padding, source.remaining()))
+        if (padding > 0) {
+            MemoryUtil.memSet(MemoryUtil.memAddress(buffer), 0, padding.toLong())
+        }
         buffer.position(Math.addExact(position, padding))
         val offset = buffer.position().toLong()
         buffer.put(source)
@@ -82,6 +88,9 @@ internal class StagingBuffer(initialCapacity: Int) : AutoCloseable {
         val remainder = position % alignment
         val padding = if (remainder == 0) 0 else alignment - remainder
         ensure(Math.addExact(padding, maximumBytes))
+        if (padding > 0) {
+            MemoryUtil.memSet(MemoryUtil.memAddress(buffer), 0, padding.toLong())
+        }
         buffer.position(Math.addExact(position, padding))
         return buffer.position().toLong()
     }

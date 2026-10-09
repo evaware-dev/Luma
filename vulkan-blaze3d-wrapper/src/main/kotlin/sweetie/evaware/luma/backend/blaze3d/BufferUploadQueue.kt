@@ -1,8 +1,8 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import com.mojang.blaze3d.systems.CommandEncoder
 import java.nio.ByteBuffer
 import org.lwjgl.system.MemoryUtil
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetCommandEncoder
 
 internal class BufferUploadQueue(initialCapacity: Int) : AutoCloseable {
     private class Upload {
@@ -35,7 +35,7 @@ internal class BufferUploadQueue(initialCapacity: Int) : AutoCloseable {
 
     fun hasPending(): Boolean = size > 0
 
-    fun record(encoder: CommandEncoder) {
+    fun record(encoder: PresetCommandEncoder) {
         if (size == 0) return
         staging.flip()
         val source = staging.buffer

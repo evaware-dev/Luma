@@ -1,40 +1,39 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import com.mojang.blaze3d.PrimitiveTopology
-import com.mojang.blaze3d.IndexType as MinecraftIndexType
-import com.mojang.blaze3d.platform.CompareOp
-import com.mojang.blaze3d.systems.CommandEncoder
-import com.mojang.blaze3d.systems.GpuDevice
-import com.mojang.blaze3d.systems.RenderPass
-import com.mojang.blaze3d.systems.RenderSystem
-import com.mojang.blaze3d.textures.GpuTextureView
 import org.joml.Vector4f
 import sweetie.evaware.luma.LumaNames
 import sweetie.evaware.luma.api.BlendFunction
+import sweetie.evaware.luma.api.DepthCompare
 import sweetie.evaware.luma.api.IndexType
+import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.TextureHandle
-import java.util.Optional
-import java.util.OptionalDouble
+import sweetie.evaware.luma.backend.blaze3d.preset.*
 
 internal class RenderPassEncoder(
     private val vertexBuffer: VulkanBuffer,
     private val uboBuffer: VulkanBuffer
 ) : GroupConsumer {
 
-    private var device: GpuDevice? = null
-    private var encoder: CommandEncoder? = null
-    private var currentPass: RenderPass? = null
+    private var preset: VulkanPreset = VulkanPresets.active
+    private var encoder: PresetCommandEncoder? = null
+    private var currentPass: PresetRenderPass? = null
     private var currentProgram: Program? = null
     private var currentTargetHasDepth = false
-    private val directVertexBuffers = arrayOfNulls<VulkanVertexBuffer>(RenderPass.MAX_VERTEX_BUFFERS)
-    private val directVertexOffsets = LongArray(RenderPass.MAX_VERTEX_BUFFERS)
+    private val directVertexBuffers = arrayOfNulls<VulkanVertexBuffer>(16)
+    private val directVertexOffsets = LongArray(16)
     private var directIndexBuffer: VulkanIndexBuffer? = null
     private var pipelineGeneration = 0L
     private val clearColor = Vector4f()
+    private val renderPassLabel = { LumaNames.RENDER_PASS }
+    private var currentPipeline: PresetPipeline? = null
+    private var currentUboOffset = -1L
+    private var currentUboSize = -1L
+    private val boundTextureViews = arrayOfNulls<PresetGpuTextureView>(16)
+    private val boundTextureSamplers = arrayOfNulls<PresetGpuSampler>(16)
 
-    fun begin(device: GpuDevice, encoder: CommandEncoder, pipelineGeneration: Long): RenderPassEncoder {
+    fun begin(preset: VulkanPreset, encoder: PresetCommandEncoder, pipelineGeneration: Long): RenderPassEncoder {
         check(this.encoder == null) { "Render pass encoder is already active" }
-        this.device = device
+        this.preset = preset
         this.encoder = encoder
         this.pipelineGeneration = pipelineGeneration
         return this
@@ -44,28 +43,28 @@ internal class RenderPassEncoder(
         currentPass?.close()
         currentPass = null
         currentProgram = null
+        currentPipeline = null
+        currentUboOffset = -1L
+        currentUboSize = -1L
+        boundTextureViews.fill(null)
+        boundTextureSamplers.fill(null)
         resetDirectBindings()
-
-        val colorView: GpuTextureView
-        val depthView: GpuTextureView?
 
         checkNotNull(target) {
             "No Blaze3D render target is active; call beginRenderTarget before drawing"
         }
-        colorView = target.colorView
-        depthView = target.depthView
+        val colorView = target.colorView
+        val depthView = target.depthView
 
         val pass = checkNotNull(encoder).createRenderPass(
-            { LumaNames.RENDER_PASS },
+            renderPassLabel,
             colorView,
-            Optional.empty(),
-            depthView,
-            OptionalDouble.empty()
+            depthView
         )
 
         currentPass = pass
         currentTargetHasDepth = depthView != null
-        RenderSystem.bindDefaultUniforms(pass)
+        preset.bindDefaultUniforms(pass)
     }
 
     override fun onClear(
@@ -81,6 +80,11 @@ internal class RenderPassEncoder(
         currentPass?.close()
         currentPass = null
         currentProgram = null
+        currentPipeline = null
+        currentUboOffset = -1L
+        currentUboSize = -1L
+        boundTextureViews.fill(null)
+        boundTextureSamplers.fill(null)
         resetDirectBindings()
         val commandEncoder = checkNotNull(encoder)
         val activeTarget = checkNotNull(target) {
@@ -91,25 +95,25 @@ internal class RenderPassEncoder(
         if (color) clearColor.set(red, green, blue, alpha)
         when {
             color && depth && depthTexture != null ->
-                commandEncoder.clearColorAndDepthTextures(requireNotNull(colorTexture), clearColor, depthTexture, depthValue)
-            color -> commandEncoder.clearColorTexture(requireNotNull(colorTexture), clearColor)
+                commandEncoder.clearColorAndDepthTextures(colorTexture, clearColor.x, clearColor.y, clearColor.z, clearColor.w, depthTexture, depthValue)
+            color -> commandEncoder.clearColorTexture(colorTexture, clearColor.x, clearColor.y, clearColor.z, clearColor.w)
             depth && depthTexture != null -> commandEncoder.clearDepthTexture(depthTexture, depthValue)
         }
     }
 
     override fun onPipelineChanged(
         program: Program,
-        topology: PrimitiveTopology,
+        topology: PrimitiveType,
         blendEnabled: Boolean,
         blendFunction: BlendFunction,
         depthEnabled: Boolean,
         depthWrite: Boolean,
-        depthFunc: CompareOp,
+        depthFunc: DepthCompare,
         cullEnabled: Boolean
     ) {
         val pass = currentPass ?: return
         val pipeline = program.getOrCreatePipeline(
-            checkNotNull(device),
+            preset,
             topology,
             blendEnabled,
             blendFunction,
@@ -120,13 +124,19 @@ internal class RenderPassEncoder(
             currentTargetHasDepth,
             pipelineGeneration
         )
-        pass.setPipeline(pipeline)
+        if (currentPipeline !== pipeline) {
+            pass.setPipeline(pipeline)
+            currentPipeline = pipeline
+        }
         currentProgram = program
     }
 
     override fun onUboChanged(offset: Long, size: Long) {
         val pass = currentPass ?: return
+        if (currentUboOffset == offset && currentUboSize == size) return
         pass.setUniform(LumaNames.UNIFORMS_BLOCK, uboBuffer.slice(offset, size))
+        currentUboOffset = offset
+        currentUboSize = size
     }
 
     override fun onTextureChanged(program: Program, textures: Array<TextureHandle?>) {
@@ -135,7 +145,15 @@ internal class RenderPassEncoder(
         for (index in bindings.indices) {
             val binding = bindings[index]
             val texture = textures.getOrNull(binding.unit) as? VulkanTexture ?: continue
-            pass.bindTexture(binding.name, texture.view, texture.sampler)
+            val view = texture.view
+            val sampler = texture.sampler
+            val unit = binding.unit
+            if (unit in boundTextureViews.indices) {
+                if (boundTextureViews[unit] === view && boundTextureSamplers[unit] === sampler) continue
+                boundTextureViews[unit] = view
+                boundTextureSamplers[unit] = sampler
+            }
+            pass.bindTexture(binding.name, view, sampler)
         }
     }
 
@@ -144,7 +162,7 @@ internal class RenderPassEncoder(
         if (enabled) pass.enableScissor(x, y, width, height) else pass.disableScissor()
     }
 
-    override fun onDraw(topology: PrimitiveTopology, vertexStart: Long, vertexBytes: Long, vertexCount: Int) {
+    override fun onDraw(topology: PrimitiveType, vertexStart: Long, vertexBytes: Long, vertexCount: Int) {
         val pass = currentPass ?: return
         val program = currentProgram ?: return
         pass.setVertexBuffer(0, vertexBuffer.slice(vertexStart, vertexBytes))
@@ -155,11 +173,10 @@ internal class RenderPassEncoder(
             return
         }
 
-        if (topology == PrimitiveTopology.QUADS) {
+        if (topology == PrimitiveType.QUADS) {
             val indexCount = (vertexCount / 4) * 6
-            val sequential = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS)
-            val indexBuffer = sequential.getBuffer(indexCount)
-            pass.setIndexBuffer(indexBuffer, sequential.type())
+            val sequential = preset.getSequentialQuadBuffer(indexCount)
+            pass.setSequentialIndexBuffer(sequential)
             directIndexBuffer = null
             pass.drawIndexed(indexCount, 1, 0, 0, 0)
         } else {
@@ -167,14 +184,13 @@ internal class RenderPassEncoder(
         }
     }
 
-    override fun onDirectDraw(draw: DrawCall, topology: PrimitiveTopology) {
+    override fun onDirectDraw(draw: DrawCall, topology: PrimitiveType) {
         val pass = currentPass ?: return
-        val bindings = requireNotNull(draw.vertexBindings)
         val program = requireNotNull(draw.program)
         for (binding in 0 until program.layouts.size()) {
-            val buffer = requireNotNull(bindings.buffers[binding]) { "Vertex binding $binding is not set" }
+            val buffer = requireNotNull(draw.vertexBuffers[binding]) { "Vertex binding $binding is not set" }
             buffer.requireOpen()
-            val offset = bindings.offsets[binding]
+            val offset = draw.vertexOffsets[binding]
             if (directVertexBuffers[binding] !== buffer || directVertexOffsets[binding] != offset) {
                 pass.setVertexBuffer(binding, buffer.slice(offset, buffer.sizeBytes - offset))
                 directVertexBuffers[binding] = buffer
@@ -187,7 +203,7 @@ internal class RenderPassEncoder(
             if (directIndexBuffer !== indices) {
                 pass.setIndexBuffer(
                     indices.gpuBuffer,
-                    if (indices.indexType == IndexType.UINT16) MinecraftIndexType.SHORT else MinecraftIndexType.INT
+                    indices.indexType
                 )
                 directIndexBuffer = indices
             }
@@ -201,8 +217,12 @@ internal class RenderPassEncoder(
         currentPass?.close()
         currentPass = null
         currentProgram = null
+        currentPipeline = null
+        currentUboOffset = -1L
+        currentUboSize = -1L
+        boundTextureViews.fill(null)
+        boundTextureSamplers.fill(null)
         resetDirectBindings()
-        device = null
         encoder = null
     }
 

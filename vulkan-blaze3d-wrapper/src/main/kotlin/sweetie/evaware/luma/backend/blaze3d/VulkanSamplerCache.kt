@@ -1,22 +1,22 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import com.mojang.blaze3d.systems.GpuDevice
-import com.mojang.blaze3d.textures.AddressMode
-import com.mojang.blaze3d.textures.FilterMode
-import com.mojang.blaze3d.textures.GpuSampler
-import java.util.OptionalDouble
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetAddressMode
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetFilterMode
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuSampler
+import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPreset
+import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPresets
 
 internal data class VulkanSamplerDescriptor(
-    val addressU: AddressMode,
-    val addressV: AddressMode,
-    val minFilter: FilterMode,
-    val magFilter: FilterMode,
+    val addressU: PresetAddressMode,
+    val addressV: PresetAddressMode,
+    val minFilter: PresetFilterMode,
+    val magFilter: PresetFilterMode,
     val maxAnisotropy: Int = 1
 ) {
     companion object {
-        fun clamp(filter: FilterMode) = VulkanSamplerDescriptor(
-            AddressMode.CLAMP_TO_EDGE,
-            AddressMode.CLAMP_TO_EDGE,
+        fun clamp(filter: PresetFilterMode) = VulkanSamplerDescriptor(
+            PresetAddressMode.CLAMP_TO_EDGE,
+            PresetAddressMode.CLAMP_TO_EDGE,
             filter,
             filter
         )
@@ -24,18 +24,15 @@ internal data class VulkanSamplerDescriptor(
 }
 
 internal class VulkanSamplerCache(
-    private val device: GpuDevice
+    private val preset: VulkanPreset = VulkanPresets.active
 ) : AutoCloseable {
-    private val samplers = HashMap<VulkanSamplerDescriptor, GpuSampler>()
+    private val samplers = HashMap<VulkanSamplerDescriptor, PresetGpuSampler>()
 
-    fun get(descriptor: VulkanSamplerDescriptor): GpuSampler = samplers.getOrPut(descriptor) {
-        device.createSampler(
+    fun get(descriptor: VulkanSamplerDescriptor): PresetGpuSampler = samplers.getOrPut(descriptor) {
+        preset.createSampler(
             descriptor.addressU,
-            descriptor.addressV,
             descriptor.minFilter,
-            descriptor.magFilter,
-            descriptor.maxAnisotropy,
-            OptionalDouble.empty()
+            descriptor.maxAnisotropy
         )
     }
 

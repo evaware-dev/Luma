@@ -1,5 +1,4 @@
 plugins {
-    id 'net.fabricmc.fabric-loom'
     id 'org.jetbrains.kotlin.jvm'
     id 'maven-publish'
 }
@@ -16,21 +15,18 @@ repositories {
 }
 
 dependencies {
-    minecraft "com.mojang:minecraft:${project.minecraft_version}"
-    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
-    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
-    implementation "net.fabricmc:fabric-language-kotlin:${project.fabric_kotlin_version}"
+    api project(":api")
+    implementation "org.jetbrains.kotlin:kotlin-stdlib"
 
-    implementation project(":api")
+    implementation platform("org.lwjgl:lwjgl-bom:${project.lwjgl_version}")
+    implementation "org.lwjgl:lwjgl"
+    implementation "org.joml:joml:${project.joml_version}"
+
+    testRuntimeOnly "org.lwjgl:lwjgl::natives-windows"
+    testRuntimeOnly "org.lwjgl:lwjgl::natives-linux"
+    testRuntimeOnly "org.lwjgl:lwjgl::natives-macos"
+
     testImplementation "junit:junit:4.13.2"
-}
-
-processResources {
-    inputs.property "version", project.version
-
-    filesMatching("fabric.mod.json") {
-        expand "version": inputs.properties.version
-    }
 }
 
 tasks.withType(JavaCompile).configureEach {

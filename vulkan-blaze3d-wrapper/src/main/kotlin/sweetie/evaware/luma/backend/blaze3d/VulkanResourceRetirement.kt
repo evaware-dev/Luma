@@ -1,11 +1,11 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import com.mojang.blaze3d.buffers.GpuFence
-import com.mojang.blaze3d.systems.CommandEncoder
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetCommandEncoder
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetFence
 
 internal object VulkanResourceRetirement {
     internal class Submission {
-        var fence: GpuFence? = null
+        var fence: PresetFence? = null
         val resources = ArrayList<AutoCloseable>()
 
         fun reset() {
@@ -32,7 +32,7 @@ internal object VulkanResourceRetirement {
         collect(wait = false)
     }
 
-    fun attachTo(encoder: CommandEncoder): Submission? {
+    fun attachTo(encoder: PresetCommandEncoder): Submission? {
         if (pending.isEmpty()) return null
         val submission = if (recycledSubmissions.isEmpty()) Submission() else recycledSubmissions.removeFirst()
         submission.fence = encoder.createFence()
@@ -47,7 +47,7 @@ internal object VulkanResourceRetirement {
         submissions.add(retirement)
     }
 
-    fun closeAll(createEncoder: () -> CommandEncoder) {
+    fun closeAll(createEncoder: () -> PresetCommandEncoder) {
         collect(wait = true)
         if (pending.isEmpty()) return
 

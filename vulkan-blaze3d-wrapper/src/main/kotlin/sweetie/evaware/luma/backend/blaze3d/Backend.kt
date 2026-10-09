@@ -1,12 +1,6 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import com.mojang.blaze3d.buffers.GpuBuffer
-import com.mojang.blaze3d.buffers.GpuFence
-import com.mojang.blaze3d.platform.CompareOp
-import com.mojang.blaze3d.systems.RenderSystem
-import com.mojang.blaze3d.systems.RenderPass
-import com.mojang.blaze3d.textures.FilterMode
-import net.minecraft.resources.Identifier
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetFilterMode
 import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.LumaNames
 import sweetie.evaware.luma.api.BlendFunction
@@ -25,13 +19,17 @@ import sweetie.evaware.luma.api.VertexBufferHandle
 import sweetie.evaware.luma.uniform.*
 import sweetie.evaware.luma.vertex.VertexLayout
 import sweetie.evaware.luma.vertex.VertexInputLayout
+import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPreset
+import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPresets
 import java.awt.image.BufferedImage
 import java.nio.ByteBuffer
 import java.nio.FloatBuffer
 
 class Backend(
+    val preset: VulkanPreset = VulkanPresets.active,
     private val config: VulkanBackendConfig = VulkanBackendConfig()
 ) : RenderBackend {
+    constructor(config: VulkanBackendConfig) : this(VulkanPresets.active, config)
     private var nextProgramId = 1
 
     private var frameId = 0L
@@ -39,47 +37,45 @@ class Backend(
 
     private val vertexBuffer = VulkanBuffer(
         { LumaNames.VERTEX_BUFFER },
-        GpuBuffer.USAGE_VERTEX or GpuBuffer.USAGE_COPY_DST,
-        config.initialVertexBufferBytes
+        32 or 8,
+        config.initialVertexBufferBytes,
+        preset
     )
     private val uboBuffer = VulkanBuffer(
         { LumaNames.UBO_BUFFER },
-        GpuBuffer.USAGE_UNIFORM or GpuBuffer.USAGE_COPY_DST,
-        config.initialUniformBufferBytes
+        128 or 8,
+        config.initialUniformBufferBytes,
+        preset
     )
 
     private val boundTextures = arrayOfNulls<TextureHandle>(DrawCall.TEXTURE_UNITS)
-    private val textureSnapshots = ArrayList<Array<TextureHandle?>>()
-    private var textureSnapshotCount = 0
-    private var textureSnapshot: Array<TextureHandle?> = DrawCall.NO_TEXTURES
-    private var texturesDirty = false
+    private var boundTextureMask = 0
 
     private val vertexStaging = StagingBuffer(config.initialVertexStagingBytes)
     private val uboStaging = StagingBuffer(config.initialUniformStagingBytes)
     private val uniformWriter = Std140Writer()
-    private val uniformOffsetAlignment = RenderSystem.getDevice().deviceInfo.limits.minUniformOffsetAlignment
+    private val uniformOffsetAlignment = preset.minUniformOffsetAlignment
 
     private val recorder = DrawCallRecorder()
     private val merger = DrawCallMerger()
     private val passEncoder = RenderPassEncoder(vertexBuffer, uboBuffer)
     private val renderState = RenderStateTracker()
     private val postRecordActions = ArrayList<() -> Unit>()
-    private val samplerCache = VulkanSamplerCache(RenderSystem.getDevice())
+    private val schedulePostRecordAction: (() -> Unit) -> Unit = { schedulePostRecord(it) }
+    private val samplerCache = VulkanSamplerCache(preset)
     private val textureUploads = TextureUploadQueue(config.maxPooledUploadBytes)
     private val bufferUploads = BufferUploadQueue(config.initialBufferUploadBytes)
 
-    private val boundVertexBuffers = arrayOfNulls<VulkanVertexBuffer>(RenderPass.MAX_VERTEX_BUFFERS)
-    private val boundVertexOffsets = LongArray(RenderPass.MAX_VERTEX_BUFFERS)
-    private val vertexBindingSnapshots = ArrayList<VertexBindingSnapshot>()
-    private var vertexBindingSnapshotCount = 0
-    private var vertexBindingsDirty = true
-    private var currentVertexBindings: VertexBindingSnapshot? = null
+    private val boundVertexBuffers = arrayOfNulls<VulkanVertexBuffer>(16)
+    private val boundVertexOffsets = LongArray(16)
+    private var boundVertexBindingsMask = 0
     private var boundIndexBuffer: VulkanIndexBuffer? = null
 
-    private val targetStack = ArrayList<VulkanRenderTarget?>()
+    private val targetStack = arrayOfNulls<VulkanRenderTarget>(64)
+    private var targetStackDepth = 0
     private var targetPassId = 0
     private var completionFenceRequested = false
-    private var completionFence: GpuFence? = null
+    private var completionFence: sweetie.evaware.luma.backend.blaze3d.preset.PresetFence? = null
 
     override fun beginFrame() {
         VulkanResourceRetirement.collectCompleted()
@@ -88,14 +84,12 @@ class Backend(
         vertexBuffer.beginFrame()
         uboBuffer.beginFrame()
         recorder.reset()
-        resetTextureSnapshots()
         vertexStaging.reset()
         uboStaging.reset()
         bufferUploads.beginFrame()
-        resetVertexBindingSnapshots()
 
-        targetStack.clear()
-        targetStack.add(null)
+        targetStack[0] = null
+        targetStackDepth = 1
         targetPassId = 0
     }
 
@@ -111,8 +105,7 @@ class Backend(
             return
         }
 
-        val device = RenderSystem.getDevice()
-        val encoder = device.createCommandEncoder()
+        val encoder = preset.createCommandEncoder()
 
         textureUploads.record(encoder)
         bufferUploads.record(encoder)
@@ -124,7 +117,7 @@ class Backend(
             uboStaging.flip()
             uboBuffer.write(encoder, uboStaging.buffer)
 
-            val pass = passEncoder.begin(device, encoder, pipelineGeneration)
+            val pass = passEncoder.begin(preset, encoder, pipelineGeneration)
             try {
                 merger.run(recorder, pass)
             } finally {
@@ -170,14 +163,14 @@ class Backend(
         layouts: VertexInputLayout
     ): ProgramHandle {
         val prog = Program(
-            Identifier.fromNamespaceAndPath(LumaNames.SHADER_NAMESPACE, "${LumaNames.PROGRAM_PREFIX}${nextProgramId++}"),
+            "${LumaNames.SHADER_NAMESPACE}:${LumaNames.PROGRAM_PREFIX}${nextProgramId++}",
             vertexSource,
             fragmentSource,
             layouts,
-            this::schedulePostRecord
+            schedulePostRecordAction
         )
         if (config.precompileDefaultPipeline) {
-            prog.precompileDefaults(RenderSystem.getDevice(), pipelineGeneration)
+            prog.precompileDefaults(preset, pipelineGeneration)
         }
         return prog
     }
@@ -188,8 +181,9 @@ class Backend(
         require(!mipmap) { "Automatic mipmap generation is not supported by the Vulkan backend" }
         return VulkanTexture.create(
             image,
-            samplerCache.get(VulkanSamplerDescriptor.clamp(FilterMode.LINEAR)),
-            textureUploads
+            samplerCache.get(VulkanSamplerDescriptor.clamp(PresetFilterMode.LINEAR)),
+            textureUploads,
+            preset
         )
     }
 
@@ -205,17 +199,17 @@ class Backend(
         vulkanTexture.requireOpen()
         if (boundTextures[unit] === vulkanTexture) return
         boundTextures[unit] = vulkanTexture
-        texturesDirty = true
+        boundTextureMask = boundTextureMask or (1 shl unit)
     }
 
     override fun createVertexBuffer(sizeBytes: Long, usage: BufferUsage): VertexBufferHandle {
         require(sizeBytes > 0L) { "Buffer size must be positive" }
-        return VulkanVertexBuffer(sizeBytes, usage)
+        return VulkanVertexBuffer(sizeBytes, usage, preset)
     }
 
     override fun createIndexBuffer(sizeBytes: Long, indexType: IndexType, usage: BufferUsage): IndexBufferHandle {
         require(sizeBytes > 0L) { "Buffer size must be positive" }
-        return VulkanIndexBuffer(sizeBytes, indexType, usage)
+        return VulkanIndexBuffer(sizeBytes, indexType, usage, preset)
     }
 
     override fun updateVertexBuffer(buffer: VertexBufferHandle, offsetBytes: Long, data: ByteBuffer) {
@@ -234,7 +228,7 @@ class Backend(
         if (boundVertexBuffers[binding] === vertexBuffer && boundVertexOffsets[binding] == offsetBytes) return
         boundVertexBuffers[binding] = vertexBuffer
         boundVertexOffsets[binding] = offsetBytes
-        vertexBindingsDirty = true
+        boundVertexBindingsMask = boundVertexBindingsMask or (1 shl binding)
     }
 
     override fun bindIndexBuffer(buffer: IndexBufferHandle) {
@@ -242,53 +236,6 @@ class Backend(
         indexBuffer.requireOpen()
         if (boundIndexBuffer === indexBuffer) return
         boundIndexBuffer = indexBuffer
-    }
-
-    private fun currentVertexBindings(): VertexBindingSnapshot {
-        if (vertexBindingsDirty || currentVertexBindings == null) {
-            val snapshot = if (vertexBindingSnapshotCount < vertexBindingSnapshots.size) {
-                vertexBindingSnapshots[vertexBindingSnapshotCount]
-            } else {
-                VertexBindingSnapshot().also(vertexBindingSnapshots::add)
-            }
-            vertexBindingSnapshotCount++
-            boundVertexBuffers.copyInto(snapshot.buffers)
-            boundVertexOffsets.copyInto(snapshot.offsets)
-            currentVertexBindings = snapshot
-            vertexBindingsDirty = false
-        }
-        return currentVertexBindings!!
-    }
-
-    private fun resetVertexBindingSnapshots() {
-        for (index in 0 until vertexBindingSnapshotCount) vertexBindingSnapshots[index].clear()
-        vertexBindingSnapshotCount = 0
-        currentVertexBindings = null
-        vertexBindingsDirty = true
-    }
-
-    private fun currentTextures(): Array<TextureHandle?> {
-        if (texturesDirty) {
-            val snapshot = if (textureSnapshotCount < textureSnapshots.size) {
-                textureSnapshots[textureSnapshotCount]
-            } else {
-                arrayOfNulls<TextureHandle>(DrawCall.TEXTURE_UNITS).also(textureSnapshots::add)
-            }
-            textureSnapshotCount++
-            boundTextures.copyInto(snapshot)
-            textureSnapshot = snapshot
-            texturesDirty = false
-        }
-        return textureSnapshot
-    }
-
-    private fun resetTextureSnapshots() {
-        for (index in 0 until textureSnapshotCount) {
-            textureSnapshots[index].fill(null)
-        }
-        textureSnapshotCount = 0
-        textureSnapshot = DrawCall.NO_TEXTURES
-        texturesDirty = true
     }
 
     override fun createRenderTarget(
@@ -306,8 +253,8 @@ class Backend(
         filter: RenderTargetFilter
     ): RenderTargetHandle {
         val gpuFilter = when (filter) {
-            RenderTargetFilter.NEAREST -> FilterMode.NEAREST
-            RenderTargetFilter.LINEAR -> FilterMode.LINEAR
+            RenderTargetFilter.NEAREST -> PresetFilterMode.NEAREST
+            RenderTargetFilter.LINEAR -> PresetFilterMode.LINEAR
         }
         return VulkanRenderTarget.create(
             width,
@@ -315,14 +262,16 @@ class Backend(
             useDepth,
             format,
             samplerCache.get(VulkanSamplerDescriptor.clamp(gpuFilter)),
-            textureUploads
+            textureUploads,
+            preset
         )
     }
 
     override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) {
         val vulkanTarget = target as VulkanRenderTarget
         vulkanTarget.requireOpen()
-        targetStack.add(vulkanTarget)
+        check(targetStackDepth < targetStack.size) { "Render target stack overflow" }
+        targetStack[targetStackDepth++] = vulkanTarget
         targetPassId++
         if (clearColor != null) {
             require(clearColor.size >= 4) { "Clear color must contain four components" }
@@ -339,8 +288,8 @@ class Backend(
     }
 
     override fun endRenderTarget() {
-        check(targetStack.size > 1) { "No render target to end" }
-        targetStack.removeAt(targetStack.size - 1)
+        check(targetStackDepth > 1) { "No render target to end" }
+        targetStack[--targetStackDepth] = null
         targetPassId++
     }
 
@@ -353,7 +302,7 @@ class Backend(
 
     override fun depthWrite(enabled: Boolean) = renderState.depthWrite(enabled)
 
-    override fun depthCompare(compare: DepthCompare) = renderState.depthCompare(compareOp(compare))
+    override fun depthCompare(compare: DepthCompare) = renderState.depthCompare(compare)
 
     override fun cull(enabled: Boolean) = renderState.cull(enabled)
 
@@ -380,9 +329,9 @@ class Backend(
         depth: Boolean,
         depthValue: Double
     ) {
-        check(targetStack.isNotEmpty()) { "Cannot clear outside a frame" }
+        check(targetStackDepth > 0) { "Cannot clear outside a frame" }
         val draw = recorder.obtain()
-        draw.target = targetStack.last()
+        draw.target = targetStack[targetStackDepth - 1]
         draw.targetPassId = targetPassId
         draw.clearColorEnabled = color
         draw.clearDepthEnabled = depth
@@ -432,7 +381,9 @@ class Backend(
         require(firstVertex >= 0 && vertexCount >= 0 && instanceCount >= 0 && firstInstance >= 0)
         require(primitiveType != PrimitiveType.QUADS) { "Direct QUADS require an index buffer" }
         val draw = recordDraw(program as Program, uniforms, primitiveType)
-        draw.vertexBindings = currentVertexBindings()
+        boundVertexBuffers.copyInto(draw.vertexBuffers)
+        boundVertexOffsets.copyInto(draw.vertexOffsets)
+        draw.vertexBindingsMask = boundVertexBindingsMask
         draw.firstVertex = firstVertex
         draw.vertexCount = vertexCount
         draw.instanceCount = instanceCount
@@ -453,7 +404,9 @@ class Backend(
         require(firstIndex >= 0 && indexCount >= 0 && instanceCount >= 0 && firstInstance >= 0)
         require(primitiveType != PrimitiveType.QUADS) { "Indexed QUADS must use TRIANGLES topology" }
         val draw = recordDraw(program as Program, uniforms, primitiveType)
-        draw.vertexBindings = currentVertexBindings()
+        boundVertexBuffers.copyInto(draw.vertexBuffers)
+        boundVertexOffsets.copyInto(draw.vertexOffsets)
+        draw.vertexBindingsMask = boundVertexBindingsMask
         draw.indexBuffer = requireNotNull(boundIndexBuffer) { "Index buffer is not bound" }
         draw.firstIndex = firstIndex
         draw.vertexCount = indexCount
@@ -509,33 +462,23 @@ class Backend(
         draw.program = prog
         draw.uboOffset = uboOffset
         draw.uboBytes = uboBytes.toLong()
-        draw.textures = currentTextures()
+        boundTextures.copyInto(draw.textures)
+        draw.textureMask = boundTextureMask
         draw.primitiveType = primitiveType
         draw.blendEnabled = renderState.blendEnabled
         draw.blendFunction = renderState.blendFunction
         draw.depthEnabled = renderState.depthEnabled
         draw.depthWrite = draw.depthEnabled && renderState.depthWrite
-        draw.depthFunc = if (draw.depthEnabled) renderState.depthFunc else CompareOp.ALWAYS_PASS
+        draw.depthFunc = if (draw.depthEnabled) renderState.depthFunc else DepthCompare.ALWAYS
         draw.cullEnabled = renderState.cullEnabled
         draw.scissorEnabled = renderState.scissorEnabled
         draw.scissorX = renderState.scissorX
         draw.scissorY = renderState.scissorY
         draw.scissorWidth = renderState.scissorWidth
         draw.scissorHeight = renderState.scissorHeight
-        draw.target = targetStack.last()
+        draw.target = targetStack[targetStackDepth - 1]
         draw.targetPassId = targetPassId
         return draw
-    }
-
-    private fun compareOp(compare: DepthCompare): CompareOp = when (compare) {
-        DepthCompare.ALWAYS -> CompareOp.ALWAYS_PASS
-        DepthCompare.LESS -> CompareOp.LESS_THAN
-        DepthCompare.LESS_OR_EQUAL -> CompareOp.LESS_THAN_OR_EQUAL
-        DepthCompare.EQUAL -> CompareOp.EQUAL
-        DepthCompare.NOT_EQUAL -> CompareOp.NOT_EQUAL
-        DepthCompare.GREATER_OR_EQUAL -> CompareOp.GREATER_THAN_OR_EQUAL
-        DepthCompare.GREATER -> CompareOp.GREATER_THAN
-        DepthCompare.NEVER -> CompareOp.NEVER_PASS
     }
 
     override fun close() {
@@ -552,12 +495,12 @@ class Backend(
         bufferUploads.close()
         vertexStaging.close()
         uboStaging.close()
-        VulkanResourceRetirement.closeAll(RenderSystem.getDevice()::createCommandEncoder)
+        VulkanResourceRetirement.closeAll(preset::createCommandEncoder)
         runPostRecordActions()
         vertexBuffer.close()
         uboBuffer.close()
         samplerCache.close()
-        VulkanResourceRetirement.closeAll(RenderSystem.getDevice()::createCommandEncoder)
+        VulkanResourceRetirement.closeAll(preset::createCommandEncoder)
     }
 
     private fun schedulePostRecord(action: () -> Unit) {

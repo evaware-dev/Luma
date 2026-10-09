@@ -1,8 +1,7 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import com.mojang.blaze3d.PrimitiveTopology
-import com.mojang.blaze3d.platform.CompareOp
 import sweetie.evaware.luma.api.BlendFunction
+import sweetie.evaware.luma.api.DepthCompare
 import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.TextureHandle
 
@@ -10,17 +9,14 @@ internal class DrawCallMerger {
 
     private val mainTargetMarker = Any()
 
-    private fun topologyOf(type: PrimitiveType): PrimitiveTopology = when (type) {
-        PrimitiveType.LINES -> PrimitiveTopology.LINES
-        PrimitiveType.QUADS -> PrimitiveTopology.QUADS
-        PrimitiveType.TRIANGLES -> PrimitiveTopology.TRIANGLES
-    }
-
-    private fun sameTextures(a: Array<TextureHandle?>, b: Array<TextureHandle?>): Boolean {
-        if (a === b) return true
-        if (a.size != b.size) return false
-        for (i in a.indices) {
-            if (a[i] !== b[i]) return false
+    private fun sameTextures(a: DrawCall, bTextures: Array<TextureHandle?>, bMask: Int): Boolean {
+        if (a.textureMask != bMask) return false
+        if (a.textureMask == 0) return true
+        var mask = a.textureMask
+        while (mask != 0) {
+            val bit = java.lang.Integer.numberOfTrailingZeros(mask)
+            if (a.textures[bit] !== bTextures[bit]) return false
+            mask = mask and (mask - 1)
         }
         return true
     }
@@ -29,12 +25,12 @@ internal class DrawCallMerger {
         var currentTarget: Any? = null
         var currentTargetPassId = -1
         var currentProgram: Program? = null
-        var currentTopology: PrimitiveTopology? = null
+        var currentTopology: PrimitiveType? = null
         var currentBlendEnabled = true
         var currentBlendFunction = BlendFunction.TRANSLUCENT
         var currentDepthEnabled = false
         var currentDepthWrite = false
-        var currentDepthFunc = CompareOp.ALWAYS_PASS
+        var currentDepthFunc = DepthCompare.ALWAYS
         var currentCullEnabled = false
         var currentScissorKnown = false
         var currentScissorEnabled = false
@@ -43,6 +39,7 @@ internal class DrawCallMerger {
         var currentScissorWidth = 0
         var currentScissorHeight = 0
         var currentTextures: Array<TextureHandle?> = DrawCall.NO_TEXTURES
+        var currentTextureMask = 0
         var currentUboOffset = -1L
         var currentUboBytes = -1L
         var currentVertexOffset = -1L
@@ -71,13 +68,14 @@ internal class DrawCallMerger {
                 currentProgram = null
                 currentTopology = null
                 currentTextures = DrawCall.NO_TEXTURES
+                currentTextureMask = 0
                 currentUboOffset = -1L
                 currentUboBytes = -1L
                 currentScissorKnown = false
                 continue
             }
             val program = draw.program ?: continue
-            val topology = topologyOf(draw.primitiveType)
+            val topology = draw.primitiveType
 
             val targetKey: Any = draw.target ?: mainTargetMarker
 
@@ -93,12 +91,13 @@ internal class DrawCallMerger {
                 currentProgram = null
                 currentTopology = null
                 currentTextures = DrawCall.NO_TEXTURES
+                currentTextureMask = 0
                 currentUboOffset = -1L
                 currentUboBytes = -1L
                 currentScissorKnown = false
             }
 
-            val texturesSame = currentProgram === program && sameTextures(draw.textures, currentTextures)
+            val texturesSame = currentProgram === program && sameTextures(draw, currentTextures, currentTextureMask)
             val canMerge = !draw.direct && currentProgram === program &&
                 currentTopology == topology &&
                 currentBlendEnabled == draw.blendEnabled &&
@@ -193,6 +192,7 @@ internal class DrawCallMerger {
                 currentScissorWidth = draw.scissorWidth
                 currentScissorHeight = draw.scissorHeight
                 currentTextures = draw.textures
+                currentTextureMask = draw.textureMask
                 currentUboOffset = draw.uboOffset
                 currentUboBytes = draw.uboBytes
                 if (draw.direct) {
