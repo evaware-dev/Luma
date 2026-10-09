@@ -61,7 +61,9 @@ ext {
 
 dependencies {
     // For Minecraft Fabric mods (transitive core included):
-    implementation "sweetie.evaware.luma:minecraft-render-library:$luma_version"
+    implementation "sweetie.evaware.luma:minecraft-render-library-26.2:$luma_version"
+    // or for Minecraft 26.3:
+    // implementation "sweetie.evaware.luma:minecraft-render-library-26.3:$luma_version"
 
     // Standalone or modular setups:
     implementation "sweetie.evaware.luma:api:$luma_version"
@@ -87,7 +89,9 @@ ext {
 
 dependencies {
     // For Minecraft Fabric mods:
-    implementation "com.github.evaware-dev.Luma:minecraft-render-library:$luma_version"
+    implementation "com.github.evaware-dev.Luma:minecraft-render-library-26.2:$luma_version"
+    // or for Minecraft 26.3:
+    // implementation "com.github.evaware-dev.Luma:minecraft-render-library-26.3:$luma_version"
 
     // Standalone or modular setups:
     implementation "com.github.evaware-dev.Luma:api:$luma_version"
