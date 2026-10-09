@@ -101,7 +101,3 @@ dependencies {
     implementation "com.github.evaware-dev.Luma:developer-tools:$luma_version"
 }
 ```
-
-## License
-
-GNU Lesser General Public License v3.0 only. See [LICENSE](LICENSE).
