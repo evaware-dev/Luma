@@ -5,6 +5,8 @@ class FrameStats internal constructor() {
         private set
     var cpuNanos = 0L
         private set
+    var gpuFrameNanos = 0L
+        private set
     var drawCalls = 0L
         private set
     var vertices = 0L
@@ -35,6 +37,7 @@ class FrameStats internal constructor() {
     internal fun reset(index: Long) {
         frameIndex = index
         cpuNanos = 0L
+        gpuFrameNanos = 0L
         drawCalls = 0L
         vertices = 0L
         instances = 0L
@@ -53,6 +56,7 @@ class FrameStats internal constructor() {
     internal fun copyFrom(source: FrameStats) {
         frameIndex = source.frameIndex
         cpuNanos = source.cpuNanos
+        gpuFrameNanos = source.gpuFrameNanos
         drawCalls = source.drawCalls
         vertices = source.vertices
         instances = source.instances
@@ -70,6 +74,10 @@ class FrameStats internal constructor() {
 
     internal fun finish(nanos: Long) {
         cpuNanos = nanos
+    }
+
+    internal fun setGpuFrameNanos(nanos: Long) {
+        gpuFrameNanos = nanos
     }
 
     internal fun draw(vertices: Long, instances: Long, primitives: Long, pipelineChanged: Boolean) {
