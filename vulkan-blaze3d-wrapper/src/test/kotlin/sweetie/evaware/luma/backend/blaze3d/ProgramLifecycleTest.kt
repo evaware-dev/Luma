@@ -15,7 +15,8 @@ class ProgramLifecycleTest {
             "test:lifecycle",
             "",
             "",
-            VertexLayout()
+            VertexLayout(),
+            reflection = null
         ) { action ->
             schedules++
             scheduled = action

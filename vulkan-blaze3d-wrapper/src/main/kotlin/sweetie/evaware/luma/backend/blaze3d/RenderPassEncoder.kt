@@ -2,13 +2,18 @@ package sweetie.evaware.luma.backend.blaze3d
 
 import org.joml.Vector4f
 import sweetie.evaware.luma.LumaNames
+import sweetie.evaware.luma.api.BlendFunction
+import sweetie.evaware.luma.api.DepthCompare
 import sweetie.evaware.luma.api.PrimitiveType
+import sweetie.evaware.luma.api.SamplerState
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.backend.blaze3d.preset.*
 
 internal class RenderPassEncoder(
     private val vertexBuffer: VulkanBuffer,
-    private val uboBuffer: VulkanBuffer
+    private val uboBuffer: VulkanBuffer,
+    private val samplerCache: VulkanSamplerCache,
+    private val blitProgramProvider: () -> Program
 ) : GroupConsumer {
 
     private var preset: VulkanPreset? = null
@@ -25,6 +30,7 @@ internal class RenderPassEncoder(
     private var pipelineGeneration = 0L
     private val clearColor = Vector4f()
     private val renderPassLabel = { LumaNames.RENDER_PASS }
+    private val blitPassLabel = { "${LumaNames.RENDER_PASS}:blit" }
     private var currentPipeline: PresetPipeline? = null
     private var currentUboOffset = -1L
     private var currentUboSize = -1L
@@ -90,9 +96,82 @@ internal class RenderPassEncoder(
         if (color) clearColor.set(red, green, blue, alpha)
         when {
             color && depth && depthTexture != null ->
-                commandEncoder.clearColorAndDepthTextures(colorTexture, clearColor.x, clearColor.y, clearColor.z, clearColor.w, depthTexture, depthValue)
+                commandEncoder.clearColorAndDepthTextures(
+                    colorTexture, clearColor.x, clearColor.y, clearColor.z, clearColor.w, depthTexture, depthValue
+                )
             color -> commandEncoder.clearColorTexture(colorTexture, clearColor.x, clearColor.y, clearColor.z, clearColor.w)
             depth && depthTexture != null -> commandEncoder.clearDepthTexture(depthTexture, depthValue)
+        }
+    }
+
+    override fun onBlit(
+        source: VulkanRenderTarget,
+        destination: VulkanRenderTarget,
+        srcX: Int,
+        srcY: Int,
+        srcWidth: Int,
+        srcHeight: Int,
+        dstX: Int,
+        dstY: Int,
+        dstWidth: Int,
+        dstHeight: Int,
+        linearFilter: Boolean,
+        copyColor: Boolean,
+        copyDepth: Boolean,
+        nativeCopy: Boolean,
+        vertexOffset: Long
+    ) {
+        closeCurrentPass()
+        resetPassState()
+        val commandEncoder = checkNotNull(encoder)
+        if (nativeCopy) {
+            if (copyColor) {
+                commandEncoder.copyTextureToTexture(
+                    source.gpuTexture,
+                    destination.gpuTexture,
+                    0,
+                    dstX,
+                    dstY,
+                    srcX,
+                    srcY,
+                    srcWidth,
+                    srcHeight
+                )
+            }
+            if (copyDepth) {
+                val srcDepth = requireNotNull(source.gpuDepthTexture) { "Source render target has no depth attachment" }
+                val dstDepth = requireNotNull(destination.gpuDepthTexture) { "Destination render target has no depth attachment" }
+                commandEncoder.copyTextureToTexture(
+                    srcDepth,
+                    dstDepth,
+                    0,
+                    dstX,
+                    dstY,
+                    srcX,
+                    srcY,
+                    srcWidth,
+                    srcHeight
+                )
+            }
+            return
+        }
+
+        if (!copyColor) return
+        val activePreset = checkNotNull(preset)
+        val blitProgram = blitProgramProvider()
+        val pipeline = blitProgram.getOrCreatePipeline(
+            activePreset,
+            BLIT_PIPELINE_KEY,
+            hasDepthAttachment = false,
+            pipelineGeneration = pipelineGeneration
+        )
+        val sampler = samplerCache.get(if (linearFilter) SamplerState.LINEAR_CLAMP else SamplerState.NEAREST_CLAMP)
+        commandEncoder.createRenderPass(blitPassLabel, destination.colorView, null).use { pass ->
+            activePreset.bindDefaultUniforms(pass)
+            pass.setPipeline(pipeline)
+            pass.bindTexture("${LumaNames.SAMPLER_PREFIX}0", source.colorView, sampler)
+            pass.setVertexBuffer(0, vertexBuffer.slice(vertexOffset, BLIT_QUAD_BYTES))
+            pass.draw(BLIT_QUAD_VERTICES, 1, 0, 0)
         }
     }
 
@@ -118,7 +197,16 @@ internal class RenderPassEncoder(
         }
     }
 
-    override fun onPipelineChanged(program: Program, pipelineKey: Int) {
+    override fun onWriteTimestamp(pool: PresetTimestampQueryPool, queryIndex: Int) {
+        val pass = currentPass
+        if (pass != null) {
+            pass.writeTimestamp(pool, queryIndex)
+        } else {
+            checkNotNull(encoder).writeTimestamp(pool, queryIndex)
+        }
+    }
+
+    override fun onPipelineChanged(program: Program, pipelineKey: Long) {
         val pass = currentPass ?: return
         val pipeline = program.getOrCreatePipeline(
             checkNotNull(preset),
@@ -145,7 +233,9 @@ internal class RenderPassEncoder(
         program: Program,
         textureMask: Int,
         texture0: TextureHandle?,
-        overflowTextures: Array<TextureHandle?>?
+        sampler0: PresetGpuSampler?,
+        overflowTextures: Array<TextureHandle?>?,
+        overflowSamplers: Array<PresetGpuSampler?>?
     ) {
         val pass = currentPass ?: return
         val bindings = program.samplerBindingArray
@@ -156,7 +246,7 @@ internal class RenderPassEncoder(
             val raw = if (unit == 0) texture0 else overflowTextures?.getOrNull(unit)
             val texture = raw as? VulkanTexture ?: continue
             val view = texture.view
-            val sampler = texture.sampler
+            val sampler = (if (unit == 0) sampler0 else overflowSamplers?.getOrNull(unit)) ?: texture.sampler
             if (unit in boundTextureViews.indices) {
                 if (boundTextureViews[unit] === view && boundTextureSamplers[unit] === sampler) continue
                 boundTextureViews[unit] = view
@@ -333,5 +423,22 @@ internal class RenderPassEncoder(
             directVertexBindingsMask = 0
         }
         directIndexBuffer = null
+    }
+
+    companion object {
+        const val BLIT_QUAD_VERTICES = 6
+        const val BLIT_QUAD_STRIDE_BYTES = 4 * Float.SIZE_BYTES
+        const val BLIT_QUAD_BYTES = (BLIT_QUAD_VERTICES * BLIT_QUAD_STRIDE_BYTES).toLong()
+
+        private val BLIT_PIPELINE_KEY: Long = PipelineStateKey.pack(
+            topology = PrimitiveType.TRIANGLES,
+            blendEnabled = false,
+            blendFunction = BlendFunction.TRANSLUCENT,
+            depthEnabled = false,
+            depthWrite = false,
+            depthFunc = DepthCompare.ALWAYS,
+            cullEnabled = false,
+            colorWriteMask = PipelineStateKey.DEFAULT_COLOR_WRITE_MASK
+        )
     }
 }

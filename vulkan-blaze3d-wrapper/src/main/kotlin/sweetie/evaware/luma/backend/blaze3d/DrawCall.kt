@@ -2,6 +2,8 @@ package sweetie.evaware.luma.backend.blaze3d
 
 import java.util.Arrays
 import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuSampler
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetTimestampQueryPool
 
 internal class DrawCallRecorder(
     private val minRetainedCapacity: Int = DEFAULT_MIN_RETAINED_CAPACITY,
@@ -16,7 +18,7 @@ internal class DrawCallRecorder(
         private set
     var targetPassIds = IntArray(minRetainedCapacity)
         private set
-    var pipelineKeys = IntArray(minRetainedCapacity)
+    var pipelineKeys = LongArray(minRetainedCapacity)
         private set
     var vertexOffsets = LongArray(minRetainedCapacity)
         private set
@@ -36,9 +38,13 @@ internal class DrawCallRecorder(
         private set
     var texture0 = arrayOfNulls<TextureHandle>(minRetainedCapacity)
         private set
+    var sampler0 = arrayOfNulls<PresetGpuSampler>(minRetainedCapacity)
+        private set
 
     // Cold/lazy arrays allocated only when features are used
     var overflowTextures: Array<Array<TextureHandle?>?>? = null
+        private set
+    var overflowSamplers: Array<Array<PresetGpuSampler?>?>? = null
         private set
 
     var directVertexBuffer0: Array<VulkanVertexBuffer?>? = null
@@ -75,14 +81,41 @@ internal class DrawCallRecorder(
     var clearDepth: DoubleArray? = null
         private set
 
+    var blitSources: Array<VulkanRenderTarget?>? = null
+        private set
+    var blitSrcX: IntArray? = null
+        private set
+    var blitSrcY: IntArray? = null
+        private set
+    var blitSrcW: IntArray? = null
+        private set
+    var blitSrcH: IntArray? = null
+        private set
+    var blitDstX: IntArray? = null
+        private set
+    var blitDstY: IntArray? = null
+        private set
+    var blitDstW: IntArray? = null
+        private set
+    var blitDstH: IntArray? = null
+        private set
+    var blitFlags: ByteArray? = null
+        private set
+
     var debugGroupLabels: Array<String?>? = null
+        private set
+    var timestampPools: Array<PresetTimestampQueryPool?>? = null
+        private set
+    var timestampIndices: IntArray? = null
         private set
 
     private var hasAnyTextureThisFrame = false
     private var hasOverflowTexturesThisFrame = false
     private var hasDirectThisFrame = false
     private var hasOverflowDirectThisFrame = false
+    private var hasBlitsThisFrame = false
     private var hasDebugGroupsThisFrame = false
+    private var hasTimestampsThisFrame = false
     private var lowWaterFrames = 0
     private var peakSinceTrim = 0
 
@@ -103,7 +136,7 @@ internal class DrawCallRecorder(
         program: Program,
         target: VulkanRenderTarget?,
         targetPassId: Int,
-        pipelineKey: Int,
+        pipelineKey: Long,
         vertexOffset: Long,
         vertexBytes: Long,
         vertexCount: Int,
@@ -135,7 +168,7 @@ internal class DrawCallRecorder(
         program: Program,
         target: VulkanRenderTarget?,
         targetPassId: Int,
-        pipelineKey: Int,
+        pipelineKey: Long,
         vertexOffset: Long,
         vertexBytes: Long,
         vertexCount: Int,
@@ -161,6 +194,7 @@ internal class DrawCallRecorder(
         if (texture0 != null) {
             textureMasks[index] = 1
             this.texture0[index] = texture0
+            this.sampler0[index] = (texture0 as? VulkanTexture)?.sampler
             hasAnyTextureThisFrame = true
         } else {
             textureMasks[index] = 0
@@ -172,7 +206,7 @@ internal class DrawCallRecorder(
         program: Program,
         target: VulkanRenderTarget?,
         targetPassId: Int,
-        pipelineKey: Int,
+        pipelineKey: Long,
         uboOffset: Long,
         uboBytes: Long,
         scissorXY: Long,
@@ -275,6 +309,51 @@ internal class DrawCallRecorder(
         return index
     }
 
+    fun recordBlit(
+        source: VulkanRenderTarget,
+        destination: VulkanRenderTarget,
+        targetPassId: Int,
+        srcX: Int,
+        srcY: Int,
+        srcWidth: Int,
+        srcHeight: Int,
+        dstX: Int,
+        dstY: Int,
+        dstWidth: Int,
+        dstHeight: Int,
+        linearFilter: Boolean,
+        copyColor: Boolean,
+        copyDepth: Boolean,
+        nativeCopy: Boolean,
+        vertexOffset: Long
+    ): Int {
+        val index = obtain()
+        ensureBlitArrays()
+        flags[index] = FLAG_BLIT.toByte()
+        programs[index] = null
+        targets[index] = destination
+        targetPassIds[index] = targetPassId
+        textureMasks[index] = 0
+        vertexOffsets[index] = vertexOffset
+        blitSources!![index] = source
+        blitSrcX!![index] = srcX
+        blitSrcY!![index] = srcY
+        blitSrcW!![index] = srcWidth
+        blitSrcH!![index] = srcHeight
+        blitDstX!![index] = dstX
+        blitDstY!![index] = dstY
+        blitDstW!![index] = dstWidth
+        blitDstH!![index] = dstHeight
+        var packed = 0
+        if (linearFilter) packed = packed or BLIT_FLAG_LINEAR
+        if (copyColor) packed = packed or BLIT_FLAG_COLOR
+        if (copyDepth) packed = packed or BLIT_FLAG_DEPTH
+        if (nativeCopy) packed = packed or BLIT_FLAG_NATIVE
+        blitFlags!![index] = packed.toByte()
+        hasBlitsThisFrame = true
+        return index
+    }
+
     fun recordDebugGroupPush(label: String, targetPassId: Int = -1): Int {
         val index = obtain()
         ensureDebugGroupLabels()[index] = label
@@ -298,16 +377,35 @@ internal class DrawCallRecorder(
         return index
     }
 
+    fun recordTimestamp(pool: PresetTimestampQueryPool, queryIndex: Int, targetPassId: Int = -1): Int {
+        val index = obtain()
+        ensureTimestampArrays()
+        flags[index] = FLAG_TIMESTAMP.toByte()
+        programs[index] = null
+        targets[index] = null
+        targetPassIds[index] = targetPassId
+        textureMasks[index] = 0
+        timestampPools!![index] = pool
+        timestampIndices!![index] = queryIndex
+        hasTimestampsThisFrame = true
+        return index
+    }
+
     fun sameTexturesAt(index: Int, boundTextures: Array<TextureHandle?>, boundMask: Int): Boolean {
         if (textureMasks[index] != boundMask) return false
         if (boundMask == 0) return true
-        if (texture0[index] !== boundTextures[0]) return false
+        val t0 = boundTextures[0]
+        if (texture0[index] !== t0) return false
+        if (sampler0[index] !== (t0 as? VulkanTexture)?.sampler) return false
         var extra = boundMask and 1.inv()
         if (extra == 0) return true
         val slotOverflow = overflowTextures?.get(index) ?: return false
+        val samplerOverflow = overflowSamplers?.get(index) ?: return false
         while (extra != 0) {
             val bit = Integer.numberOfTrailingZeros(extra)
-            if (slotOverflow[bit] !== boundTextures[bit]) return false
+            val tex = boundTextures[bit]
+            if (slotOverflow[bit] !== tex) return false
+            if (samplerOverflow[bit] !== (tex as? VulkanTexture)?.sampler) return false
             extra = extra and (extra - 1)
         }
         return true
@@ -317,18 +415,26 @@ internal class DrawCallRecorder(
         textureMasks[index] = textureMask
         if (textureMask == 0) return
         hasAnyTextureThisFrame = true
-        texture0[index] = boundTextures[0]
+        val t0 = boundTextures[0]
+        texture0[index] = t0
+        sampler0[index] = (t0 as? VulkanTexture)?.sampler
         var extra = textureMask and 1.inv()
         if (extra == 0) return
         val table = ensureOverflowTextures()
+        val samplerTable = ensureOverflowSamplers()
         var slotArray = table[index]
+        var samplerArray = samplerTable[index]
         if (slotArray == null) {
             slotArray = arrayOfNulls(TEXTURE_UNITS)
+            samplerArray = arrayOfNulls(TEXTURE_UNITS)
             table[index] = slotArray
+            samplerTable[index] = samplerArray
         }
         while (extra != 0) {
             val bit = Integer.numberOfTrailingZeros(extra)
-            slotArray[bit] = boundTextures[bit]
+            val tex = boundTextures[bit]
+            slotArray[bit] = tex
+            samplerArray!![bit] = (tex as? VulkanTexture)?.sampler
             extra = extra and (extra - 1)
         }
         hasOverflowTexturesThisFrame = true
@@ -341,18 +447,22 @@ internal class DrawCallRecorder(
             Arrays.fill(targets, 0, previousSize, null)
             if (hasAnyTextureThisFrame) {
                 Arrays.fill(texture0, 0, previousSize, null)
+                Arrays.fill(sampler0, 0, previousSize, null)
             }
             if (hasOverflowTexturesThisFrame) {
                 val overflow = overflowTextures
+                val overflowSamp = overflowSamplers
                 if (overflow != null) {
                     for (i in 0 until previousSize) {
                         var extra = textureMasks[i] and 1.inv()
                         if (extra != 0) {
                             val arr = overflow[i]
+                            val sArr = overflowSamp?.get(i)
                             if (arr != null) {
                                 while (extra != 0) {
                                     val bit = Integer.numberOfTrailingZeros(extra)
                                     arr[bit] = null
+                                    if (sArr != null) sArr[bit] = null
                                     extra = extra and (extra - 1)
                                 }
                             }
@@ -386,8 +496,14 @@ internal class DrawCallRecorder(
                     }
                 }
             }
+            if (hasBlitsThisFrame) {
+                blitSources?.let { Arrays.fill(it, 0, previousSize, null) }
+            }
             if (hasDebugGroupsThisFrame) {
                 debugGroupLabels?.let { Arrays.fill(it, 0, previousSize, null) }
+            }
+            if (hasTimestampsThisFrame) {
+                timestampPools?.let { Arrays.fill(it, 0, previousSize, null) }
             }
         }
         size = 0
@@ -395,7 +511,9 @@ internal class DrawCallRecorder(
         hasOverflowTexturesThisFrame = false
         hasDirectThisFrame = false
         hasOverflowDirectThisFrame = false
+        hasBlitsThisFrame = false
         hasDebugGroupsThisFrame = false
+        hasTimestampsThisFrame = false
 
         val currentCap = flags.size
         if (currentCap > minRetainedCapacity) {
@@ -441,8 +559,10 @@ internal class DrawCallRecorder(
         scissorWH = scissorWH.copyOf(newCap)
         textureMasks = textureMasks.copyOf(newCap)
         texture0 = texture0.copyOf(newCap)
+        sampler0 = sampler0.copyOf(newCap)
 
         overflowTextures = overflowTextures?.copyOf(newCap)
+        overflowSamplers = overflowSamplers?.copyOf(newCap)
         if (directVertexBuffer0 != null) {
             directVertexBuffer0 = directVertexBuffer0!!.copyOf(newCap)
             directVertexOffset0 = directVertexOffset0!!.copyOf(newCap)
@@ -465,7 +585,30 @@ internal class DrawCallRecorder(
             clearAlpha = clearAlpha!!.copyOf(newCap)
             clearDepth = clearDepth!!.copyOf(newCap)
         }
+        if (blitSources != null) {
+            blitSources = blitSources!!.copyOf(newCap)
+            blitSrcX = blitSrcX!!.copyOf(newCap)
+            blitSrcY = blitSrcY!!.copyOf(newCap)
+            blitSrcW = blitSrcW!!.copyOf(newCap)
+            blitSrcH = blitSrcH!!.copyOf(newCap)
+            blitDstX = blitDstX!!.copyOf(newCap)
+            blitDstY = blitDstY!!.copyOf(newCap)
+            blitDstW = blitDstW!!.copyOf(newCap)
+            blitDstH = blitDstH!!.copyOf(newCap)
+            blitFlags = blitFlags!!.copyOf(newCap)
+        }
         debugGroupLabels = debugGroupLabels?.copyOf(newCap)
+        if (timestampPools != null) {
+            timestampPools = timestampPools!!.copyOf(newCap)
+            timestampIndices = timestampIndices!!.copyOf(newCap)
+        }
+    }
+
+    private fun ensureTimestampArrays() {
+        if (timestampPools != null) return
+        val cap = flags.size
+        timestampPools = arrayOfNulls(cap)
+        timestampIndices = IntArray(cap)
     }
 
     private fun ensureDebugGroupLabels(): Array<String?> {
@@ -476,6 +619,11 @@ internal class DrawCallRecorder(
     private fun ensureOverflowTextures(): Array<Array<TextureHandle?>?> {
         overflowTextures?.let { return it }
         return arrayOfNulls<Array<TextureHandle?>?>(flags.size).also { overflowTextures = it }
+    }
+
+    private fun ensureOverflowSamplers(): Array<Array<PresetGpuSampler?>?> {
+        overflowSamplers?.let { return it }
+        return arrayOfNulls<Array<PresetGpuSampler?>?>(flags.size).also { overflowSamplers = it }
     }
 
     private fun ensureDirectArrays() {
@@ -509,6 +657,21 @@ internal class DrawCallRecorder(
         clearDepth = DoubleArray(cap)
     }
 
+    private fun ensureBlitArrays() {
+        if (blitSources != null) return
+        val cap = flags.size
+        blitSources = arrayOfNulls(cap)
+        blitSrcX = IntArray(cap)
+        blitSrcY = IntArray(cap)
+        blitSrcW = IntArray(cap)
+        blitSrcH = IntArray(cap)
+        blitDstX = IntArray(cap)
+        blitDstY = IntArray(cap)
+        blitDstW = IntArray(cap)
+        blitDstH = IntArray(cap)
+        blitFlags = ByteArray(cap)
+    }
+
     private fun nextPowerOfTwo(value: Int): Int {
         var cap = 1
         while (cap < value) cap = cap shl 1
@@ -528,6 +691,13 @@ internal class DrawCallRecorder(
         const val FLAG_CLEAR_MASK = FLAG_CLEAR_COLOR or FLAG_CLEAR_DEPTH
         const val FLAG_DEBUG_PUSH = 1 shl 4
         const val FLAG_DEBUG_POP = 1 shl 5
-        const val FLAG_SPECIAL_MASK = FLAG_CLEAR_MASK or FLAG_DEBUG_PUSH or FLAG_DEBUG_POP
+        const val FLAG_BLIT = 1 shl 6
+        const val FLAG_TIMESTAMP = 1 shl 7
+        const val FLAG_SPECIAL_MASK = FLAG_CLEAR_MASK or FLAG_DEBUG_PUSH or FLAG_DEBUG_POP or FLAG_BLIT or FLAG_TIMESTAMP
+
+        const val BLIT_FLAG_LINEAR = 1 shl 0
+        const val BLIT_FLAG_COLOR = 1 shl 1
+        const val BLIT_FLAG_DEPTH = 1 shl 2
+        const val BLIT_FLAG_NATIVE = 1 shl 3
     }
 }

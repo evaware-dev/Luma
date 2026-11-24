@@ -8,6 +8,7 @@ import sweetie.evaware.luma.api.BlendFunction
 import sweetie.evaware.luma.api.DepthCompare
 import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuSampler
 import sweetie.evaware.luma.vertex.VertexLayout
 
 class VulkanMergeTest {
@@ -180,7 +181,7 @@ class VulkanMergeTest {
             debugEvents.add("pop")
         }
 
-        override fun onPipelineChanged(program: Program, pipelineKey: Int) {
+        override fun onPipelineChanged(program: Program, pipelineKey: Long) {
             pipelineChanges.add(
                 PipelineParams(
                     program,
@@ -203,7 +204,9 @@ class VulkanMergeTest {
             program: Program,
             textureMask: Int,
             texture0: TextureHandle?,
-            overflowTextures: Array<TextureHandle?>?
+            sampler0: PresetGpuSampler?,
+            overflowTextures: Array<TextureHandle?>?,
+            overflowSamplers: Array<PresetGpuSampler?>?
         ) {
             textureChanges.add(program to texture0)
         }
@@ -438,8 +441,8 @@ class VulkanMergeTest {
         val tracker = RenderStateTracker()
         tracker.beginFrame()
         assertEquals(
-            PipelineStateKey.DEFAULT_STATE_BITS or PrimitiveType.TRIANGLES.ordinal,
-            tracker.statePipelineBits or PrimitiveType.TRIANGLES.ordinal
+            PipelineStateKey.DEFAULT_STATE_BITS or PrimitiveType.TRIANGLES.ordinal.toLong(),
+            tracker.statePipelineBits or PrimitiveType.TRIANGLES.ordinal.toLong()
         )
 
         tracker.blend(false)
@@ -448,6 +451,7 @@ class VulkanMergeTest {
         tracker.depthWrite(true)
         tracker.depthCompare(DepthCompare.LESS_OR_EQUAL)
         tracker.cull(true)
+        tracker.colorMask(true, false, true, false)
 
         val expected = PipelineStateKey.pack(
             PrimitiveType.QUADS,
@@ -456,9 +460,10 @@ class VulkanMergeTest {
             depthEnabled = true,
             depthWrite = true,
             depthFunc = DepthCompare.LESS_OR_EQUAL,
-            cullEnabled = true
+            cullEnabled = true,
+            colorWriteMask = PipelineStateKey.COLOR_WRITE_RED or PipelineStateKey.COLOR_WRITE_BLUE
         )
-        assertEquals(expected, tracker.statePipelineBits or PrimitiveType.QUADS.ordinal)
+        assertEquals(expected, tracker.statePipelineBits or PrimitiveType.QUADS.ordinal.toLong())
 
         tracker.depthTest(false)
         val expectedNoDepth = PipelineStateKey.pack(
@@ -468,9 +473,10 @@ class VulkanMergeTest {
             depthEnabled = false,
             depthWrite = false,
             depthFunc = DepthCompare.ALWAYS,
-            cullEnabled = true
+            cullEnabled = true,
+            colorWriteMask = PipelineStateKey.COLOR_WRITE_RED or PipelineStateKey.COLOR_WRITE_BLUE
         )
-        assertEquals(expectedNoDepth, tracker.statePipelineBits or PrimitiveType.LINES.ordinal)
+        assertEquals(expectedNoDepth, tracker.statePipelineBits or PrimitiveType.LINES.ordinal.toLong())
     }
 
     @Test

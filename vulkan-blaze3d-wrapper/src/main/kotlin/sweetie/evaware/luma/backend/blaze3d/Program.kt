@@ -14,6 +14,7 @@ import sweetie.evaware.luma.vertex.VertexInputLayout
 import sweetie.evaware.luma.vertex.VertexLayout
 
 data class SamplerBinding(val name: String, val unit: Int)
+
 class Program internal constructor(
     val id: Any,
     val vertexSource: String,
@@ -28,23 +29,7 @@ class Program internal constructor(
         vertexSource: String,
         fragmentSource: String,
         layouts: VertexInputLayout,
-        scheduleClose: ((() -> Unit) -> Unit) = { action -> action() }
-    ) : this(id, vertexSource, fragmentSource, layouts, scheduleClose, null, null)
-
-    constructor(
-        id: Any,
-        vertexSource: String,
-        fragmentSource: String,
-        layout: VertexLayout,
-        scheduleClose: ((() -> Unit) -> Unit) = { action -> action() }
-    ) : this(id, vertexSource, fragmentSource, VertexInputLayout().binding(layout), scheduleClose, null, null)
-
-    constructor(
-        id: Any,
-        vertexSource: String,
-        fragmentSource: String,
-        layouts: VertexInputLayout,
-        reflection: ShaderReflection?,
+        reflection: ShaderReflection? = null,
         scheduleClose: ((() -> Unit) -> Unit) = { action -> action() }
     ) : this(id, vertexSource, fragmentSource, layouts, scheduleClose, null, reflection)
 
@@ -53,13 +38,13 @@ class Program internal constructor(
         vertexSource: String,
         fragmentSource: String,
         layout: VertexLayout,
-        reflection: ShaderReflection?,
+        reflection: ShaderReflection? = null,
         scheduleClose: ((() -> Unit) -> Unit) = { action -> action() }
     ) : this(id, vertexSource, fragmentSource, VertexInputLayout().binding(layout), scheduleClose, null, reflection)
 
     val layout = layouts.layout(0)
     internal val strideBytes = layout.strideFloats * Float.SIZE_BYTES
-    private var pipelineKeys = IntArray(32)
+    private var pipelineKeys = LongArray(32)
     private var pipelines = arrayOfNulls<PresetPipeline>(32)
     private var pipelineGenerations = LongArray(32) { Long.MIN_VALUE }
     private var pipelineCount = 0
@@ -123,6 +108,7 @@ class Program internal constructor(
         resolvedHandlesEntryCount = entryCount
         return resolvedUniformHandles
     }
+
     internal val uniformBlockBytes = run {
         var bytes = 0
         for (index in vulkanUniforms.indices) {
@@ -134,7 +120,7 @@ class Program internal constructor(
 
     internal fun getOrCreatePipeline(
         preset: VulkanPreset,
-        pipelineKey: Int,
+        pipelineKey: Long,
         hasDepthAttachment: Boolean,
         pipelineGeneration: Long
     ): PresetPipeline {
@@ -161,8 +147,8 @@ class Program internal constructor(
 
     private fun createAndCachePipeline(
         preset: VulkanPreset,
-        pipelineKey: Int,
-        fullKey: Int,
+        pipelineKey: Long,
+        fullKey: Long,
         hasDepthAttachment: Boolean,
         pipelineGeneration: Long
     ): PresetPipeline {
@@ -171,6 +157,7 @@ class Program internal constructor(
             topology = PipelineStateKey.unpackTopology(pipelineKey),
             blendEnabled = PipelineStateKey.unpackBlendEnabled(pipelineKey),
             blendFunction = PipelineStateKey.unpackBlendFunction(pipelineKey),
+            colorWriteMask = PipelineStateKey.unpackColorWriteMask(pipelineKey),
             depthEnabled = PipelineStateKey.unpackDepthEnabled(pipelineKey),
             depthWrite = PipelineStateKey.unpackDepthWrite(pipelineKey),
             depthFunc = PipelineStateKey.unpackDepthFunc(pipelineKey),
@@ -214,7 +201,8 @@ class Program internal constructor(
             depthEnabled = false,
             depthWrite = false,
             depthFunc = DepthCompare.ALWAYS,
-            cullEnabled = false
+            cullEnabled = false,
+            colorWriteMask = PipelineStateKey.DEFAULT_COLOR_WRITE_MASK
         )
         getOrCreatePipeline(preset, defaultKey, false, pipelineGeneration)
         getOrCreatePipeline(preset, defaultKey, true, pipelineGeneration)

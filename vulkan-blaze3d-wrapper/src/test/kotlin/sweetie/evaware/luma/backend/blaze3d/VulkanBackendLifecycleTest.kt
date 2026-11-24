@@ -12,7 +12,10 @@ import sweetie.evaware.luma.api.BufferUsage
 import sweetie.evaware.luma.api.IndexType
 import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.RenderTargetFormat
+import sweetie.evaware.luma.api.SamplerState
+import sweetie.evaware.luma.api.TextureFilter
 import sweetie.evaware.luma.api.TextureFormat
+import sweetie.evaware.luma.api.TextureWrap
 import sweetie.evaware.luma.backend.blaze3d.preset.*
 import sweetie.evaware.luma.shader.translator.ShaderAttributeInfo
 import sweetie.evaware.luma.shader.translator.ShaderReflection
@@ -316,20 +319,23 @@ class VulkanBackendLifecycleTest {
                         for (depthWrite in booleanArrayOf(false, true)) {
                             for (depthFunc in sweetie.evaware.luma.api.DepthCompare.entries) {
                                 for (cull in booleanArrayOf(false, true)) {
-                                    val key = PipelineStateKey.pack(
-                                        topology, blendEnabled, blend, depthEnabled, depthWrite, depthFunc, cull
-                                    )
-                                    assertTrue("Bit 31 must remain free for hasDepthAttachment", key >= 0)
-                                    assertEquals(topology, PipelineStateKey.unpackTopology(key))
-                                    assertEquals(blendEnabled, PipelineStateKey.unpackBlendEnabled(key))
-                                    assertEquals(blend, PipelineStateKey.unpackBlendFunction(key))
-                                    assertEquals(depthEnabled, PipelineStateKey.unpackDepthEnabled(key))
-                                    assertEquals(depthEnabled && depthWrite, PipelineStateKey.unpackDepthWrite(key))
-                                    assertEquals(
-                                        if (depthEnabled) depthFunc else sweetie.evaware.luma.api.DepthCompare.ALWAYS,
-                                        PipelineStateKey.unpackDepthFunc(key)
-                                    )
-                                    assertEquals(cull, PipelineStateKey.unpackCullEnabled(key))
+                                    for (colorMask in intArrayOf(0, 1, 5, 10, 15)) {
+                                        val key = PipelineStateKey.pack(
+                                            topology, blendEnabled, blend, depthEnabled, depthWrite, depthFunc, cull, colorMask
+                                        )
+                                        assertTrue("Bit 63 must remain free for hasDepthAttachment", key >= 0L)
+                                        assertEquals(topology, PipelineStateKey.unpackTopology(key))
+                                        assertEquals(blendEnabled, PipelineStateKey.unpackBlendEnabled(key))
+                                        assertEquals(blend, PipelineStateKey.unpackBlendFunction(key))
+                                        assertEquals(depthEnabled, PipelineStateKey.unpackDepthEnabled(key))
+                                        assertEquals(depthEnabled && depthWrite, PipelineStateKey.unpackDepthWrite(key))
+                                        assertEquals(
+                                            if (depthEnabled) depthFunc else sweetie.evaware.luma.api.DepthCompare.ALWAYS,
+                                            PipelineStateKey.unpackDepthFunc(key)
+                                        )
+                                        assertEquals(cull, PipelineStateKey.unpackCullEnabled(key))
+                                        assertEquals(colorMask, PipelineStateKey.unpackColorWriteMask(key))
+                                    }
                                 }
                             }
                         }
@@ -478,6 +484,69 @@ class VulkanBackendLifecycleTest {
         }
     }
 
+    @Test
+    fun colorMaskSamplerUpdatesAndBlitPathsWorkCleanly() {
+        val preset = FakeVulkanPreset("wave1-features", autoCompleteOnWait = true)
+        val backend = Backend(preset, VulkanBackendConfig(precompileDefaultPipeline = false))
+        try {
+            assertFalse(backend.supportsStencil)
+            val layout = VertexLayout().apply { add(ShaderVertType.FLOAT, 2, 0) }
+            val program = backend.createProgram("", "uniform sampler2D Sampler0;", layout)
+            val src = backend.createRenderTarget(16, 16, useDepth = true, format = RenderTargetFormat.RGBA8)
+            val dstSame = backend.createRenderTarget(16, 16, useDepth = true, format = RenderTargetFormat.RGBA8)
+            val dstScaled = backend.createRenderTarget(32, 32, useDepth = false, format = RenderTargetFormat.RGBA8)
+            val tex = backend.createTexture(
+                BufferedImage(4, 4, BufferedImage.TYPE_INT_ARGB),
+                mipmap = false,
+                format = TextureFormat.RGBA8,
+                sampler = SamplerState.NEAREST_CLAMP
+            )
+            val verts = ByteBuffer.allocateDirect(6 * Float.SIZE_BYTES).order(ByteOrder.nativeOrder()).asFloatBuffer()
+            verts.put(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f))
+
+            backend.beginFrame()
+            backend.beginRenderTarget(src, null)
+            backend.bindTexture(tex, 0)
+            // Draw 1 with colorMask(false) and NEAREST_CLAMP
+            backend.colorMask(false, false, false, false)
+            backend.draw(program, verts, 3, ShaderUniforms(), PrimitiveType.TRIANGLES)
+            // Switch sampler mid-frame AND restore colorMask -> must NOT merge with draw 1 and must bind new sampler
+            backend.colorMask(true, true, true, true)
+            backend.setTextureSampler(tex, SamplerState.LINEAR_REPEAT)
+            backend.draw(program, verts, 3, ShaderUniforms(), PrimitiveType.TRIANGLES)
+            backend.endRenderTarget()
+
+            // 1:1 matching-format blit -> native copyTextureToTexture (zero blit shader!)
+            backend.blitRenderTarget(src, dstSame, filter = TextureFilter.NEAREST)
+            // Scaled blit -> internal blit shader pass
+            backend.blitRenderTarget(src, dstScaled, filter = TextureFilter.LINEAR)
+            // Self-blit must be rejected to avoid attachment/sampler hazard
+            val selfBlitError = runCatching {
+                backend.blitRenderTarget(src, src, filter = TextureFilter.NEAREST)
+            }.exceptionOrNull()
+            assertTrue(selfBlitError is IllegalArgumentException)
+            backend.endFrame()
+
+            assertEquals(listOf(0, 15, 15), preset.pipelineColorWriteMasks)
+            assertEquals(1, preset.copyTextureCalls)
+            // Two user texture binds (different samplers) + one blit texture bind = 3
+            assertEquals(3, preset.textureBindCalls)
+            assertTrue(preset.createdSamplers.any { it.startsWith("REPEAT/REPEAT/LINEAR/LINEAR") })
+
+            tex.close()
+            dstScaled.close()
+            dstSame.close()
+            src.close()
+            program.close()
+        } finally {
+            backend.close()
+            // Idempotent close must not crash or double-free
+            backend.close()
+        }
+        // All created pipelines (2 user + 1 internal blit) must be closed cleanly
+        assertEquals(preset.createdPipelines, preset.closedPipelines)
+    }
+
     private class FakeVulkanPreset(
         override val name: String,
         var autoCompleteOnWait: Boolean = false
@@ -490,9 +559,12 @@ class VulkanBackendLifecycleTest {
         var submittedEncoders = 0
         var textureBindCalls = 0
         var sequentialIndexBindCalls = 0
+        var copyTextureCalls = 0
         val createdTextureFormats = ArrayList<PresetFormat>()
         val textureUploadByteSizes = ArrayList<Int>()
         val debugGroupEvents = ArrayList<String>()
+        val pipelineColorWriteMasks = ArrayList<Int>()
+        val createdSamplers = ArrayList<String>()
 
         private val fences = ArrayList<FakeFence>()
         private val sharedSequentialBuffer = FakeBuffer(65536)
@@ -521,15 +593,22 @@ class VulkanBackendLifecycleTest {
             FakeTextureView(texture)
 
         override fun createSampler(
-            addressMode: PresetAddressMode,
-            filterMode: PresetFilterMode,
-            maxAnisotropy: Int
-        ): PresetGpuSampler = object : PresetGpuSampler {
-            override fun close() {}
+            addressU: PresetAddressMode,
+            addressV: PresetAddressMode,
+            minFilter: PresetFilterMode,
+            magFilter: PresetFilterMode,
+            maxAnisotropy: Int,
+            maxLod: Double?
+        ): PresetGpuSampler {
+            createdSamplers.add("$addressU/$addressV/$minFilter/$magFilter/$maxAnisotropy/$maxLod")
+            return object : PresetGpuSampler {
+                override fun close() {}
+            }
         }
 
         override fun createPipeline(descriptor: PresetPipelineDescriptor): PresetPipeline {
             createdPipelines++
+            pipelineColorWriteMasks.add(descriptor.colorWriteMask)
             return object : PresetPipeline {
                 override fun close() {
                     closedPipelines++
@@ -599,6 +678,19 @@ class VulkanBackendLifecycleTest {
                 height: Int
             ) {
                 textureUploadByteSizes.add(data.remaining())
+            }
+            override fun copyTextureToTexture(
+                source: PresetGpuTexture,
+                destination: PresetGpuTexture,
+                mipLevel: Int,
+                dstX: Int,
+                dstY: Int,
+                srcX: Int,
+                srcY: Int,
+                width: Int,
+                height: Int
+            ) {
+                copyTextureCalls++
             }
             override fun clearColorTexture(texture: PresetGpuTexture, red: Float, green: Float, blue: Float, alpha: Float) {}
             override fun clearDepthTexture(texture: PresetGpuTexture, depth: Double) {}

@@ -2,8 +2,8 @@ package sweetie.evaware.luma.minecraft
 
 import com.mojang.blaze3d.pipeline.RenderTarget
 import sweetie.evaware.luma.GraphicsBackend
-import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.RenderTargetHandle
+import sweetie.evaware.luma.api.SamplerState
 import sweetie.evaware.luma.backend.blaze3d.VulkanRenderTarget
 import sweetie.evaware.luma.backend.gl.GlRenderTarget
 import sweetie.evaware.luma.backend.gl.GlTexture
@@ -14,7 +14,7 @@ object MinecraftRenderTargets {
     @JvmOverloads
     fun borrow(
         target: RenderTarget,
-        filter: RenderTargetFilter = RenderTargetFilter.NEAREST
+        sampler: SamplerState = SamplerState.NEAREST_CLAMP
     ): RenderTargetHandle {
         val colorView = requireNotNull(target.colorTextureView) {
             "Render target has no color texture"
@@ -23,11 +23,11 @@ object MinecraftRenderTargets {
         return if (MinecraftRenderPlatform.activeBackend == GraphicsBackend.OPENGL) {
             val width = colorView.getWidth(0)
             val height = colorView.getHeight(0)
-            val color = MinecraftTextures.borrow(colorView, filter) as GlTexture
+            val color = MinecraftTextures.borrow(colorView, sampler) as GlTexture
             var depth: GlTexture? = null
             try {
                 depth = depthView?.let {
-                    MinecraftTextures.borrow(it, RenderTargetFilter.NEAREST) as GlTexture
+                    MinecraftTextures.borrow(it, SamplerState.NEAREST_CLAMP) as GlTexture
                 }
                 GlRenderTarget.borrow(
                     FramebufferHandle.resolve(colorView, depthView),
@@ -42,7 +42,7 @@ object MinecraftRenderTargets {
                 throw failure
             }
         } else {
-            VulkanRenderTarget.borrow(colorView, depthView, filter)
+            VulkanRenderTarget.borrow(colorView, depthView, sampler)
         }
     }
 }

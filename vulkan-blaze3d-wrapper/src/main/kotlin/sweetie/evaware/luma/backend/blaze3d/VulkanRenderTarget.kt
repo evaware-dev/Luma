@@ -1,9 +1,10 @@
 package sweetie.evaware.luma.backend.blaze3d
 
 import sweetie.evaware.luma.LumaNames
-import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
+import sweetie.evaware.luma.api.SamplerState
+import sweetie.evaware.luma.api.TextureFormat
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.backend.blaze3d.preset.PresetFormat
 import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuSampler
@@ -22,31 +23,10 @@ class VulkanRenderTarget internal constructor(
     override val width: Int,
     override val height: Int,
     private val ownsAttachments: Boolean,
-    private var retirement: VulkanRetirementQueue?
+    private var retirement: VulkanRetirementQueue?,
+    override val format: RenderTargetFormat = RenderTargetFormat.RGBA8,
+    override val hasStencil: Boolean = false
 ) : RenderTargetHandle {
-    constructor(
-        gpuTexture: PresetGpuTexture,
-        colorView: PresetGpuTextureView,
-        colorAsTexture: VulkanTexture,
-        gpuDepthTexture: PresetGpuTexture?,
-        depthView: PresetGpuTextureView?,
-        depthAsTexture: VulkanTexture?,
-        width: Int,
-        height: Int,
-        ownsAttachments: Boolean = true
-    ) : this(
-        gpuTexture,
-        colorView,
-        colorAsTexture,
-        gpuDepthTexture,
-        depthView,
-        depthAsTexture,
-        width,
-        height,
-        ownsAttachments,
-        null
-    )
-
     override val colorTexture: TextureHandle get() = colorAsTexture
     override val depthTexture: TextureHandle? get() = depthAsTexture
     private var closed = false
@@ -102,13 +82,20 @@ class VulkanRenderTarget internal constructor(
             useDepth: Boolean,
             format: RenderTargetFormat,
             sampler: PresetGpuSampler,
+            samplerState: SamplerState,
+            useStencil: Boolean,
             uploads: TextureUploadQueue,
             preset: VulkanPreset,
             retirement: VulkanRetirementQueue
         ): VulkanRenderTarget {
+            require(width > 0 && height > 0) { "Render target dimensions must be positive: ${width}x${height}" }
             val presetFormat = when (format) {
                 RenderTargetFormat.RGBA8 -> PresetFormat.RGBA8_UNORM
                 RenderTargetFormat.RGBA16F -> PresetFormat.RGBA16_FLOAT
+            }
+            val colorTexFormat = when (format) {
+                RenderTargetFormat.RGBA8 -> TextureFormat.RGBA8
+                RenderTargetFormat.RGBA16F -> TextureFormat.RGBA16F
             }
 
             var texture: PresetGpuTexture? = null
@@ -124,7 +111,7 @@ class VulkanRenderTarget internal constructor(
                     height
                 )
                 textureView = preset.createTextureView(texture)
-                if (useDepth) {
+                if (useDepth || useStencil) {
                     depthTexture = preset.createTexture(
                         { LumaNames.DEPTH_TEXTURE },
                         DEPTH_USAGE,
@@ -135,9 +122,31 @@ class VulkanRenderTarget internal constructor(
                     depthView = preset.createTextureView(depthTexture)
                 }
 
-                val colorTexture = VulkanTexture(texture, textureView, sampler, width, height, uploads, retirement = retirement)
+                val colorTexture = VulkanTexture(
+                    texture,
+                    textureView,
+                    sampler,
+                    width,
+                    height,
+                    uploads,
+                    retirement = retirement,
+                    format = colorTexFormat,
+                    samplerState = samplerState
+                )
                 val depthAsTexture = if (depthTexture != null && depthView != null) {
-                    VulkanTexture(depthTexture, depthView, sampler, width, height, null, false, false, false, retirement)
+                    VulkanTexture(
+                        depthTexture,
+                        depthView,
+                        sampler,
+                        width,
+                        height,
+                        null,
+                        ownsTexture = false,
+                        ownsView = false,
+                        ownsSampler = false,
+                        retirement = retirement,
+                        samplerState = samplerState
+                    )
                 } else {
                     null
                 }
@@ -150,8 +159,10 @@ class VulkanRenderTarget internal constructor(
                     depthAsTexture,
                     width,
                     height,
-                    true,
-                    retirement
+                    ownsAttachments = true,
+                    retirement = retirement,
+                    format = format,
+                    hasStencil = false
                 )
             } catch (throwable: Throwable) {
                 depthView?.close()
@@ -165,21 +176,21 @@ class VulkanRenderTarget internal constructor(
         fun borrow(
             colorView: Any,
             depthView: Any? = null,
-            filter: RenderTargetFilter = RenderTargetFilter.NEAREST,
+            sampler: SamplerState = SamplerState.NEAREST_CLAMP,
             preset: VulkanPreset = VulkanPresets.active
-        ): VulkanRenderTarget = borrow(colorView, depthView, filter, preset, VulkanTexture.activeBackendRetirement(preset))
+        ): VulkanRenderTarget = borrow(colorView, depthView, sampler, preset, VulkanTexture.activeBackendRetirement(preset))
 
         internal fun borrow(
             colorView: Any,
             depthView: Any?,
-            filter: RenderTargetFilter,
+            sampler: SamplerState,
             preset: VulkanPreset,
             retirement: VulkanRetirementQueue?
         ): VulkanRenderTarget {
-            val color = VulkanTexture.borrow(colorView, filter, preset, retirement)
+            val color = VulkanTexture.borrow(colorView, sampler, preset, retirement)
             var depth: VulkanTexture? = null
             try {
-                depth = depthView?.let { VulkanTexture.borrow(it, RenderTargetFilter.NEAREST, preset, retirement) }
+                depth = depthView?.let { VulkanTexture.borrow(it, SamplerState.NEAREST_CLAMP, preset, retirement) }
                 val wrappedColor = color.view
                 val wrappedDepth = depth?.view
                 return VulkanRenderTarget(
@@ -191,8 +202,8 @@ class VulkanRenderTarget internal constructor(
                     depth,
                     wrappedColor.getWidth(0),
                     wrappedColor.getHeight(0),
-                    false,
-                    retirement
+                    ownsAttachments = false,
+                    retirement = retirement
                 )
             } catch (failure: Throwable) {
                 depth?.close()

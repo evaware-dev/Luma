@@ -88,6 +88,7 @@ data class PresetPipelineDescriptor(
     val topology: PrimitiveType,
     val blendEnabled: Boolean,
     val blendFunction: BlendFunction,
+    val colorWriteMask: Int = 0xF,
     val depthEnabled: Boolean,
     val depthWrite: Boolean,
     val depthFunc: DepthCompare,
@@ -138,6 +139,11 @@ interface PresetFence : AutoCloseable {
     fun awaitCompletion(timeoutNs: Long): Boolean
 }
 
+interface PresetTimestampQueryPool : AutoCloseable {
+    val size: Int
+    fun tryReadValues(count: Int, outValues: LongArray): Boolean
+}
+
 interface PresetSequentialBuffer {
     val buffer: PresetGpuBuffer
     val indexCount: Int
@@ -146,6 +152,17 @@ interface PresetSequentialBuffer {
 interface PresetCommandEncoder {
     fun writeToBuffer(slice: PresetGpuBufferSlice, data: ByteBuffer)
     fun writeToTexture(texture: PresetGpuTexture, data: ByteBuffer, mip: Int, depth: Int, x: Int, y: Int, width: Int, height: Int)
+    fun copyTextureToTexture(
+        source: PresetGpuTexture,
+        destination: PresetGpuTexture,
+        mipLevel: Int,
+        dstX: Int,
+        dstY: Int,
+        srcX: Int,
+        srcY: Int,
+        width: Int,
+        height: Int
+    )
     fun clearColorTexture(texture: PresetGpuTexture, red: Float, green: Float, blue: Float, alpha: Float)
     fun clearDepthTexture(texture: PresetGpuTexture, depth: Double)
     fun clearColorAndDepthTextures(
@@ -158,6 +175,9 @@ interface PresetCommandEncoder {
         depthValue: Double
     )
     fun createRenderPass(label: () -> String, colorView: PresetGpuTextureView, depthView: PresetGpuTextureView?): PresetRenderPass
+    fun writeTimestamp(pool: PresetTimestampQueryPool, queryIndex: Int) {
+        throw UnsupportedOperationException("GPU timestamp queries are not supported")
+    }
     fun createFence(): PresetFence
     fun submit()
 }
@@ -165,6 +185,9 @@ interface PresetCommandEncoder {
 interface PresetRenderPass : AutoCloseable {
     fun pushDebugGroup(label: String) {}
     fun popDebugGroup() {}
+    fun writeTimestamp(pool: PresetTimestampQueryPool, queryIndex: Int) {
+        throw UnsupportedOperationException("GPU timestamp queries are not supported")
+    }
     fun setPipeline(pipeline: PresetPipeline)
     fun setUniform(name: String, slice: PresetGpuBufferSlice)
     fun bindTexture(name: String, view: PresetGpuTextureView, sampler: PresetGpuSampler)
@@ -180,11 +203,23 @@ interface PresetRenderPass : AutoCloseable {
 interface VulkanPreset {
     val name: String
     val minUniformOffsetAlignment: Int
+    val supportsTimestamps: Boolean get() = false
+    val timestampPeriodNanos: Double get() = 1.0
+    fun createTimestampQueryPool(size: Int): PresetTimestampQueryPool {
+        throw UnsupportedOperationException("GPU timestamp queries are not supported by $name")
+    }
     fun createBuffer(label: () -> String, usage: Int, sizeBytes: Long): PresetGpuBuffer
     fun createTexture(label: () -> String, usage: Int, format: PresetFormat, width: Int, height: Int): PresetGpuTexture
     fun createTextureView(texture: PresetGpuTexture): PresetGpuTextureView
     fun createTextureView(texture: PresetGpuTexture, baseMip: Int, mipCount: Int): PresetGpuTextureView
-    fun createSampler(addressMode: PresetAddressMode, filterMode: PresetFilterMode, maxAnisotropy: Int): PresetGpuSampler
+    fun createSampler(
+        addressU: PresetAddressMode,
+        addressV: PresetAddressMode,
+        minFilter: PresetFilterMode,
+        magFilter: PresetFilterMode,
+        maxAnisotropy: Int,
+        maxLod: Double? = null
+    ): PresetGpuSampler
     fun createPipeline(descriptor: PresetPipelineDescriptor): PresetPipeline
     fun precompilePipeline(pipeline: PresetPipeline, vertexSource: String, fragmentSource: String): PresetCompilationResult
     fun createCommandEncoder(): PresetCommandEncoder

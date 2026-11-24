@@ -1,39 +1,30 @@
 package sweetie.evaware.luma.backend.blaze3d
 
-import sweetie.evaware.luma.backend.blaze3d.preset.PresetFilterMode
-import org.lwjgl.system.MemoryUtil
-import sweetie.evaware.luma.LumaNames
-import sweetie.evaware.luma.api.BlendFunction
-import sweetie.evaware.luma.api.BufferUsage
-import sweetie.evaware.luma.api.DepthCompare
-import sweetie.evaware.luma.api.IndexBufferHandle
-import sweetie.evaware.luma.api.IndexType
-import sweetie.evaware.luma.api.PrimitiveType
-import sweetie.evaware.luma.api.ProgramHandle
-import sweetie.evaware.luma.api.RenderBackend
-import sweetie.evaware.luma.api.RenderTargetFilter
-import sweetie.evaware.luma.api.RenderTargetFormat
-import sweetie.evaware.luma.api.RenderTargetHandle
-import sweetie.evaware.luma.api.TextureFormat
-import sweetie.evaware.luma.api.TextureHandle
-import sweetie.evaware.luma.api.VertexBufferHandle
-import sweetie.evaware.luma.shader.translator.ShaderReflection
-import sweetie.evaware.luma.uniform.*
-import sweetie.evaware.luma.vertex.VertexLayout
-import sweetie.evaware.luma.vertex.VertexInputLayout
-import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPreset
-import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPresets
 import java.awt.image.BufferedImage
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import org.lwjgl.system.MemoryUtil
+import sweetie.evaware.luma.LumaNames
+import sweetie.evaware.luma.api.*
+import sweetie.evaware.luma.backend.blaze3d.preset.PresetFence
+import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPreset
+import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPresets
+import sweetie.evaware.luma.shader.translator.ShaderAttributeInfo
+import sweetie.evaware.luma.shader.translator.ShaderReflection
+import sweetie.evaware.luma.shader.translator.ShaderSamplerInfo
+import sweetie.evaware.luma.uniform.ShaderUniforms
+import sweetie.evaware.luma.vertex.ShaderVertType
+import sweetie.evaware.luma.vertex.VertexInputLayout
+import sweetie.evaware.luma.vertex.VertexLayout
 
 class Backend(
     val preset: VulkanPreset = VulkanPresets.active,
     private val config: VulkanBackendConfig = VulkanBackendConfig()
 ) : RenderBackend {
     constructor(config: VulkanBackendConfig) : this(VulkanPresets.active, config)
-    private var nextProgramId = 1
 
+    private var nextProgramId = 1
     private var frameId = 0L
     private var pipelineGeneration = 0L
     internal val retirement = VulkanRetirementQueue()
@@ -63,13 +54,18 @@ class Backend(
 
     private val recorder = DrawCallRecorder()
     private val merger = DrawCallMerger()
-    private val passEncoder = RenderPassEncoder(vertexBuffer, uboBuffer)
     private val renderState = RenderStateTracker()
     private val postRecordActions = ArrayList<() -> Unit>()
     private val schedulePostRecordAction: (() -> Unit) -> Unit = { schedulePostRecord(it) }
     private val samplerCache = VulkanSamplerCache(preset, retirement)
     private val textureUploads = TextureUploadQueue(config.maxPooledUploadBytes, retirement)
     private val bufferUploads = BufferUploadQueue(config.initialBufferUploadBytes)
+    private var blitProgram: Program? = null
+    private var blitVertexScratch: ByteBuffer? =
+        MemoryUtil.memAlloc(RenderPassEncoder.BLIT_QUAD_BYTES.toInt()).order(ByteOrder.nativeOrder())
+    private val blitVertexAddress: Long = MemoryUtil.memAddress(blitVertexScratch!!)
+    private var closed = false
+    private val passEncoder = RenderPassEncoder(vertexBuffer, uboBuffer, samplerCache, ::getOrCreateBlitProgram)
 
     private val boundVertexBuffers = arrayOfNulls<VulkanVertexBuffer>(16)
     private val boundVertexOffsets = LongArray(16)
@@ -80,7 +76,17 @@ class Backend(
     private var targetStackDepth = 0
     private var targetPassId = 0
     private var completionFenceRequested = false
-    private var completionFence: sweetie.evaware.luma.backend.blaze3d.preset.PresetFence? = null
+    private var completionFence: PresetFence? = null
+
+    override val supportsStencil: Boolean = false
+    override val supportsGpuTimestamps: Boolean get() = preset.supportsTimestamps
+    override val isDepthTestEnabled: Boolean get() = renderState.depthEnabled
+    override val isDepthWriteEnabled: Boolean get() = renderState.depthWrite
+    override val currentDepthCompare: DepthCompare get() = renderState.depthFunc
+    override val colorMaskRed: Boolean get() = renderState.colorMaskRed
+    override val colorMaskGreen: Boolean get() = renderState.colorMaskGreen
+    override val colorMaskBlue: Boolean get() = renderState.colorMaskBlue
+    override val colorMaskAlpha: Boolean get() = renderState.colorMaskAlpha
 
     override fun beginFrame() {
         retirement.collectCompleted()
@@ -167,25 +173,6 @@ class Backend(
     override fun createProgram(
         vertexSource: String,
         fragmentSource: String,
-        layout: VertexLayout
-    ): ProgramHandle = createProgram(vertexSource, fragmentSource, VertexInputLayout().binding(layout), null)
-
-    override fun createProgram(
-        vertexSource: String,
-        fragmentSource: String,
-        layout: VertexLayout,
-        reflection: ShaderReflection?
-    ): ProgramHandle = createProgram(vertexSource, fragmentSource, VertexInputLayout().binding(layout), reflection)
-
-    override fun createProgram(
-        vertexSource: String,
-        fragmentSource: String,
-        layouts: VertexInputLayout
-    ): ProgramHandle = createProgram(vertexSource, fragmentSource, layouts, null)
-
-    override fun createProgram(
-        vertexSource: String,
-        fragmentSource: String,
         layouts: VertexInputLayout,
         reflection: ShaderReflection?
     ): ProgramHandle {
@@ -206,14 +193,17 @@ class Backend(
 
     override fun bindProgram(program: ProgramHandle) {}
 
-    override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle =
-        createTexture(image, mipmap, TextureFormat.RGBA8)
-
-    override fun createTexture(image: BufferedImage, mipmap: Boolean, format: TextureFormat): TextureHandle {
+    override fun createTexture(
+        image: BufferedImage,
+        mipmap: Boolean,
+        format: TextureFormat,
+        sampler: SamplerState
+    ): TextureHandle {
         require(!mipmap) { "Automatic mipmap generation is not supported by the Vulkan backend" }
         return VulkanTexture.create(
             image,
-            samplerCache.get(VulkanSamplerDescriptor.clamp(PresetFilterMode.LINEAR)),
+            samplerCache.get(sampler),
+            sampler,
             textureUploads,
             preset,
             retirement,
@@ -226,7 +216,8 @@ class Backend(
         height: Int,
         data: ByteBuffer?,
         format: TextureFormat,
-        mipmap: Boolean
+        mipmap: Boolean,
+        sampler: SamplerState
     ): TextureHandle {
         require(!mipmap) { "Automatic mipmap generation is not supported by the Vulkan backend" }
         return VulkanTexture.createRaw(
@@ -234,7 +225,8 @@ class Backend(
             height,
             data,
             format,
-            samplerCache.get(VulkanSamplerDescriptor.clamp(PresetFilterMode.LINEAR)),
+            samplerCache.get(sampler),
+            sampler,
             textureUploads,
             preset,
             retirement
@@ -254,6 +246,17 @@ class Backend(
         data: ByteBuffer
     ) {
         (texture as VulkanTexture).update(x, y, width, height, data)
+    }
+
+    override fun setTextureSampler(texture: TextureHandle, sampler: SamplerState) {
+        val vulkanTexture = texture as VulkanTexture
+        vulkanTexture.requireOpen()
+        vulkanTexture.attachRetirement(retirement)
+        vulkanTexture.replaceSampler(samplerCache.get(sampler), sampler, newOwnsSampler = false)
+    }
+
+    override fun generateMipmaps(texture: TextureHandle) {
+        throw UnsupportedOperationException("Mipmap generation is not supported by the Vulkan backend")
     }
 
     override fun bindTexture(texture: TextureHandle, unit: Int) {
@@ -309,26 +312,18 @@ class Backend(
         width: Int,
         height: Int,
         useDepth: Boolean,
-        format: RenderTargetFormat
-    ): RenderTargetHandle = createRenderTarget(width, height, useDepth, format, RenderTargetFilter.LINEAR)
-
-    override fun createRenderTarget(
-        width: Int,
-        height: Int,
-        useDepth: Boolean,
         format: RenderTargetFormat,
-        filter: RenderTargetFilter
+        sampler: SamplerState,
+        useStencil: Boolean
     ): RenderTargetHandle {
-        val gpuFilter = when (filter) {
-            RenderTargetFilter.NEAREST -> PresetFilterMode.NEAREST
-            RenderTargetFilter.LINEAR -> PresetFilterMode.LINEAR
-        }
         return VulkanRenderTarget.create(
             width,
             height,
             useDepth,
             format,
-            samplerCache.get(VulkanSamplerDescriptor.clamp(gpuFilter)),
+            samplerCache.get(sampler),
+            sampler,
+            useStencil,
             textureUploads,
             preset,
             retirement
@@ -362,22 +357,115 @@ class Backend(
         targetPassId++
     }
 
+    override fun blitRenderTarget(
+        source: RenderTargetHandle,
+        destination: RenderTargetHandle?,
+        srcX: Int,
+        srcY: Int,
+        srcWidth: Int,
+        srcHeight: Int,
+        dstX: Int,
+        dstY: Int,
+        dstWidth: Int,
+        dstHeight: Int,
+        filter: TextureFilter,
+        copyColor: Boolean,
+        copyDepth: Boolean
+    ) {
+        check(targetStackDepth > 0) { "Cannot blit outside a frame" }
+        require(copyColor || copyDepth) { "blitRenderTarget must copy at least color or depth" }
+        require(srcWidth > 0 && srcHeight > 0 && dstWidth > 0 && dstHeight > 0) {
+            "Blit dimensions must be positive"
+        }
+        val vkSource = source as VulkanRenderTarget
+        vkSource.requireOpen()
+        vkSource.attachRetirement(retirement)
+        val vkDestination = (destination as? VulkanRenderTarget)
+            ?: checkNotNull(targetStack[targetStackDepth - 1]) {
+                "Vulkan blitRenderTarget requires a destination render target or an active render target"
+            }
+        vkDestination.requireOpen()
+        vkDestination.attachRetirement(retirement)
+
+        require(vkSource !== vkDestination) {
+            "Source and destination render targets must differ for Vulkan blitRenderTarget"
+        }
+        require(srcX >= 0 && srcY >= 0 && srcX + srcWidth <= vkSource.width && srcY + srcHeight <= vkSource.height) {
+            "Source blit region [$srcX, $srcY, ${srcWidth}x${srcHeight}] exceeds source [${vkSource.width}x${vkSource.height}]"
+        }
+        require(dstX >= 0 && dstY >= 0 && dstX + dstWidth <= vkDestination.width && dstY + dstHeight <= vkDestination.height) {
+            "Destination blit region [$dstX, $dstY, ${dstWidth}x${dstHeight}] exceeds destination [${vkDestination.width}x${vkDestination.height}]"
+        }
+
+        val sameSize = srcWidth == dstWidth && srcHeight == dstHeight
+        if (copyDepth) {
+            require(vkSource.gpuDepthTexture != null && vkDestination.gpuDepthTexture != null) {
+                "Depth blit requires depth attachments on both source and destination"
+            }
+            require(sameSize && vkSource !== vkDestination) {
+                "Scaled or self depth blit is not supported by the Vulkan backend"
+            }
+        }
+
+        val nativeCopy = sameSize &&
+            vkSource !== vkDestination &&
+            destination != null &&
+            (!copyColor || vkSource.format == vkDestination.format)
+
+        val vertexOffset = if (nativeCopy || !copyColor) {
+            -1L
+        } else {
+            val x0 = (dstX.toFloat() / vkDestination.width) * 2f - 1f
+            val x1 = ((dstX + dstWidth).toFloat() / vkDestination.width) * 2f - 1f
+            val y0 = (dstY.toFloat() / vkDestination.height) * 2f - 1f
+            val y1 = ((dstY + dstHeight).toFloat() / vkDestination.height) * 2f - 1f
+            val u0 = srcX.toFloat() / vkSource.width
+            val u1 = (srcX + srcWidth).toFloat() / vkSource.width
+            val v0 = srcY.toFloat() / vkSource.height
+            val v1 = (srcY + srcHeight).toFloat() / vkSource.height
+            val buf = checkNotNull(blitVertexScratch) { "Backend is closed" }
+            buf.putFloat(0, x0).putFloat(4, y0).putFloat(8, u0).putFloat(12, v0)
+            buf.putFloat(16, x1).putFloat(20, y0).putFloat(24, u1).putFloat(28, v0)
+            buf.putFloat(32, x1).putFloat(36, y1).putFloat(40, u1).putFloat(44, v1)
+            buf.putFloat(48, x0).putFloat(52, y0).putFloat(56, u0).putFloat(60, v0)
+            buf.putFloat(64, x1).putFloat(68, y1).putFloat(72, u1).putFloat(76, v1)
+            buf.putFloat(80, x0).putFloat(84, y1).putFloat(88, u0).putFloat(92, v1)
+            vertexStaging.appendFromAddressAligned(
+                blitVertexAddress,
+                RenderPassEncoder.BLIT_QUAD_BYTES.toInt(),
+                RenderPassEncoder.BLIT_QUAD_STRIDE_BYTES
+            )
+        }
+
+        recorder.recordBlit(
+            source = vkSource,
+            destination = vkDestination,
+            targetPassId = targetPassId,
+            srcX = srcX,
+            srcY = srcY,
+            srcWidth = srcWidth,
+            srcHeight = srcHeight,
+            dstX = dstX,
+            dstY = dstY,
+            dstWidth = dstWidth,
+            dstHeight = dstHeight,
+            linearFilter = filter == TextureFilter.LINEAR,
+            copyColor = copyColor,
+            copyDepth = copyDepth,
+            nativeCopy = nativeCopy,
+            vertexOffset = vertexOffset
+        )
+    }
+
     override fun blend(enabled: Boolean) = renderState.blend(enabled)
-
-    override fun blendFunction(function: BlendFunction) =
-        renderState.blendFunction(function)
-
+    override fun blendFunction(function: BlendFunction) = renderState.blendFunction(function)
+    override fun colorMask(red: Boolean, green: Boolean, blue: Boolean, alpha: Boolean) =
+        renderState.colorMask(red, green, blue, alpha)
     override fun depthTest(enabled: Boolean) = renderState.depthTest(enabled)
-
     override fun depthWrite(enabled: Boolean) = renderState.depthWrite(enabled)
-
     override fun depthCompare(compare: DepthCompare) = renderState.depthCompare(compare)
-
     override fun cull(enabled: Boolean) = renderState.cull(enabled)
-
-    override fun scissor(x: Int, y: Int, width: Int, height: Int) =
-        renderState.scissor(x, y, width, height)
-
+    override fun scissor(x: Int, y: Int, width: Int, height: Int) = renderState.scissor(x, y, width, height)
     override fun disableScissor() = renderState.disableScissor()
 
     override fun clearColor(red: Float, green: Float, blue: Float, alpha: Float) {
@@ -397,6 +485,21 @@ class Backend(
     override fun popDebugGroup() {
         if (targetStackDepth <= 0) return
         recorder.recordDebugGroupPop(targetPassId)
+    }
+
+    override fun createTimestampPool(capacity: Int): GpuTimestampPool {
+        require(capacity > 0) { "Timestamp pool capacity must be positive: $capacity" }
+        check(preset.supportsTimestamps) { "GPU timestamp queries are not supported by ${preset.name}" }
+        val pool = preset.createTimestampQueryPool(capacity)
+        return VulkanTimestampPool(pool, preset.timestampPeriodNanos, retirement) { closed }
+    }
+
+    override fun writeTimestamp(pool: GpuTimestampPool, queryIndex: Int) {
+        check(targetStackDepth > 0) { "Cannot write GPU timestamp outside a frame" }
+        val vkPool = pool as VulkanTimestampPool
+        vkPool.requireOpen()
+        require(queryIndex in 0 until vkPool.capacity) { "Query index $queryIndex out of bounds 0..${vkPool.capacity - 1}" }
+        recorder.recordTimestamp(vkPool.presetPool, queryIndex, targetPassId)
     }
 
     private fun recordClear(
@@ -445,7 +548,7 @@ class Backend(
         val uboBytes = prepareUniforms(prog, uniforms)
         val uboOffset = if (uboBytes > 0) prog.uboCacheOffset else 0L
         val uboBytesLong = uboBytes.toLong()
-        val pipelineKey = renderState.statePipelineBits or primitiveType.ordinal
+        val pipelineKey = renderState.statePipelineBits or primitiveType.ordinal.toLong()
         val target = targetStack[targetStackDepth - 1]
         val scissorXY = renderState.scissorXY
         val scissorWH = renderState.scissorWH
@@ -525,7 +628,7 @@ class Backend(
             prog,
             targetStack[targetStackDepth - 1],
             targetPassId,
-            renderState.statePipelineBits or primitiveType.ordinal,
+            renderState.statePipelineBits or primitiveType.ordinal.toLong(),
             uboOffset,
             uboBytes.toLong(),
             renderState.scissorXY,
@@ -567,7 +670,7 @@ class Backend(
             prog,
             targetStack[targetStackDepth - 1],
             targetPassId,
-            renderState.statePipelineBits or primitiveType.ordinal,
+            renderState.statePipelineBits or primitiveType.ordinal.toLong(),
             uboOffset,
             uboBytes.toLong(),
             renderState.scissorXY,
@@ -634,7 +737,36 @@ class Backend(
         return uboBytes
     }
 
+    private fun getOrCreateBlitProgram(): Program {
+        blitProgram?.let { return it }
+        val layout = VertexLayout().apply {
+            add(ShaderVertType.FLOAT, 2, 0)
+            add(ShaderVertType.FLOAT, 2, 1)
+        }
+        val reflection = ShaderReflection(
+            attributes = listOf(
+                ShaderAttributeInfo(0, "vec2", "a0", "Position"),
+                ShaderAttributeInfo(1, "vec2", "a1", "UV0")
+            ),
+            uniforms = emptyList(),
+            samplers = listOf(
+                ShaderSamplerInfo("uSource", "${LumaNames.SAMPLER_PREFIX}0", "sampler2D", unit = 0, binding = 0)
+            )
+        )
+        return Program(
+            "${LumaNames.SHADER_NAMESPACE}:internal_blit",
+            INTERNAL_BLIT_VERT,
+            INTERNAL_BLIT_FRAG,
+            VertexInputLayout().binding(layout),
+            schedulePostRecordAction,
+            retirement,
+            reflection
+        ).also { blitProgram = it }
+    }
+
     override fun close() {
+        if (closed) return
+        closed = true
         completionFence?.let {
             try {
                 it.awaitCompletion(Long.MAX_VALUE)
@@ -652,6 +784,12 @@ class Backend(
         boundIndexBuffer = null
         targetStack.fill(null)
         targetStackDepth = 0
+        blitProgram?.close()
+        blitProgram = null
+        blitVertexScratch?.let {
+            blitVertexScratch = null
+            MemoryUtil.memFree(it)
+        }
         textureUploads.close()
         bufferUploads.close()
         vertexStaging.close()
@@ -671,5 +809,29 @@ class Backend(
     private fun runPostRecordActions() {
         for (index in postRecordActions.indices) postRecordActions[index]()
         postRecordActions.clear()
+    }
+
+    private companion object {
+        const val INTERNAL_BLIT_VERT = """#version 450
+
+layout(location = 0) in vec2 Position;
+layout(location = 1) in vec2 UV0;
+layout(location = 0) out vec2 vUv;
+
+void main() {
+    gl_Position = vec4(Position, 0.0, 1.0);
+    vUv = UV0;
+}
+"""
+        const val INTERNAL_BLIT_FRAG = """#version 450
+
+layout(binding = 0) uniform sampler2D ${LumaNames.SAMPLER_PREFIX}0;
+layout(location = 0) in vec2 vUv;
+layout(location = 0) out vec4 fragColor;
+
+void main() {
+    fragColor = texture(${LumaNames.SAMPLER_PREFIX}0, vUv);
+}
+"""
     }
 }

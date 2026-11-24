@@ -4,11 +4,10 @@ import java.awt.image.BufferedImage
 import java.nio.ByteBuffer
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.LumaNames
-import sweetie.evaware.luma.api.RenderTargetFilter
+import sweetie.evaware.luma.api.SamplerState
 import sweetie.evaware.luma.api.TextureFormat
 import sweetie.evaware.luma.api.TextureHandle
-import sweetie.evaware.luma.backend.blaze3d.preset.PresetAddressMode
-import sweetie.evaware.luma.backend.blaze3d.preset.PresetFilterMode
+import sweetie.evaware.luma.backend.blaze3d.VulkanSamplerCache.Companion.toPreset
 import sweetie.evaware.luma.backend.blaze3d.preset.PresetFormat
 import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuSampler
 import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuTexture
@@ -19,16 +18,20 @@ import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPresets
 class VulkanTexture internal constructor(
     val gpuTexture: PresetGpuTexture,
     val view: PresetGpuTextureView,
-    val sampler: PresetGpuSampler,
+    sampler: PresetGpuSampler,
     override val width: Int,
     override val height: Int,
     private val uploads: TextureUploadQueue?,
     private val ownsTexture: Boolean = true,
     private val ownsView: Boolean = true,
-    private val ownsSampler: Boolean = false,
+    private var ownsSampler: Boolean = false,
     private var retirement: VulkanRetirementQueue? = null,
-    override val format: TextureFormat = TextureFormat.RGBA8
+    override val format: TextureFormat = TextureFormat.RGBA8,
+    internal var samplerState: SamplerState = SamplerState.LINEAR_CLAMP
 ) : TextureHandle {
+    var sampler: PresetGpuSampler = sampler
+        internal set
+
     private var closed = false
 
     internal fun requireOpen() = check(!closed) { "Texture is closed" }
@@ -36,6 +39,22 @@ class VulkanTexture internal constructor(
     internal fun attachRetirement(queue: VulkanRetirementQueue) {
         if (retirement == null) {
             retirement = queue
+        }
+    }
+
+    internal fun replaceSampler(
+        newSampler: PresetGpuSampler,
+        newState: SamplerState,
+        newOwnsSampler: Boolean
+    ) {
+        val oldSampler = sampler
+        val oldOwned = ownsSampler
+        sampler = newSampler
+        samplerState = newState
+        ownsSampler = newOwnsSampler
+        if (oldOwned && oldSampler !== newSampler) {
+            val queue = retirement
+            if (queue != null) queue.defer(oldSampler) else oldSampler.close()
         }
     }
 
@@ -109,43 +128,45 @@ class VulkanTexture internal constructor(
 
         fun borrow(
             view: Any,
-            filter: RenderTargetFilter = RenderTargetFilter.NEAREST,
+            sampler: SamplerState = SamplerState.NEAREST_CLAMP,
             preset: VulkanPreset = VulkanPresets.active
-        ): VulkanTexture = borrow(view, filter, preset, activeBackendRetirement(preset))
+        ): VulkanTexture = borrow(view, sampler, preset, activeBackendRetirement(preset))
 
         internal fun borrow(
             view: Any,
-            filter: RenderTargetFilter,
+            sampler: SamplerState,
             preset: VulkanPreset,
             retirement: VulkanRetirementQueue?
         ): VulkanTexture {
             val wrapped = preset.wrapTextureView(view)
-            val presetFilter = when (filter) {
-                RenderTargetFilter.NEAREST -> PresetFilterMode.NEAREST
-                RenderTargetFilter.LINEAR -> PresetFilterMode.LINEAR
-            }
-            val sampler = preset.createSampler(
-                PresetAddressMode.CLAMP_TO_EDGE,
-                presetFilter,
-                1
+            val gpuSampler = preset.createSampler(
+                addressU = sampler.wrapU.toPreset(),
+                addressV = sampler.wrapV.toPreset(),
+                minFilter = sampler.minFilter.toPreset(),
+                magFilter = sampler.magFilter.toPreset(),
+                maxAnisotropy = sampler.maxAnisotropy,
+                maxLod = sampler.maxLod
             )
             return VulkanTexture(
-                wrapped.texture,
-                wrapped,
-                sampler,
-                wrapped.getWidth(0),
-                wrapped.getHeight(0),
-                null,
-                false,
-                false,
-                true,
-                retirement
+                gpuTexture = wrapped.texture,
+                view = wrapped,
+                sampler = gpuSampler,
+                width = wrapped.getWidth(0),
+                height = wrapped.getHeight(0),
+                uploads = null,
+                ownsTexture = false,
+                ownsView = false,
+                ownsSampler = true,
+                retirement = retirement,
+                format = TextureFormat.RGBA8,
+                samplerState = sampler
             )
         }
 
         internal fun create(
             image: BufferedImage,
             sampler: PresetGpuSampler,
+            samplerState: SamplerState,
             uploads: TextureUploadQueue,
             preset: VulkanPreset,
             retirement: VulkanRetirementQueue,
@@ -167,7 +188,17 @@ class VulkanTexture internal constructor(
             try {
                 view = preset.createTextureView(texture)
                 uploads.enqueue(texture, image, 0, 0, format)
-                return VulkanTexture(texture, view, sampler, w, h, uploads, retirement = retirement, format = format)
+                return VulkanTexture(
+                    texture,
+                    view,
+                    sampler,
+                    w,
+                    h,
+                    uploads,
+                    retirement = retirement,
+                    format = format,
+                    samplerState = samplerState
+                )
             } catch (t: Throwable) {
                 view?.close()
                 texture.close()
@@ -181,6 +212,7 @@ class VulkanTexture internal constructor(
             data: ByteBuffer?,
             format: TextureFormat,
             sampler: PresetGpuSampler,
+            samplerState: SamplerState,
             uploads: TextureUploadQueue,
             preset: VulkanPreset,
             retirement: VulkanRetirementQueue
@@ -205,7 +237,17 @@ class VulkanTexture internal constructor(
                 if (data != null) {
                     uploads.enqueueRaw(texture, data, format, 0, 0, width, height)
                 }
-                return VulkanTexture(texture, view, sampler, width, height, uploads, retirement = retirement, format = format)
+                return VulkanTexture(
+                    texture,
+                    view,
+                    sampler,
+                    width,
+                    height,
+                    uploads,
+                    retirement = retirement,
+                    format = format,
+                    samplerState = samplerState
+                )
             } catch (t: Throwable) {
                 view?.close()
                 texture.close()

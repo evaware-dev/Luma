@@ -6,6 +6,7 @@ import com.mojang.renderpearl.api.buffers.GpuBuffer
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice
 import com.mojang.renderpearl.api.commands.CommandEncoder
 import com.mojang.renderpearl.api.commands.GpuFence
+import com.mojang.renderpearl.api.commands.GpuQueryPool
 import com.mojang.renderpearl.api.commands.RenderPass
 import com.mojang.renderpearl.api.commands.RenderPassDescriptor
 import com.mojang.renderpearl.api.pipeline.*
@@ -39,6 +40,16 @@ open class RenderpearlPreset : VulkanPreset {
     override val minUniformOffsetAlignment: Int
         get() = RenderSystem.getDevice().deviceInfo.limits().minUniformOffsetAlignment()
 
+    override val supportsTimestamps: Boolean
+        get() = RenderSystem.getDevice().deviceInfo.timestampPeriod() > 0f
+
+    override val timestampPeriodNanos: Double
+        get() = RenderSystem.getDevice().deviceInfo.timestampPeriod().toDouble()
+
+    override fun createTimestampQueryPool(size: Int): PresetTimestampQueryPool {
+        return QueryPoolWrapper(RenderSystem.getDevice().createTimestampQueryPool(size))
+    }
+
     override fun createBuffer(label: () -> String, usage: Int, sizeBytes: Long): PresetGpuBuffer {
         val buf = RenderSystem.getDevice().createBuffer(label, usage, sizeBytes)
         return BufferWrapper(buf, sizeBytes)
@@ -69,16 +80,23 @@ open class RenderpearlPreset : VulkanPreset {
         return TextureViewWrapper(texture, view)
     }
 
-    override fun createSampler(addressMode: PresetAddressMode, filterMode: PresetFilterMode, maxAnisotropy: Int): PresetGpuSampler {
-        val addr = addressMode.toRenderpearl()
-        val filter = filterMode.toRenderpearl()
-        val sampler = RenderSystem.getDevice().createSampler(
-            addr,
-            addr,
-            filter,
-            filter,
-            maxAnisotropy,
-            OptionalDouble.empty()
+    override fun createSampler(
+        addressU: PresetAddressMode,
+        addressV: PresetAddressMode,
+        minFilter: PresetFilterMode,
+        magFilter: PresetFilterMode,
+        maxAnisotropy: Int,
+        maxLod: Double?
+    ): PresetGpuSampler {
+        val device = RenderSystem.getDevice()
+        val clampedAnisotropy = maxAnisotropy.coerceIn(1, device.deviceInfo.limits().maxAnisotropy())
+        val sampler = device.createSampler(
+            addressU.toRenderpearl(),
+            addressV.toRenderpearl(),
+            minFilter.toRenderpearl(),
+            magFilter.toRenderpearl(),
+            clampedAnisotropy,
+            if (maxLod != null) OptionalDouble.of(maxLod) else OptionalDouble.empty()
         )
         return SamplerWrapper(sampler)
     }
@@ -98,6 +116,16 @@ open class RenderpearlPreset : VulkanPreset {
             descriptor.depthWrite
         )
 
+        val colorTargetState = if (!descriptor.blendEnabled && descriptor.colorWriteMask == ColorTargetState.WRITE_ALL) {
+            ColorTargetState.DEFAULT
+        } else {
+            ColorTargetState(
+                if (descriptor.blendEnabled) Optional.of(descriptor.blendFunction.toRenderpearl()) else Optional.empty(),
+                GpuFormat.RGBA8_UNORM,
+                descriptor.colorWriteMask
+            )
+        }
+
         val id = toIdentifier(descriptor.id)
         val pipelineBuilder = RenderPipeline.builder()
             .withLocation(id)
@@ -105,9 +133,7 @@ open class RenderpearlPreset : VulkanPreset {
             .withFragmentShader(id)
             .withBindGroupLayout(bindGroupLayout)
             .withCull(descriptor.cullEnabled)
-            .withColorTargetState(
-                if (descriptor.blendEnabled) ColorTargetState(descriptor.blendFunction.toRenderpearl()) else ColorTargetState.DEFAULT
-            )
+            .withColorTargetState(colorTargetState)
             .withPrimitiveTopology(descriptor.topology.toRenderpearl())
 
         if (descriptor.hasDepthAttachment) {
@@ -229,6 +255,24 @@ open class RenderpearlPreset : VulkanPreset {
         override fun close() = handle.close()
     }
 
+    private class QueryPoolWrapper(val handle: GpuQueryPool) : PresetTimestampQueryPool {
+        override val size: Int get() = handle.size()
+
+        override fun tryReadValues(count: Int, outValues: LongArray): Boolean {
+            if (count == 0) return true
+            val values = handle.getValues(0, count)
+            for (i in 0 until count) {
+                if (!values[i].isPresent) return false
+            }
+            for (i in 0 until count) {
+                outValues[i] = values[i].asLong
+            }
+            return true
+        }
+
+        override fun close() = handle.close()
+    }
+
     private class SequentialBufferWrapper : PresetSequentialBuffer {
         private var cachedWrapper: BufferWrapper? = null
         var rawBuffer: GpuBuffer? = null
@@ -287,6 +331,30 @@ open class RenderpearlPreset : VulkanPreset {
             requireHandle().writeToTexture((texture as TextureWrapper).handle, data, mip, depth, x, y, width, height)
         }
 
+        override fun copyTextureToTexture(
+            source: PresetGpuTexture,
+            destination: PresetGpuTexture,
+            mipLevel: Int,
+            dstX: Int,
+            dstY: Int,
+            srcX: Int,
+            srcY: Int,
+            width: Int,
+            height: Int
+        ) {
+            requireHandle().copyTextureToTexture(
+                (source as TextureWrapper).handle,
+                (destination as TextureWrapper).handle,
+                mipLevel,
+                dstX,
+                dstY,
+                srcX,
+                srcY,
+                width,
+                height
+            )
+        }
+
         override fun clearColorTexture(texture: PresetGpuTexture, red: Float, green: Float, blue: Float, alpha: Float) {
             tempColor.set(red, green, blue, alpha)
             requireHandle().clearColorTexture((texture as TextureWrapper).handle, tempColor)
@@ -314,6 +382,10 @@ open class RenderpearlPreset : VulkanPreset {
             val dv = (depthView as? TextureViewWrapper)?.handle
             val pass = requireHandle().createRenderPass(colorWrapper.renderPassDescriptor(label, dv))
             return if (reusablePass.inUse) RenderPassWrapper().reset(pass) else reusablePass.reset(pass)
+        }
+
+        override fun writeTimestamp(pool: PresetTimestampQueryPool, queryIndex: Int) {
+            requireHandle().writeTimestamp((pool as QueryPoolWrapper).handle, queryIndex)
         }
 
         override fun createFence(): PresetFence = FenceWrapper(requireHandle().createFence())
@@ -345,6 +417,10 @@ open class RenderpearlPreset : VulkanPreset {
 
         override fun popDebugGroup() {
             requireHandle().popDebugGroup()
+        }
+
+        override fun writeTimestamp(pool: PresetTimestampQueryPool, queryIndex: Int) {
+            requireHandle().writeTimestamp((pool as QueryPoolWrapper).handle, queryIndex)
         }
 
         override fun setPipeline(pipeline: PresetPipeline) {
