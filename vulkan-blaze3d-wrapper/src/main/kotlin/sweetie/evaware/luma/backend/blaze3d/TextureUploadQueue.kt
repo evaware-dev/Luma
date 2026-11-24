@@ -4,12 +4,14 @@ import java.awt.image.BufferedImage
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import org.lwjgl.system.MemoryUtil
+import sweetie.evaware.luma.api.TextureFormat
 import sweetie.evaware.luma.backend.blaze3d.preset.PresetCommandEncoder
 import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuTexture
 import sweetie.evaware.luma.texture.RgbaTransferBuffer
 
 internal class TextureUploadQueue(
-    private val maxPooledBytes: Long
+    private val maxPooledBytes: Long,
+    private val retirement: VulkanRetirementQueue
 ) : AutoCloseable {
     private class Pending {
         var texture: PresetGpuTexture? = null
@@ -56,27 +58,100 @@ internal class TextureUploadQueue(
     private val transfer = RgbaTransferBuffer()
     private var pooledBytes = 0L
     private var closed = false
+    @Volatile
+    private var pendingFlag = false
 
     @Synchronized
-    fun enqueue(texture: PresetGpuTexture, image: BufferedImage, x: Int, y: Int) {
+    fun enqueue(
+        texture: PresetGpuTexture,
+        image: BufferedImage,
+        x: Int,
+        y: Int,
+        format: TextureFormat = TextureFormat.RGBA8
+    ) {
         check(!closed) { "Texture upload queue is closed" }
-        val buffer = acquire(Math.multiplyExact(Math.multiplyExact(image.width, image.height), 4))
-        pending += obtainPending().set(
-            texture = texture,
-            buffer = transfer.write(image, buffer),
-            x = x,
-            y = y,
-            width = image.width,
-            height = image.height
-        )
+        require(format.supportsBufferedImageUpload) {
+            "BufferedImage upload is not supported for format $format; upload raw ByteBuffer data instead"
+        }
+        validateRegion(texture, x, y, image.width, image.height)
+        val requiredBytes = format.byteSize(image.width, image.height)
+        val buffer = acquire(requiredBytes)
+        try {
+            pending += obtainPending().set(
+                texture = texture,
+                buffer = transfer.write(image, buffer, format),
+                x = x,
+                y = y,
+                width = image.width,
+                height = image.height
+            )
+            pendingFlag = true
+        } catch (failure: Throwable) {
+            recycle(buffer)
+            throw failure
+        }
     }
 
     @Synchronized
-    fun hasPending(): Boolean = pending.isNotEmpty()
+    fun enqueueRaw(
+        texture: PresetGpuTexture,
+        data: ByteBuffer,
+        format: TextureFormat,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int
+    ) {
+        check(!closed) { "Texture upload queue is closed" }
+        validateRegion(texture, x, y, width, height)
+        val requiredBytes = format.byteSize(width, height)
+        require(data.remaining() >= requiredBytes) {
+            "Texture data has ${data.remaining()} bytes, expected at least $requiredBytes bytes for $format ${width}x${height}"
+        }
+        val buffer = acquire(requiredBytes)
+        try {
+            buffer.clear()
+            if (data.isDirect) {
+                MemoryUtil.memCopy(MemoryUtil.memAddress(data), MemoryUtil.memAddress(buffer), requiredBytes.toLong())
+                buffer.limit(requiredBytes)
+            } else {
+                val slice = data.duplicate()
+                slice.limit(slice.position() + requiredBytes)
+                buffer.put(slice)
+                buffer.flip()
+            }
+            pending += obtainPending().set(
+                texture = texture,
+                buffer = buffer,
+                x = x,
+                y = y,
+                width = width,
+                height = height
+            )
+            pendingFlag = true
+        } catch (failure: Throwable) {
+            recycle(buffer)
+            throw failure
+        }
+    }
+
+    private fun validateRegion(texture: PresetGpuTexture, x: Int, y: Int, width: Int, height: Int) {
+        require(x >= 0 && y >= 0 && width > 0 && height > 0) {
+            "Texture update region must have non-negative origin and positive size"
+        }
+        require(x.toLong() + width <= texture.width && y.toLong() + height <= texture.height) {
+            "Texture update region [$x, $y, ${width}x${height}] exceeds texture [${texture.width}x${texture.height}]"
+        }
+    }
+
+    fun hasPending(): Boolean = pendingFlag
 
     @Synchronized
     fun record(encoder: PresetCommandEncoder) {
-        if (pending.isEmpty()) return
+        if (pending.isEmpty()) {
+            pendingFlag = false
+            return
+        }
         val batch = if (recycledBatches.isEmpty()) RetiredBuffers(this) else recycledBatches.removeFirst()
         batch.buffers.ensureCapacity(pending.size)
         for (index in pending.indices) {
@@ -95,7 +170,8 @@ internal class TextureUploadQueue(
             recycledPending.addLast(upload)
         }
         pending.clear()
-        VulkanResourceRetirement.defer(batch)
+        pendingFlag = false
+        retirement.defer(batch)
     }
 
     @Synchronized
@@ -106,6 +182,7 @@ internal class TextureUploadQueue(
             it.reset()
         }
         pending.clear()
+        pendingFlag = false
         recycledPending.clear()
         recycledBatches.clear()
         available.forEach(MemoryUtil::memFree)

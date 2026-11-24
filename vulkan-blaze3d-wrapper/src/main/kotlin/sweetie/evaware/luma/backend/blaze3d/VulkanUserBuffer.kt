@@ -7,13 +7,13 @@ import sweetie.evaware.luma.api.VertexBufferHandle
 import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuBuffer
 import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuBufferSlice
 import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPreset
-import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPresets
 
 internal sealed class VulkanUserBuffer(
     val sizeBytes: Long,
     usageFlag: Int,
     usage: BufferUsage,
-    preset: VulkanPreset = VulkanPresets.active
+    preset: VulkanPreset,
+    private val retirement: VulkanRetirementQueue
 ) : AutoCloseable {
     val gpuBuffer: PresetGpuBuffer = preset.createBuffer(
         { "Luma user buffer" },
@@ -41,22 +41,24 @@ internal sealed class VulkanUserBuffer(
         if (closed) return
         closed = true
         cachedSlice = null
-        VulkanResourceRetirement.defer(gpuBuffer)
+        retirement.defer(gpuBuffer)
     }
 }
 
 internal class VulkanVertexBuffer(
     sizeBytes: Long,
     usage: BufferUsage,
-    preset: VulkanPreset = VulkanPresets.active
-) : VulkanUserBuffer(sizeBytes, 32, usage, preset), VertexBufferHandle
+    preset: VulkanPreset,
+    retirement: VulkanRetirementQueue
+) : VulkanUserBuffer(sizeBytes, 32, usage, preset, retirement), VertexBufferHandle
 
 internal class VulkanIndexBuffer(
     sizeBytes: Long,
     override val indexType: IndexType,
     usage: BufferUsage,
-    preset: VulkanPreset = VulkanPresets.active
-) : VulkanUserBuffer(sizeBytes, 64, usage, preset), IndexBufferHandle
+    preset: VulkanPreset,
+    retirement: VulkanRetirementQueue
+) : VulkanUserBuffer(sizeBytes, 64, usage, preset, retirement), IndexBufferHandle
 
 private val BufferUsage.hint: Int
     get() = when (this) {

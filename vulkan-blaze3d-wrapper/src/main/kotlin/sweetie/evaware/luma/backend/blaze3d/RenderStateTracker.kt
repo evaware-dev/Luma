@@ -27,6 +27,28 @@ internal class RenderStateTracker {
     var scissorHeight = 0
         private set
 
+    private var cachedStatePipelineBits: Int = PipelineStateKey.DEFAULT_STATE_BITS
+    private var pipelineBitsDirty = false
+    val statePipelineBits: Int
+        get() {
+            if (pipelineBitsDirty) {
+                cachedStatePipelineBits = PipelineStateKey.packState(
+                    blendEnabled,
+                    blendFunction,
+                    depthEnabled,
+                    depthWrite,
+                    depthFunc,
+                    cullEnabled
+                )
+                pipelineBitsDirty = false
+            }
+            return cachedStatePipelineBits
+        }
+    var scissorXY: Long = 0L
+        private set
+    var scissorWH: Long = 0L
+        private set
+
     fun beginFrame() {
         blendEnabled = true
         blendFunction = BlendFunction.TRANSLUCENT
@@ -35,30 +57,46 @@ internal class RenderStateTracker {
         depthFunc = DepthCompare.ALWAYS
         cullEnabled = false
         scissorEnabled = false
+        cachedStatePipelineBits = PipelineStateKey.DEFAULT_STATE_BITS
+        pipelineBitsDirty = false
+        scissorXY = 0L
+        scissorWH = 0L
     }
 
     fun blend(enabled: Boolean) {
+        if (blendEnabled == enabled) return
         blendEnabled = enabled
+        pipelineBitsDirty = true
     }
 
     fun blendFunction(function: BlendFunction) {
+        if (blendFunction === function || blendFunction == function) return
         blendFunction = function
+        pipelineBitsDirty = true
     }
 
     fun depthTest(enabled: Boolean) {
+        if (depthEnabled == enabled) return
         depthEnabled = enabled
+        pipelineBitsDirty = true
     }
 
     fun depthWrite(enabled: Boolean) {
+        if (depthWrite == enabled) return
         depthWrite = enabled
+        if (depthEnabled) pipelineBitsDirty = true
     }
 
     fun depthCompare(compare: DepthCompare) {
+        if (depthFunc == compare) return
         depthFunc = compare
+        if (depthEnabled) pipelineBitsDirty = true
     }
 
     fun cull(enabled: Boolean) {
+        if (cullEnabled == enabled) return
         cullEnabled = enabled
+        pipelineBitsDirty = true
     }
 
     fun scissor(x: Int, y: Int, width: Int, height: Int) {
@@ -68,9 +106,14 @@ internal class RenderStateTracker {
         scissorY = y
         scissorWidth = width
         scissorHeight = height
+        scissorXY = PipelineStateKey.packScissorXY(x, y)
+        scissorWH = PipelineStateKey.packScissorWH(width, height)
     }
 
     fun disableScissor() {
+        if (!scissorEnabled) return
         scissorEnabled = false
+        scissorXY = 0L
+        scissorWH = 0L
     }
 }

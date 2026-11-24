@@ -163,6 +163,8 @@ interface PresetCommandEncoder {
 }
 
 interface PresetRenderPass : AutoCloseable {
+    fun pushDebugGroup(label: String) {}
+    fun popDebugGroup() {}
     fun setPipeline(pipeline: PresetPipeline)
     fun setUniform(name: String, slice: PresetGpuBufferSlice)
     fun bindTexture(name: String, view: PresetGpuTextureView, sampler: PresetGpuSampler)

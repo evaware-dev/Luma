@@ -66,31 +66,60 @@ class VulkanMergeTest {
         depthFunc: DepthCompare = DepthCompare.ALWAYS,
         cullEnabled: Boolean = false,
         target: VulkanRenderTarget? = null,
-        targetPassId: Int = 0
+        targetPassId: Int = 0,
+        scissorXY: Long = 0L,
+        scissorWH: Long = 0L,
+        extraTexture2: TextureHandle? = null
     ) {
-        val draw = obtain()
-        draw.program = program
-        draw.vertexOffset = vertexOffset
-        draw.vertexBytes = vertexBytes
-        draw.vertexCount = vertexCount
-        draw.uboOffset = uboOffset
-        draw.uboBytes = uboBytes
-        draw.textures.fill(null)
-        if (texture != null) {
-            draw.textures[0] = texture
-            draw.textureMask = 1
+        val pipelineKey = PipelineStateKey.pack(
+            primitiveType,
+            blendEnabled,
+            blendFunction,
+            depthEnabled,
+            depthWrite,
+            depthFunc,
+            cullEnabled
+        )
+        if (extraTexture2 == null) {
+            recordImmediateSingleTexture(
+                program,
+                target,
+                targetPassId,
+                pipelineKey,
+                vertexOffset,
+                vertexBytes,
+                vertexCount,
+                uboOffset,
+                uboBytes,
+                scissorXY,
+                scissorWH,
+                texture
+            )
         } else {
-            draw.textureMask = 0
+            val textures = arrayOfNulls<TextureHandle>(DrawCallRecorder.TEXTURE_UNITS)
+            var mask = 0
+            if (texture != null) {
+                textures[0] = texture
+                mask = mask or 1
+            }
+            textures[2] = extraTexture2
+            mask = mask or (1 shl 2)
+            recordImmediate(
+                program,
+                target,
+                targetPassId,
+                pipelineKey,
+                vertexOffset,
+                vertexBytes,
+                vertexCount,
+                uboOffset,
+                uboBytes,
+                scissorXY,
+                scissorWH,
+                mask,
+                textures
+            )
         }
-        draw.primitiveType = primitiveType
-        draw.blendEnabled = blendEnabled
-        draw.blendFunction = blendFunction
-        draw.depthEnabled = depthEnabled
-        draw.depthWrite = depthWrite
-        draw.depthFunc = depthFunc
-        draw.cullEnabled = cullEnabled
-        draw.target = target
-        draw.targetPassId = targetPassId
     }
 
     private fun merge(consumer: GroupConsumer, record: DrawCallRecorder.() -> Unit) {
@@ -105,6 +134,7 @@ class VulkanMergeTest {
         val pipelineChanges = ArrayList<PipelineParams>()
         val uboChanges = ArrayList<Pair<Long, Long>>()
         val textureChanges = ArrayList<Pair<Program, TextureHandle?>>()
+        val debugEvents = ArrayList<String>()
         val draws = ArrayList<DrawParams>()
 
         class PipelineParams(
@@ -142,18 +172,26 @@ class VulkanMergeTest {
             clears.add(target)
         }
 
-        override fun onPipelineChanged(
-            program: Program,
-            topology: PrimitiveType,
-            blendEnabled: Boolean,
-            blendFunction: BlendFunction,
-            depthEnabled: Boolean,
-            depthWrite: Boolean,
-            depthFunc: DepthCompare,
-            cullEnabled: Boolean
-        ) {
+        override fun onDebugGroupPush(label: String) {
+            debugEvents.add("push:$label")
+        }
+
+        override fun onDebugGroupPop() {
+            debugEvents.add("pop")
+        }
+
+        override fun onPipelineChanged(program: Program, pipelineKey: Int) {
             pipelineChanges.add(
-                PipelineParams(program, topology, blendEnabled, blendFunction, depthEnabled, depthWrite, depthFunc, cullEnabled)
+                PipelineParams(
+                    program,
+                    PipelineStateKey.unpackTopology(pipelineKey),
+                    PipelineStateKey.unpackBlendEnabled(pipelineKey),
+                    PipelineStateKey.unpackBlendFunction(pipelineKey),
+                    PipelineStateKey.unpackDepthEnabled(pipelineKey),
+                    PipelineStateKey.unpackDepthWrite(pipelineKey),
+                    PipelineStateKey.unpackDepthFunc(pipelineKey),
+                    PipelineStateKey.unpackCullEnabled(pipelineKey)
+                )
             )
         }
 
@@ -161,8 +199,13 @@ class VulkanMergeTest {
             uboChanges.add(offset to size)
         }
 
-        override fun onTextureChanged(program: Program, textures: Array<TextureHandle?>) {
-            textureChanges.add(program to textures[0])
+        override fun onTextureChanged(
+            program: Program,
+            textureMask: Int,
+            texture0: TextureHandle?,
+            overflowTextures: Array<TextureHandle?>?
+        ) {
+            textureChanges.add(program to texture0)
         }
 
         override fun onScissorChanged(enabled: Boolean, x: Int, y: Int, width: Int, height: Int) {}
@@ -171,8 +214,15 @@ class VulkanMergeTest {
             draws.add(DrawParams(topology, vertexStart, vertexBytes, vertexCount))
         }
 
-        override fun onDirectDraw(draw: DrawCall, topology: PrimitiveType) {
-            draws.add(DrawParams(topology, draw.firstVertex.toLong(), 0L, draw.vertexCount))
+        override fun onDirectDraw(recorder: DrawCallRecorder, index: Int, topology: PrimitiveType) {
+            draws.add(
+                DrawParams(
+                    topology,
+                    recorder.directFirstVertex?.get(index)?.toLong() ?: 0L,
+                    0L,
+                    recorder.vertexCounts[index]
+                )
+            )
         }
     }
 
@@ -345,10 +395,7 @@ class VulkanMergeTest {
 
         merge(consumer) {
             record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS, target = target)
-            obtain().apply {
-                this.target = target
-                clearColorEnabled = true
-            }
+            recordClear(target, 0, true, 0f, 0f, 0f, 1f, false, 1.0)
             record(
                 program1,
                 64L,
@@ -384,5 +431,80 @@ class VulkanMergeTest {
         assertEquals(target, consumer.targetChanges[0])
         assertEquals(target, consumer.targetChanges[1])
         assertEquals(2, consumer.draws.size)
+    }
+
+    @Test
+    fun testPackedPipelineKeyMatchesRenderStateTracker() {
+        val tracker = RenderStateTracker()
+        tracker.beginFrame()
+        assertEquals(
+            PipelineStateKey.DEFAULT_STATE_BITS or PrimitiveType.TRIANGLES.ordinal,
+            tracker.statePipelineBits or PrimitiveType.TRIANGLES.ordinal
+        )
+
+        tracker.blend(false)
+        tracker.blendFunction(BlendFunction.OVERLAY)
+        tracker.depthTest(true)
+        tracker.depthWrite(true)
+        tracker.depthCompare(DepthCompare.LESS_OR_EQUAL)
+        tracker.cull(true)
+
+        val expected = PipelineStateKey.pack(
+            PrimitiveType.QUADS,
+            blendEnabled = false,
+            blendFunction = BlendFunction.OVERLAY,
+            depthEnabled = true,
+            depthWrite = true,
+            depthFunc = DepthCompare.LESS_OR_EQUAL,
+            cullEnabled = true
+        )
+        assertEquals(expected, tracker.statePipelineBits or PrimitiveType.QUADS.ordinal)
+
+        tracker.depthTest(false)
+        val expectedNoDepth = PipelineStateKey.pack(
+            PrimitiveType.LINES,
+            blendEnabled = false,
+            blendFunction = BlendFunction.OVERLAY,
+            depthEnabled = false,
+            depthWrite = false,
+            depthFunc = DepthCompare.ALWAYS,
+            cullEnabled = true
+        )
+        assertEquals(expectedNoDepth, tracker.statePipelineBits or PrimitiveType.LINES.ordinal)
+    }
+
+    @Test
+    fun testMultiTextureAndScissorMergeAndSplit() {
+        val consumer = TestGroupConsumer()
+        val s1XY = PipelineStateKey.packScissorXY(10, 20)
+        val s1WH = PipelineStateKey.packScissorWH(100, 50)
+        val s2XY = PipelineStateKey.packScissorXY(12, 20)
+        merge(consumer) {
+            record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS, scissorXY = s1XY, scissorWH = s1WH, extraTexture2 = texture2)
+            record(program1, 64L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS, scissorXY = s1XY, scissorWH = s1WH, extraTexture2 = texture2)
+            record(program1, 128L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS, scissorXY = s1XY, scissorWH = s1WH, extraTexture2 = texture1)
+            record(program1, 192L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS, scissorXY = s2XY, scissorWH = s1WH, extraTexture2 = texture1)
+        }
+
+        assertEquals(3, consumer.draws.size)
+        assertEquals(8, consumer.draws[0].vertexCount)
+        assertEquals(4, consumer.draws[1].vertexCount)
+        assertEquals(4, consumer.draws[2].vertexCount)
+        assertEquals(2, consumer.textureChanges.size)
+    }
+
+    @Test
+    fun testDebugGroupFlushesWithoutResettingPipeline() {
+        val consumer = TestGroupConsumer()
+        merge(consumer) {
+            record(program1, 0L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS)
+            recordDebugGroupPush("Overlay", 0)
+            record(program1, 64L, 64L, 4, 0L, 32L, texture1, PrimitiveType.QUADS)
+            recordDebugGroupPop(0)
+        }
+
+        assertEquals(2, consumer.draws.size)
+        assertEquals(1, consumer.pipelineChanges.size)
+        assertEquals(listOf("push:Overlay", "pop"), consumer.debugEvents)
     }
 }

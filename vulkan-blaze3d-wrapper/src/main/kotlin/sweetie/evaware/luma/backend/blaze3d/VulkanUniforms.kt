@@ -12,31 +12,27 @@ internal abstract class VulkanUniform(
     val sizeBytes: Int
 ) : UniformBinding(name) {
 
-    fun isHandleDirty(uniforms: ShaderUniforms): Boolean =
-        getHandle(uniforms)?.isDirty ?: false
+    abstract fun write(writer: Std140Writer, handle: UniformHandle?)
 
-    fun clearDirty(uniforms: ShaderUniforms) {
-        getHandle(uniforms)?.isDirty = false
+    fun write(writer: Std140Writer, uniforms: ShaderUniforms) {
+        write(writer, getHandle(uniforms))
     }
-
-    abstract fun write(writer: Std140Writer, uniforms: ShaderUniforms)
 }
 
 internal class VulkanFloat1Uniform(name: String, type: String) :
     VulkanUniform(name, type, Float.SIZE_BYTES, Float.SIZE_BYTES) {
-    override fun write(writer: Std140Writer, uniforms: ShaderUniforms) {
-        val handle = getHandle(uniforms) as? Float1Uniform
-        val v = handle?.value ?: 0f
-        writer.putFloat(v)
+    override fun write(writer: Std140Writer, handle: UniformHandle?) {
+        val typed = handle as? Float1Uniform
+        writer.putFloat(typed?.value ?: 0f)
     }
 }
 
 internal class VulkanFloat2Uniform(name: String, type: String) :
     VulkanUniform(name, type, 2 * Float.SIZE_BYTES, 2 * Float.SIZE_BYTES) {
-    override fun write(writer: Std140Writer, uniforms: ShaderUniforms) {
-        val handle = getHandle(uniforms) as? Float2Uniform
-        if (handle != null) {
-            writer.putVec2(handle.first, handle.second)
+    override fun write(writer: Std140Writer, handle: UniformHandle?) {
+        val typed = handle as? Float2Uniform
+        if (typed != null) {
+            writer.putVec2(typed.first, typed.second)
         } else {
             writer.putVec2(0f, 0f)
         }
@@ -45,10 +41,10 @@ internal class VulkanFloat2Uniform(name: String, type: String) :
 
 internal class VulkanFloat3Uniform(name: String, type: String) :
     VulkanUniform(name, type, 4 * Float.SIZE_BYTES, 4 * Float.SIZE_BYTES) {
-    override fun write(writer: Std140Writer, uniforms: ShaderUniforms) {
-        val handle = getHandle(uniforms) as? Float3Uniform
-        if (handle != null) {
-            writer.putVec3(handle.first, handle.second, handle.third)
+    override fun write(writer: Std140Writer, handle: UniformHandle?) {
+        val typed = handle as? Float3Uniform
+        if (typed != null) {
+            writer.putVec3(typed.first, typed.second, typed.third)
         } else {
             writer.putVec3(0f, 0f, 0f)
         }
@@ -57,10 +53,10 @@ internal class VulkanFloat3Uniform(name: String, type: String) :
 
 internal class VulkanFloat4Uniform(name: String, type: String) :
     VulkanUniform(name, type, 4 * Float.SIZE_BYTES, 4 * Float.SIZE_BYTES) {
-    override fun write(writer: Std140Writer, uniforms: ShaderUniforms) {
-        val handle = getHandle(uniforms) as? Float4Uniform
-        if (handle != null) {
-            writer.putVec4(handle.first, handle.second, handle.third, handle.fourth)
+    override fun write(writer: Std140Writer, handle: UniformHandle?) {
+        val typed = handle as? Float4Uniform
+        if (typed != null) {
+            writer.putVec4(typed.first, typed.second, typed.third, typed.fourth)
         } else {
             writer.putVec4(0f, 0f, 0f, 0f)
         }
@@ -69,10 +65,9 @@ internal class VulkanFloat4Uniform(name: String, type: String) :
 
 internal class VulkanInt1Uniform(name: String, type: String) :
     VulkanUniform(name, type, Int.SIZE_BYTES, Int.SIZE_BYTES) {
-    override fun write(writer: Std140Writer, uniforms: ShaderUniforms) {
-        val handle = getHandle(uniforms) as? Int1Uniform
-        val v = handle?.value ?: 0
-        writer.putInt(v)
+    override fun write(writer: Std140Writer, handle: UniformHandle?) {
+        val typed = handle as? Int1Uniform
+        writer.putInt(typed?.value ?: 0)
     }
 }
 
@@ -80,10 +75,9 @@ private val IDENTITY_MATRIX = Matrix4f()
 
 internal class VulkanMat4Uniform(name: String, type: String) :
     VulkanUniform(name, type, 4 * Float.SIZE_BYTES, 16 * Float.SIZE_BYTES) {
-    override fun write(writer: Std140Writer, uniforms: ShaderUniforms) {
-        val handle = getHandle(uniforms) as? Mat4Uniform
-        val matrix = handle?.value ?: IDENTITY_MATRIX
-        writer.putMat4(matrix)
+    override fun write(writer: Std140Writer, handle: UniformHandle?) {
+        val typed = handle as? Mat4Uniform
+        writer.putMat4(typed?.value ?: IDENTITY_MATRIX)
     }
 }
 

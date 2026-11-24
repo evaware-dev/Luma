@@ -4,7 +4,6 @@ import sweetie.evaware.luma.backend.blaze3d.preset.PresetAddressMode
 import sweetie.evaware.luma.backend.blaze3d.preset.PresetFilterMode
 import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuSampler
 import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPreset
-import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPresets
 
 internal data class VulkanSamplerDescriptor(
     val addressU: PresetAddressMode,
@@ -24,7 +23,8 @@ internal data class VulkanSamplerDescriptor(
 }
 
 internal class VulkanSamplerCache(
-    private val preset: VulkanPreset = VulkanPresets.active
+    private val preset: VulkanPreset,
+    private val retirement: VulkanRetirementQueue
 ) : AutoCloseable {
     private val samplers = HashMap<VulkanSamplerDescriptor, PresetGpuSampler>()
 
@@ -37,7 +37,9 @@ internal class VulkanSamplerCache(
     }
 
     override fun close() {
-        samplers.values.forEach(VulkanResourceRetirement::defer)
+        for (sampler in samplers.values) {
+            retirement.defer(sampler)
+        }
         samplers.clear()
     }
 }

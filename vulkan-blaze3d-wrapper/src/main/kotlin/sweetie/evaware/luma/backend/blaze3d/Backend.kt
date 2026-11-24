@@ -14,8 +14,10 @@ import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
+import sweetie.evaware.luma.api.TextureFormat
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.api.VertexBufferHandle
+import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.uniform.*
 import sweetie.evaware.luma.vertex.VertexLayout
 import sweetie.evaware.luma.vertex.VertexInputLayout
@@ -34,21 +36,24 @@ class Backend(
 
     private var frameId = 0L
     private var pipelineGeneration = 0L
+    internal val retirement = VulkanRetirementQueue()
 
     private val vertexBuffer = VulkanBuffer(
         { LumaNames.VERTEX_BUFFER },
         32 or 8,
         config.initialVertexBufferBytes,
-        preset
+        preset,
+        retirement
     )
     private val uboBuffer = VulkanBuffer(
         { LumaNames.UBO_BUFFER },
         128 or 8,
         config.initialUniformBufferBytes,
-        preset
+        preset,
+        retirement
     )
 
-    private val boundTextures = arrayOfNulls<TextureHandle>(DrawCall.TEXTURE_UNITS)
+    private val boundTextures = arrayOfNulls<TextureHandle>(DrawCallRecorder.TEXTURE_UNITS)
     private var boundTextureMask = 0
 
     private val vertexStaging = StagingBuffer(config.initialVertexStagingBytes)
@@ -62,8 +67,8 @@ class Backend(
     private val renderState = RenderStateTracker()
     private val postRecordActions = ArrayList<() -> Unit>()
     private val schedulePostRecordAction: (() -> Unit) -> Unit = { schedulePostRecord(it) }
-    private val samplerCache = VulkanSamplerCache(preset)
-    private val textureUploads = TextureUploadQueue(config.maxPooledUploadBytes)
+    private val samplerCache = VulkanSamplerCache(preset, retirement)
+    private val textureUploads = TextureUploadQueue(config.maxPooledUploadBytes, retirement)
     private val bufferUploads = BufferUploadQueue(config.initialBufferUploadBytes)
 
     private val boundVertexBuffers = arrayOfNulls<VulkanVertexBuffer>(16)
@@ -78,7 +83,7 @@ class Backend(
     private var completionFence: sweetie.evaware.luma.backend.blaze3d.preset.PresetFence? = null
 
     override fun beginFrame() {
-        VulkanResourceRetirement.collectCompleted()
+        retirement.collectCompleted()
         renderState.beginFrame()
         frameId++
         vertexBuffer.beginFrame()
@@ -87,6 +92,14 @@ class Backend(
         vertexStaging.reset()
         uboStaging.reset()
         bufferUploads.beginFrame()
+
+        var texMask = boundTextureMask
+        while (texMask != 0) {
+            val slot = Integer.numberOfTrailingZeros(texMask)
+            boundTextures[slot] = null
+            texMask = texMask and (texMask - 1)
+        }
+        boundTextureMask = 0
 
         targetStack[0] = null
         targetStackDepth = 1
@@ -98,7 +111,7 @@ class Backend(
             recorder.size == 0 &&
             !textureUploads.hasPending() &&
             !bufferUploads.hasPending() &&
-            !VulkanResourceRetirement.hasPending() &&
+            !retirement.hasPending() &&
             !completionFenceRequested
         ) {
             runPostRecordActions()
@@ -125,10 +138,10 @@ class Backend(
             }
         }
 
-        val retirement = VulkanResourceRetirement.attachTo(encoder)
+        val pendingRetirement = retirement.attachTo(encoder)
         val requestedFence = if (completionFenceRequested) encoder.createFence() else null
         encoder.submit()
-        VulkanResourceRetirement.submitted(retirement)
+        retirement.submitted(pendingRetirement)
         completionFence = requestedFence
         completionFenceRequested = false
         runPostRecordActions()
@@ -155,19 +168,35 @@ class Backend(
         vertexSource: String,
         fragmentSource: String,
         layout: VertexLayout
-    ): ProgramHandle = createProgram(vertexSource, fragmentSource, VertexInputLayout().binding(layout))
+    ): ProgramHandle = createProgram(vertexSource, fragmentSource, VertexInputLayout().binding(layout), null)
+
+    override fun createProgram(
+        vertexSource: String,
+        fragmentSource: String,
+        layout: VertexLayout,
+        reflection: ShaderReflection?
+    ): ProgramHandle = createProgram(vertexSource, fragmentSource, VertexInputLayout().binding(layout), reflection)
 
     override fun createProgram(
         vertexSource: String,
         fragmentSource: String,
         layouts: VertexInputLayout
+    ): ProgramHandle = createProgram(vertexSource, fragmentSource, layouts, null)
+
+    override fun createProgram(
+        vertexSource: String,
+        fragmentSource: String,
+        layouts: VertexInputLayout,
+        reflection: ShaderReflection?
     ): ProgramHandle {
         val prog = Program(
             "${LumaNames.SHADER_NAMESPACE}:${LumaNames.PROGRAM_PREFIX}${nextProgramId++}",
             vertexSource,
             fragmentSource,
             layouts,
-            schedulePostRecordAction
+            schedulePostRecordAction,
+            retirement,
+            reflection
         )
         if (config.precompileDefaultPipeline) {
             prog.precompileDefaults(preset, pipelineGeneration)
@@ -177,18 +206,54 @@ class Backend(
 
     override fun bindProgram(program: ProgramHandle) {}
 
-    override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle {
+    override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle =
+        createTexture(image, mipmap, TextureFormat.RGBA8)
+
+    override fun createTexture(image: BufferedImage, mipmap: Boolean, format: TextureFormat): TextureHandle {
         require(!mipmap) { "Automatic mipmap generation is not supported by the Vulkan backend" }
         return VulkanTexture.create(
             image,
             samplerCache.get(VulkanSamplerDescriptor.clamp(PresetFilterMode.LINEAR)),
             textureUploads,
-            preset
+            preset,
+            retirement,
+            format
+        )
+    }
+
+    override fun createTexture(
+        width: Int,
+        height: Int,
+        data: ByteBuffer?,
+        format: TextureFormat,
+        mipmap: Boolean
+    ): TextureHandle {
+        require(!mipmap) { "Automatic mipmap generation is not supported by the Vulkan backend" }
+        return VulkanTexture.createRaw(
+            width,
+            height,
+            data,
+            format,
+            samplerCache.get(VulkanSamplerDescriptor.clamp(PresetFilterMode.LINEAR)),
+            textureUploads,
+            preset,
+            retirement
         )
     }
 
     override fun updateTexture(texture: TextureHandle, x: Int, y: Int, image: BufferedImage) {
         (texture as VulkanTexture).update(x, y, image)
+    }
+
+    override fun updateTexture(
+        texture: TextureHandle,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        data: ByteBuffer
+    ) {
+        (texture as VulkanTexture).update(x, y, width, height, data)
     }
 
     override fun bindTexture(texture: TextureHandle, unit: Int) {
@@ -197,19 +262,21 @@ class Backend(
         }
         val vulkanTexture = texture as VulkanTexture
         vulkanTexture.requireOpen()
-        if (boundTextures[unit] === vulkanTexture) return
+        vulkanTexture.attachRetirement(retirement)
+        val bit = 1 shl unit
+        if ((boundTextureMask and bit) != 0 && boundTextures[unit] === vulkanTexture) return
         boundTextures[unit] = vulkanTexture
-        boundTextureMask = boundTextureMask or (1 shl unit)
+        boundTextureMask = boundTextureMask or bit
     }
 
     override fun createVertexBuffer(sizeBytes: Long, usage: BufferUsage): VertexBufferHandle {
         require(sizeBytes > 0L) { "Buffer size must be positive" }
-        return VulkanVertexBuffer(sizeBytes, usage, preset)
+        return VulkanVertexBuffer(sizeBytes, usage, preset, retirement)
     }
 
     override fun createIndexBuffer(sizeBytes: Long, indexType: IndexType, usage: BufferUsage): IndexBufferHandle {
         require(sizeBytes > 0L) { "Buffer size must be positive" }
-        return VulkanIndexBuffer(sizeBytes, indexType, usage, preset)
+        return VulkanIndexBuffer(sizeBytes, indexType, usage, preset, retirement)
     }
 
     override fun updateVertexBuffer(buffer: VertexBufferHandle, offsetBytes: Long, data: ByteBuffer) {
@@ -263,13 +330,15 @@ class Backend(
             format,
             samplerCache.get(VulkanSamplerDescriptor.clamp(gpuFilter)),
             textureUploads,
-            preset
+            preset,
+            retirement
         )
     }
 
     override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) {
         val vulkanTarget = target as VulkanRenderTarget
         vulkanTarget.requireOpen()
+        vulkanTarget.attachRetirement(retirement)
         check(targetStackDepth < targetStack.size) { "Render target stack overflow" }
         targetStack[targetStackDepth++] = vulkanTarget
         targetPassId++
@@ -320,6 +389,16 @@ class Backend(
         recordClear(false, 0f, 0f, 0f, 0f, true, depth)
     }
 
+    override fun pushDebugGroup(label: String) {
+        if (targetStackDepth <= 0) return
+        recorder.recordDebugGroupPush(label, targetPassId)
+    }
+
+    override fun popDebugGroup() {
+        if (targetStackDepth <= 0) return
+        recorder.recordDebugGroupPop(targetPassId)
+    }
+
     private fun recordClear(
         color: Boolean,
         red: Float,
@@ -330,16 +409,17 @@ class Backend(
         depthValue: Double
     ) {
         check(targetStackDepth > 0) { "Cannot clear outside a frame" }
-        val draw = recorder.obtain()
-        draw.target = targetStack[targetStackDepth - 1]
-        draw.targetPassId = targetPassId
-        draw.clearColorEnabled = color
-        draw.clearDepthEnabled = depth
-        draw.clearRed = red
-        draw.clearGreen = green
-        draw.clearBlue = blue
-        draw.clearAlpha = alpha
-        draw.clearDepth = depthValue
+        recorder.recordClear(
+            targetStack[targetStackDepth - 1],
+            targetPassId,
+            color,
+            red,
+            green,
+            blue,
+            alpha,
+            depth,
+            depthValue
+        )
     }
 
     override fun invalidatePipelineCache() {
@@ -355,18 +435,75 @@ class Backend(
     ) {
         val prog = program as Program
         prog.requireOpen()
-        val strideBytes = prog.layout.strideFloats * Float.SIZE_BYTES
+        val strideBytes = prog.strideBytes
         val vertexBytes = vertexCount * strideBytes
         val vertexOffset = vertexStaging.appendFromAddressAligned(
             MemoryUtil.memAddress(vertices),
             vertexBytes,
             strideBytes
         )
+        val uboBytes = prepareUniforms(prog, uniforms)
+        val uboOffset = if (uboBytes > 0) prog.uboCacheOffset else 0L
+        val uboBytesLong = uboBytes.toLong()
+        val pipelineKey = renderState.statePipelineBits or primitiveType.ordinal
+        val target = targetStack[targetStackDepth - 1]
+        val scissorXY = renderState.scissorXY
+        val scissorWH = renderState.scissorWH
+        val texMask = boundTextureMask
 
-        val draw = recordDraw(prog, uniforms, primitiveType)
-        draw.vertexOffset = vertexOffset
-        draw.vertexBytes = vertexBytes.toLong()
-        draw.vertexCount = vertexCount
+        // O(1) tail-merge consecutive identical contiguous immediate draws at record time
+        val lastIdx = recorder.size - 1
+        if (
+            lastIdx >= 0 &&
+            recorder.flags[lastIdx] == 0.toByte() &&
+            recorder.programs[lastIdx] === prog &&
+            recorder.pipelineKeys[lastIdx] == pipelineKey &&
+            recorder.targets[lastIdx] === target &&
+            recorder.targetPassIds[lastIdx] == targetPassId &&
+            recorder.uboOffsets[lastIdx] == uboOffset &&
+            recorder.uboBytes[lastIdx] == uboBytesLong &&
+            recorder.scissorWH[lastIdx] == scissorWH &&
+            (scissorWH == 0L || recorder.scissorXY[lastIdx] == scissorXY) &&
+            recorder.vertexOffsets[lastIdx] + recorder.vertexBytes[lastIdx] == vertexOffset &&
+            recorder.sameTexturesAt(lastIdx, boundTextures, texMask)
+        ) {
+            recorder.vertexBytes[lastIdx] += vertexBytes.toLong()
+            recorder.vertexCounts[lastIdx] += vertexCount
+            return
+        }
+
+        if (texMask == 0 || texMask == 1) {
+            recorder.recordImmediateSingleTexture(
+                prog,
+                target,
+                targetPassId,
+                pipelineKey,
+                vertexOffset,
+                vertexBytes.toLong(),
+                vertexCount,
+                uboOffset,
+                uboBytesLong,
+                scissorXY,
+                scissorWH,
+                if (texMask == 1) boundTextures[0] else null
+            )
+        } else {
+            recorder.recordImmediate(
+                prog,
+                target,
+                targetPassId,
+                pipelineKey,
+                vertexOffset,
+                vertexBytes.toLong(),
+                vertexCount,
+                uboOffset,
+                uboBytesLong,
+                scissorXY,
+                scissorWH,
+                texMask,
+                boundTextures
+            )
+        }
     }
 
     override fun draw(
@@ -380,15 +517,33 @@ class Backend(
     ) {
         require(firstVertex >= 0 && vertexCount >= 0 && instanceCount >= 0 && firstInstance >= 0)
         require(primitiveType != PrimitiveType.QUADS) { "Direct QUADS require an index buffer" }
-        val draw = recordDraw(program as Program, uniforms, primitiveType)
-        boundVertexBuffers.copyInto(draw.vertexBuffers)
-        boundVertexOffsets.copyInto(draw.vertexOffsets)
-        draw.vertexBindingsMask = boundVertexBindingsMask
-        draw.firstVertex = firstVertex
-        draw.vertexCount = vertexCount
-        draw.instanceCount = instanceCount
-        draw.firstInstance = firstInstance
-        draw.direct = true
+        val prog = program as Program
+        prog.requireOpen()
+        val uboBytes = prepareUniforms(prog, uniforms)
+        val uboOffset = if (uboBytes > 0) prog.uboCacheOffset else 0L
+        recorder.recordDirect(
+            prog,
+            targetStack[targetStackDepth - 1],
+            targetPassId,
+            renderState.statePipelineBits or primitiveType.ordinal,
+            uboOffset,
+            uboBytes.toLong(),
+            renderState.scissorXY,
+            renderState.scissorWH,
+            boundTextureMask,
+            boundTextures,
+            boundVertexBuffers,
+            boundVertexOffsets,
+            boundVertexBindingsMask,
+            null,
+            false,
+            firstVertex,
+            0,
+            vertexCount,
+            0,
+            instanceCount,
+            firstInstance
+        )
     }
 
     override fun drawIndexed(
@@ -403,82 +558,80 @@ class Backend(
     ) {
         require(firstIndex >= 0 && indexCount >= 0 && instanceCount >= 0 && firstInstance >= 0)
         require(primitiveType != PrimitiveType.QUADS) { "Indexed QUADS must use TRIANGLES topology" }
-        val draw = recordDraw(program as Program, uniforms, primitiveType)
-        boundVertexBuffers.copyInto(draw.vertexBuffers)
-        boundVertexOffsets.copyInto(draw.vertexOffsets)
-        draw.vertexBindingsMask = boundVertexBindingsMask
-        draw.indexBuffer = requireNotNull(boundIndexBuffer) { "Index buffer is not bound" }
-        draw.firstIndex = firstIndex
-        draw.vertexCount = indexCount
-        draw.baseVertex = vertexOffset
-        draw.instanceCount = instanceCount
-        draw.firstInstance = firstInstance
-        draw.indexed = true
-        draw.direct = true
+        val prog = program as Program
+        prog.requireOpen()
+        val indexBuffer = requireNotNull(boundIndexBuffer) { "Index buffer is not bound" }
+        val uboBytes = prepareUniforms(prog, uniforms)
+        val uboOffset = if (uboBytes > 0) prog.uboCacheOffset else 0L
+        recorder.recordDirect(
+            prog,
+            targetStack[targetStackDepth - 1],
+            targetPassId,
+            renderState.statePipelineBits or primitiveType.ordinal,
+            uboOffset,
+            uboBytes.toLong(),
+            renderState.scissorXY,
+            renderState.scissorWH,
+            boundTextureMask,
+            boundTextures,
+            boundVertexBuffers,
+            boundVertexOffsets,
+            boundVertexBindingsMask,
+            indexBuffer,
+            true,
+            0,
+            firstIndex,
+            indexCount,
+            vertexOffset,
+            instanceCount,
+            firstInstance
+        )
     }
 
-    private fun recordDraw(prog: Program, uniforms: ShaderUniforms, primitiveType: PrimitiveType): DrawCall {
-        prog.requireOpen()
-
-        val uboOffset: Long
-        val uboBytes: Int
+    private fun prepareUniforms(prog: Program, uniforms: ShaderUniforms): Int {
         val vulkanUniforms = prog.vulkanUniforms
-        if (vulkanUniforms.isEmpty()) {
-            uboOffset = 0L
-            uboBytes = 0
-        } else {
-            var anyDirty = false
-            for (i in vulkanUniforms.indices) {
-                if (vulkanUniforms[i].isHandleDirty(uniforms)) {
+        if (vulkanUniforms.isEmpty()) return 0
+
+        val sameUniforms = prog.uboCacheUniforms === uniforms
+        val currentRevision = uniforms.registry.revision
+        if (sameUniforms && prog.uboCacheFrameId == frameId && prog.uboCacheRevision == currentRevision) {
+            return prog.uboCacheBytes
+        }
+
+        val handles = prog.resolveUniformHandles(uniforms)
+        var anyDirty = !(sameUniforms && prog.uboCacheFrameId == frameId)
+        if (!anyDirty) {
+            for (i in handles.indices) {
+                val handle = handles[i]
+                if (handle != null && handle.isDirty) {
                     anyDirty = true
                     break
                 }
             }
-
-            if (!anyDirty && prog.uboCacheFrameId == frameId && prog.uboCacheUniforms === uniforms) {
-                uboOffset = prog.uboCacheOffset
-                uboBytes = prog.uboCacheBytes
-            } else {
-                uboOffset = uboStaging.beginAlignedWrite(
-                    maxOf(config.uniformScratchBytes, prog.uniformBlockBytes),
-                    uniformOffsetAlignment
-                )
-                uniformWriter.begin(uboStaging.buffer)
-                for (i in vulkanUniforms.indices) {
-                    vulkanUniforms[i].write(uniformWriter, uniforms)
-                }
-                uboBytes = uniformWriter.size()
-                for (i in vulkanUniforms.indices) {
-                    vulkanUniforms[i].clearDirty(uniforms)
-                }
-                prog.uboCacheOffset = uboOffset
-                prog.uboCacheBytes = uboBytes
-                prog.uboCacheFrameId = frameId
-                prog.uboCacheUniforms = uniforms
-            }
         }
 
-        val draw = recorder.obtain()
-        draw.program = prog
-        draw.uboOffset = uboOffset
-        draw.uboBytes = uboBytes.toLong()
-        boundTextures.copyInto(draw.textures)
-        draw.textureMask = boundTextureMask
-        draw.primitiveType = primitiveType
-        draw.blendEnabled = renderState.blendEnabled
-        draw.blendFunction = renderState.blendFunction
-        draw.depthEnabled = renderState.depthEnabled
-        draw.depthWrite = draw.depthEnabled && renderState.depthWrite
-        draw.depthFunc = if (draw.depthEnabled) renderState.depthFunc else DepthCompare.ALWAYS
-        draw.cullEnabled = renderState.cullEnabled
-        draw.scissorEnabled = renderState.scissorEnabled
-        draw.scissorX = renderState.scissorX
-        draw.scissorY = renderState.scissorY
-        draw.scissorWidth = renderState.scissorWidth
-        draw.scissorHeight = renderState.scissorHeight
-        draw.target = targetStack[targetStackDepth - 1]
-        draw.targetPassId = targetPassId
-        return draw
+        if (!anyDirty) {
+            prog.uboCacheRevision = currentRevision
+            return prog.uboCacheBytes
+        }
+
+        val uboOffset = uboStaging.beginAlignedWrite(
+            maxOf(config.uniformScratchBytes, prog.uniformBlockBytes),
+            uniformOffsetAlignment
+        )
+        uniformWriter.begin(uboStaging.buffer)
+        for (i in vulkanUniforms.indices) {
+            val handle = handles[i]
+            vulkanUniforms[i].write(uniformWriter, handle)
+            if (handle != null) handle.isDirty = false
+        }
+        val uboBytes = uniformWriter.size()
+        prog.uboCacheOffset = uboOffset
+        prog.uboCacheBytes = uboBytes
+        prog.uboCacheFrameId = frameId
+        prog.uboCacheUniforms = uniforms
+        prog.uboCacheRevision = currentRevision
+        return uboBytes
     }
 
     override fun close() {
@@ -491,16 +644,24 @@ class Backend(
             }
         }
         completionFenceRequested = false
+        boundTextures.fill(null)
+        boundTextureMask = 0
+        boundVertexBuffers.fill(null)
+        boundVertexOffsets.fill(0L)
+        boundVertexBindingsMask = 0
+        boundIndexBuffer = null
+        targetStack.fill(null)
+        targetStackDepth = 0
         textureUploads.close()
         bufferUploads.close()
         vertexStaging.close()
         uboStaging.close()
-        VulkanResourceRetirement.closeAll(preset::createCommandEncoder)
+        retirement.closeAll(preset::createCommandEncoder)
         runPostRecordActions()
         vertexBuffer.close()
         uboBuffer.close()
         samplerCache.close()
-        VulkanResourceRetirement.closeAll(preset::createCommandEncoder)
+        retirement.closeAll(preset::createCommandEncoder)
     }
 
     private fun schedulePostRecord(action: () -> Unit) {

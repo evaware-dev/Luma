@@ -3,7 +3,7 @@ package sweetie.evaware.luma.backend.blaze3d
 import sweetie.evaware.luma.backend.blaze3d.preset.PresetCommandEncoder
 import sweetie.evaware.luma.backend.blaze3d.preset.PresetFence
 
-internal object VulkanResourceRetirement {
+internal class VulkanRetirementQueue {
     internal class Submission {
         var fence: PresetFence? = null
         val resources = ArrayList<AutoCloseable>()
@@ -19,11 +19,7 @@ internal object VulkanResourceRetirement {
     private val recycledSubmissions = ArrayDeque<Submission>()
 
     fun defer(resource: AutoCloseable) {
-        pending += resource
-    }
-
-    fun defer(action: () -> Unit) {
-        defer(AutoCloseable(action))
+        pending.add(resource)
     }
 
     fun hasPending(): Boolean = pending.isNotEmpty()
@@ -48,17 +44,28 @@ internal object VulkanResourceRetirement {
     }
 
     fun closeAll(createEncoder: () -> PresetCommandEncoder) {
-        collect(wait = true)
-        if (pending.isEmpty()) return
-
-        val encoder = createEncoder()
-        val retirement = requireNotNull(attachTo(encoder))
-        encoder.submit()
-        submitted(retirement)
-        collect(wait = true)
+        var failure: Throwable? = null
+        try {
+            collect(wait = true)
+        } catch (throwable: Throwable) {
+            failure = throwable
+        }
+        if (pending.isNotEmpty()) {
+            try {
+                val encoder = createEncoder()
+                val retirement = requireNotNull(attachTo(encoder))
+                encoder.submit()
+                submitted(retirement)
+                collect(wait = true)
+            } catch (throwable: Throwable) {
+                if (failure == null) failure = throwable else failure.addSuppressed(throwable)
+            }
+        }
+        if (failure != null) throw failure
     }
 
     private fun collect(wait: Boolean) {
+        var firstFailure: Throwable? = null
         var index = 0
         while (index < submissions.size) {
             val submission = submissions[index]
@@ -67,23 +74,22 @@ internal object VulkanResourceRetirement {
                 index++
                 continue
             }
-            var failure: Throwable? = null
             try {
                 fence.close()
             } catch (throwable: Throwable) {
-                failure = throwable
+                if (firstFailure == null) firstFailure = throwable else firstFailure.addSuppressed(throwable)
             }
             for (resourceIndex in submission.resources.indices) {
                 try {
                     submission.resources[resourceIndex].close()
                 } catch (throwable: Throwable) {
-                    if (failure == null) failure = throwable else failure.addSuppressed(throwable)
+                    if (firstFailure == null) firstFailure = throwable else firstFailure.addSuppressed(throwable)
                 }
             }
             submissions.removeAt(index)
             submission.reset()
             recycledSubmissions.addLast(submission)
-            if (failure != null) throw failure
         }
+        if (firstFailure != null) throw firstFailure
     }
 }

@@ -7,6 +7,7 @@ import com.mojang.renderpearl.api.buffers.GpuBufferSlice
 import com.mojang.renderpearl.api.commands.CommandEncoder
 import com.mojang.renderpearl.api.commands.GpuFence
 import com.mojang.renderpearl.api.commands.RenderPass
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor
 import com.mojang.renderpearl.api.pipeline.*
 import com.mojang.renderpearl.api.textures.AddressMode
 import com.mojang.renderpearl.api.textures.FilterMode
@@ -17,6 +18,7 @@ import com.mojang.renderpearl.api.vertex.VertexFormat
 import java.nio.ByteBuffer
 import java.util.Optional
 import java.util.OptionalDouble
+import java.util.function.Supplier
 import net.minecraft.resources.Identifier
 import org.joml.Vector4f
 import sweetie.evaware.luma.LumaNames
@@ -26,10 +28,12 @@ import sweetie.evaware.luma.api.BlendOp
 import sweetie.evaware.luma.api.DepthCompare
 import sweetie.evaware.luma.api.IndexType
 import sweetie.evaware.luma.api.PrimitiveType
-import sweetie.evaware.luma.vertex.ShaderVertType
 import sweetie.evaware.luma.vertex.VertexLayout
 
 open class RenderpearlPreset : VulkanPreset {
+    private val reusableEncoder = CommandEncoderWrapper()
+    private val reusableSequentialBuffer = SequentialBufferWrapper()
+
     override val name: String get() = "Minecraft 26.3 Renderpearl"
 
     override val minUniformOffsetAlignment: Int
@@ -136,18 +140,20 @@ open class RenderpearlPreset : VulkanPreset {
     }
 
     override fun createCommandEncoder(): PresetCommandEncoder {
-        return CommandEncoderWrapper(RenderSystem.getDevice().createCommandEncoder())
+        return reusableEncoder.reset(RenderSystem.getDevice().createCommandEncoder())
     }
 
     override fun bindDefaultUniforms(pass: PresetRenderPass) {
-        val rawPass = (pass as RenderPassWrapper).handle
+        val rawPass = (pass as RenderPassWrapper).requireHandle()
         RenderSystem.bindDefaultUniforms(rawPass)
     }
 
     override fun getSequentialQuadBuffer(indexCount: Int): PresetSequentialBuffer {
         val seq = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS)
         val buf = seq.getBuffer(indexCount)
-        return SequentialBufferWrapper(BufferWrapper(buf, indexCount.toLong() * 2), indexCount)
+        val type = seq.type()
+        val byteSize = indexCount.toLong() * if (type == com.mojang.renderpearl.api.pipeline.IndexType.SHORT) 2L else 4L
+        return reusableSequentialBuffer.update(buf, byteSize, indexCount, type)
     }
 
     override fun getLastDebugMessages(): List<String> {
@@ -175,10 +181,37 @@ open class RenderpearlPreset : VulkanPreset {
     }
 
     private class TextureViewWrapper(override val texture: PresetGpuTexture, val handle: GpuTextureView) : PresetGpuTextureView {
+        private var cachedDescriptor: RenderPassDescriptor? = null
+        private var cachedDepthView: GpuTextureView? = null
+        private var cachedLabel: (() -> String)? = null
+
+        fun renderPassDescriptor(label: () -> String, depthView: GpuTextureView?): RenderPassDescriptor {
+            val existing = cachedDescriptor
+            if (existing != null && cachedDepthView === depthView && cachedLabel === label) {
+                return existing
+            }
+            val builder = RenderPassDescriptor.builder(Supplier(label))
+                .withColorAttachment(handle, Optional.empty())
+                .withRenderArea(RenderPass.RenderArea(0, 0, handle.getWidth(0), handle.getHeight(0)))
+            if (depthView != null) {
+                builder.withDepthAttachment(depthView, OptionalDouble.empty())
+            }
+            val descriptor = builder.build()
+            cachedDescriptor = descriptor
+            cachedDepthView = depthView
+            cachedLabel = label
+            return descriptor
+        }
+
         override fun getWidth(mip: Int): Int = handle.getWidth(mip)
         override fun getHeight(mip: Int): Int = handle.getHeight(mip)
         override fun <T> unwrap(): T = @Suppress("UNCHECKED_CAST") (handle as T)
-        override fun close() = handle.close()
+        override fun close() {
+            cachedDescriptor = null
+            cachedDepthView = null
+            cachedLabel = null
+            handle.close()
+        }
     }
 
     private class SamplerWrapper(val handle: GpuSampler) : PresetGpuSampler {
@@ -196,13 +229,49 @@ open class RenderpearlPreset : VulkanPreset {
         override fun close() = handle.close()
     }
 
-    private class SequentialBufferWrapper(override val buffer: PresetGpuBuffer, override val indexCount: Int) : PresetSequentialBuffer
+    private class SequentialBufferWrapper : PresetSequentialBuffer {
+        private var cachedWrapper: BufferWrapper? = null
+        var rawBuffer: GpuBuffer? = null
+            private set
+        var indexType: com.mojang.renderpearl.api.pipeline.IndexType? = null
+            private set
+        override var indexCount: Int = 0
+            private set
 
-    private class CommandEncoderWrapper(val handle: CommandEncoder) : PresetCommandEncoder {
+        override val buffer: PresetGpuBuffer
+            get() = requireNotNull(cachedWrapper) { "Sequential buffer is not initialized" }
+
+        fun update(
+            raw: GpuBuffer,
+            sizeBytes: Long,
+            count: Int,
+            type: com.mojang.renderpearl.api.pipeline.IndexType
+        ): SequentialBufferWrapper {
+            if (rawBuffer !== raw || indexType != type) {
+                cachedWrapper = BufferWrapper(raw, sizeBytes)
+                rawBuffer = raw
+                indexType = type
+            }
+            indexCount = count
+            return this
+        }
+    }
+
+    private class CommandEncoderWrapper : PresetCommandEncoder {
+        private var handle: CommandEncoder? = null
         private val tempColor = Vector4f()
+        private val reusablePass = RenderPassWrapper()
+
+        fun reset(encoder: CommandEncoder): CommandEncoderWrapper {
+            handle = encoder
+            return this
+        }
+
+        private fun requireHandle(): CommandEncoder =
+            checkNotNull(handle) { "Command encoder is not active" }
 
         override fun writeToBuffer(slice: PresetGpuBufferSlice, data: ByteBuffer) {
-            handle.writeToBuffer((slice as SliceWrapper).handle, data)
+            requireHandle().writeToBuffer((slice as SliceWrapper).handle, data)
         }
 
         override fun writeToTexture(
@@ -215,16 +284,16 @@ open class RenderpearlPreset : VulkanPreset {
             width: Int,
             height: Int
         ) {
-            handle.writeToTexture((texture as TextureWrapper).handle, data, mip, depth, x, y, width, height)
+            requireHandle().writeToTexture((texture as TextureWrapper).handle, data, mip, depth, x, y, width, height)
         }
 
         override fun clearColorTexture(texture: PresetGpuTexture, red: Float, green: Float, blue: Float, alpha: Float) {
             tempColor.set(red, green, blue, alpha)
-            handle.clearColorTexture((texture as TextureWrapper).handle, tempColor)
+            requireHandle().clearColorTexture((texture as TextureWrapper).handle, tempColor)
         }
 
         override fun clearDepthTexture(texture: PresetGpuTexture, depth: Double) {
-            handle.clearDepthTexture((texture as TextureWrapper).handle, depth)
+            requireHandle().clearDepthTexture((texture as TextureWrapper).handle, depth)
         }
 
         override fun clearColorAndDepthTextures(
@@ -237,68 +306,100 @@ open class RenderpearlPreset : VulkanPreset {
             depthValue: Double
         ) {
             tempColor.set(red, green, blue, alpha)
-            handle.clearColorAndDepthTextures((color as TextureWrapper).handle, tempColor, (depth as TextureWrapper).handle, depthValue)
+            requireHandle().clearColorAndDepthTextures((color as TextureWrapper).handle, tempColor, (depth as TextureWrapper).handle, depthValue)
         }
 
         override fun createRenderPass(label: () -> String, colorView: PresetGpuTextureView, depthView: PresetGpuTextureView?): PresetRenderPass {
-            val cv = (colorView as TextureViewWrapper).handle
+            val colorWrapper = colorView as TextureViewWrapper
             val dv = (depthView as? TextureViewWrapper)?.handle
-            val pass = handle.createRenderPass(label, cv, Optional.empty(), dv, OptionalDouble.empty())
-            return RenderPassWrapper(pass)
+            val pass = requireHandle().createRenderPass(colorWrapper.renderPassDescriptor(label, dv))
+            return if (reusablePass.inUse) RenderPassWrapper().reset(pass) else reusablePass.reset(pass)
         }
 
-        override fun createFence(): PresetFence = FenceWrapper(handle.createFence())
+        override fun createFence(): PresetFence = FenceWrapper(requireHandle().createFence())
 
-        override fun submit() = handle.submit()
+        override fun submit() {
+            val active = requireHandle()
+            handle = null
+            active.submit()
+        }
     }
 
-    private class RenderPassWrapper(val handle: RenderPass) : PresetRenderPass {
+    private class RenderPassWrapper : PresetRenderPass {
+        private var handle: RenderPass? = null
+
+        val inUse: Boolean
+            get() = handle != null
+
+        fun reset(pass: RenderPass): RenderPassWrapper {
+            handle = pass
+            return this
+        }
+
+        fun requireHandle(): RenderPass =
+            checkNotNull(handle) { "Render pass is closed" }
+
+        override fun pushDebugGroup(label: String) {
+            requireHandle().pushDebugGroup { label }
+        }
+
+        override fun popDebugGroup() {
+            requireHandle().popDebugGroup()
+        }
+
         override fun setPipeline(pipeline: PresetPipeline) {
             val compiled = checkNotNull((pipeline as PipelineWrapper).compiledPipeline) { "Pipeline is not compiled" }
-            handle.setPipeline(compiled)
+            requireHandle().setPipeline(compiled)
         }
 
         override fun setUniform(name: String, slice: PresetGpuBufferSlice) {
-            handle.setUniform(name, (slice as SliceWrapper).handle)
+            requireHandle().setUniform(name, (slice as SliceWrapper).handle)
         }
 
         override fun bindTexture(name: String, view: PresetGpuTextureView, sampler: PresetGpuSampler) {
-            handle.setUniform(name, (view as TextureViewWrapper).handle, (sampler as SamplerWrapper).handle)
+            requireHandle().setUniform(name, (view as TextureViewWrapper).handle, (sampler as SamplerWrapper).handle)
         }
 
         override fun enableScissor(x: Int, y: Int, width: Int, height: Int) {
-            handle.enableScissor(x, y, width, height)
+            requireHandle().enableScissor(x, y, width, height)
         }
 
         override fun disableScissor() {
-            handle.disableScissor()
+            requireHandle().disableScissor()
         }
 
         override fun setVertexBuffer(slot: Int, slice: PresetGpuBufferSlice) {
-            handle.setVertexBuffer(slot, (slice as SliceWrapper).handle)
+            requireHandle().setVertexBuffer(slot, (slice as SliceWrapper).handle)
         }
 
         override fun setIndexBuffer(buffer: PresetGpuBuffer, indexType: IndexType) {
-            handle.setIndexBuffer(
+            requireHandle().setIndexBuffer(
                 (buffer as BufferWrapper).handle,
                 if (indexType == IndexType.UINT16) com.mojang.renderpearl.api.pipeline.IndexType.SHORT else com.mojang.renderpearl.api.pipeline.IndexType.INT
             )
         }
 
         override fun setSequentialIndexBuffer(buffer: PresetSequentialBuffer) {
-            val seq = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS)
-            handle.setIndexBuffer((buffer.buffer as BufferWrapper).handle, seq.type())
+            val seq = buffer as SequentialBufferWrapper
+            requireHandle().setIndexBuffer(
+                requireNotNull(seq.rawBuffer),
+                requireNotNull(seq.indexType)
+            )
         }
 
         override fun draw(vertexCount: Int, instanceCount: Int, firstVertex: Int, firstInstance: Int) {
-            handle.draw(vertexCount, instanceCount, firstVertex, firstInstance)
+            requireHandle().draw(vertexCount, instanceCount, firstVertex, firstInstance)
         }
 
         override fun drawIndexed(indexCount: Int, instanceCount: Int, firstIndex: Int, baseVertex: Int, firstInstance: Int) {
-            handle.drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance)
+            requireHandle().drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance)
         }
 
-        override fun close() = handle.close()
+        override fun close() {
+            val active = handle ?: return
+            handle = null
+            active.close()
+        }
     }
 
     private fun convertLayout(layout: VertexLayout, attributeNames: Map<Int, String>, stepRate: Int = 0): VertexFormat {
@@ -306,37 +407,10 @@ open class RenderpearlPreset : VulkanPreset {
         for (i in 0 until layout.size()) {
             val layoutPos = layout.layoutPos(i)
             val name = attributeNames[layoutPos] ?: "a$layoutPos"
-            val format = vertexFormat(layout.type(i), layout.count(i), layout.normalized(i))
+            val format = layout.type(i).toPresetFormat(layout.count(i), layout.normalized(i)).toRenderpearl()
             builder.addAttribute(name, format)
         }
         return builder.build()
-    }
-
-    private fun vertexFormat(type: ShaderVertType, count: Int, normalized: Boolean): GpuFormat {
-        require(count in 1..4)
-        val prefix = when (count) {
-            1 -> "R"
-            2 -> "RG"
-            3 -> "RGB"
-            else -> "RGBA"
-        }
-        val suffix = when (type) {
-            ShaderVertType.FLOAT32 -> "32_FLOAT"
-            ShaderVertType.FLOAT16 -> "16_FLOAT"
-            ShaderVertType.INT8 -> if (normalized) "8_SNORM" else "8_SINT"
-            ShaderVertType.UINT8 -> if (normalized) "8_UNORM" else "8_UINT"
-            ShaderVertType.INT16 -> if (normalized) "16_SNORM" else "16_SINT"
-            ShaderVertType.UINT16 -> if (normalized) "16_UNORM" else "16_UINT"
-            ShaderVertType.INT32 -> {
-                require(!normalized)
-                "32_SINT"
-            }
-            ShaderVertType.UINT32 -> {
-                require(!normalized)
-                "32_UINT"
-            }
-        }
-        return GpuFormat.valueOf(prefix + suffix)
     }
 
     private fun PresetFormat.toRenderpearl(): GpuFormat = GpuFormat.valueOf(name)

@@ -15,6 +15,7 @@ import com.mojang.blaze3d.shaders.ShaderType
 import com.mojang.blaze3d.shaders.UniformType
 import com.mojang.blaze3d.systems.CommandEncoder
 import com.mojang.blaze3d.systems.RenderPass
+import com.mojang.blaze3d.systems.RenderPassDescriptor
 import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.textures.AddressMode
 import com.mojang.blaze3d.textures.FilterMode
@@ -25,6 +26,7 @@ import com.mojang.blaze3d.vertex.VertexFormat
 import java.nio.ByteBuffer
 import java.util.Optional
 import java.util.OptionalDouble
+import java.util.function.Supplier
 import net.minecraft.resources.Identifier
 import org.joml.Vector4f
 import sweetie.evaware.luma.LumaNames
@@ -36,6 +38,9 @@ import sweetie.evaware.luma.api.IndexType
 import sweetie.evaware.luma.api.PrimitiveType
 
 open class Blaze3dPreset : VulkanPreset {
+    private val reusableEncoder = CommandEncoderWrapper()
+    private val reusableSequentialBuffer = SequentialBufferWrapper()
+
     override val name: String get() = "Minecraft 26.2 Blaze3D"
 
     override val minUniformOffsetAlignment: Int
@@ -137,18 +142,20 @@ open class Blaze3dPreset : VulkanPreset {
     }
 
     override fun createCommandEncoder(): PresetCommandEncoder {
-        return CommandEncoderWrapper(RenderSystem.getDevice().createCommandEncoder())
+        return reusableEncoder.reset(RenderSystem.getDevice().createCommandEncoder())
     }
 
     override fun bindDefaultUniforms(pass: PresetRenderPass) {
-        val rawPass = (pass as RenderPassWrapper).handle
+        val rawPass = (pass as RenderPassWrapper).requireHandle()
         RenderSystem.bindDefaultUniforms(rawPass)
     }
 
     override fun getSequentialQuadBuffer(indexCount: Int): PresetSequentialBuffer {
         val seq = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS)
         val buf = seq.getBuffer(indexCount)
-        return SequentialBufferWrapper(BufferWrapper(buf, indexCount.toLong() * 2), indexCount)
+        val type = seq.type()
+        val byteSize = indexCount.toLong() * if (type == com.mojang.blaze3d.IndexType.SHORT) 2L else 4L
+        return reusableSequentialBuffer.update(buf, byteSize, indexCount, type)
     }
 
     override fun getLastDebugMessages(): List<String> {
@@ -176,10 +183,36 @@ open class Blaze3dPreset : VulkanPreset {
     }
 
     private class TextureViewWrapper(override val texture: PresetGpuTexture, val handle: GpuTextureView) : PresetGpuTextureView {
+        private var cachedDescriptor: RenderPassDescriptor? = null
+        private var cachedDepthView: GpuTextureView? = null
+        private var cachedLabel: (() -> String)? = null
+
+        fun renderPassDescriptor(label: () -> String, depthView: GpuTextureView?): RenderPassDescriptor {
+            val existing = cachedDescriptor
+            if (existing != null && cachedDepthView === depthView && cachedLabel === label) {
+                return existing
+            }
+            val descriptor = RenderPassDescriptor.create(Supplier(label))
+                .withColorAttachment(handle, Optional.empty())
+                .withRenderArea(RenderPass.RenderArea(0, 0, handle.getWidth(0), handle.getHeight(0)))
+            if (depthView != null) {
+                descriptor.withDepthAttachment(depthView, OptionalDouble.empty())
+            }
+            cachedDescriptor = descriptor
+            cachedDepthView = depthView
+            cachedLabel = label
+            return descriptor
+        }
+
         override fun getWidth(mip: Int): Int = handle.getWidth(mip)
         override fun getHeight(mip: Int): Int = handle.getHeight(mip)
         override fun <T> unwrap(): T = @Suppress("UNCHECKED_CAST") (handle as T)
-        override fun close() = handle.close()
+        override fun close() {
+            cachedDescriptor = null
+            cachedDepthView = null
+            cachedLabel = null
+            handle.close()
+        }
     }
 
     private class SamplerWrapper(val handle: GpuSampler) : PresetGpuSampler {
@@ -196,13 +229,49 @@ open class Blaze3dPreset : VulkanPreset {
         override fun close() = handle.close()
     }
 
-    private class SequentialBufferWrapper(override val buffer: PresetGpuBuffer, override val indexCount: Int) : PresetSequentialBuffer
+    private class SequentialBufferWrapper : PresetSequentialBuffer {
+        private var cachedWrapper: BufferWrapper? = null
+        var rawBuffer: GpuBuffer? = null
+            private set
+        var indexType: com.mojang.blaze3d.IndexType? = null
+            private set
+        override var indexCount: Int = 0
+            private set
 
-    private class CommandEncoderWrapper(val handle: CommandEncoder) : PresetCommandEncoder {
+        override val buffer: PresetGpuBuffer
+            get() = requireNotNull(cachedWrapper) { "Sequential buffer is not initialized" }
+
+        fun update(
+            raw: GpuBuffer,
+            sizeBytes: Long,
+            count: Int,
+            type: com.mojang.blaze3d.IndexType
+        ): SequentialBufferWrapper {
+            if (rawBuffer !== raw || indexType != type) {
+                cachedWrapper = BufferWrapper(raw, sizeBytes)
+                rawBuffer = raw
+                indexType = type
+            }
+            indexCount = count
+            return this
+        }
+    }
+
+    private class CommandEncoderWrapper : PresetCommandEncoder {
+        private var handle: CommandEncoder? = null
         private val tempColor = Vector4f()
+        private val reusablePass = RenderPassWrapper()
+
+        fun reset(encoder: CommandEncoder): CommandEncoderWrapper {
+            handle = encoder
+            return this
+        }
+
+        private fun requireHandle(): CommandEncoder =
+            checkNotNull(handle) { "Command encoder is not active" }
 
         override fun writeToBuffer(slice: PresetGpuBufferSlice, data: ByteBuffer) {
-            handle.writeToBuffer((slice as SliceWrapper).handle, data)
+            requireHandle().writeToBuffer((slice as SliceWrapper).handle, data)
         }
 
         override fun writeToTexture(
@@ -215,16 +284,16 @@ open class Blaze3dPreset : VulkanPreset {
             width: Int,
             height: Int
         ) {
-            handle.writeToTexture((texture as TextureWrapper).handle, data, mip, depth, x, y, width, height)
+            requireHandle().writeToTexture((texture as TextureWrapper).handle, data, mip, depth, x, y, width, height)
         }
 
         override fun clearColorTexture(texture: PresetGpuTexture, red: Float, green: Float, blue: Float, alpha: Float) {
             tempColor.set(red, green, blue, alpha)
-            handle.clearColorTexture((texture as TextureWrapper).handle, tempColor)
+            requireHandle().clearColorTexture((texture as TextureWrapper).handle, tempColor)
         }
 
         override fun clearDepthTexture(texture: PresetGpuTexture, depth: Double) {
-            handle.clearDepthTexture((texture as TextureWrapper).handle, depth)
+            requireHandle().clearDepthTexture((texture as TextureWrapper).handle, depth)
         }
 
         override fun clearColorAndDepthTextures(
@@ -237,67 +306,99 @@ open class Blaze3dPreset : VulkanPreset {
             depthValue: Double
         ) {
             tempColor.set(red, green, blue, alpha)
-            handle.clearColorAndDepthTextures((color as TextureWrapper).handle, tempColor, (depth as TextureWrapper).handle, depthValue)
+            requireHandle().clearColorAndDepthTextures((color as TextureWrapper).handle, tempColor, (depth as TextureWrapper).handle, depthValue)
         }
 
         override fun createRenderPass(label: () -> String, colorView: PresetGpuTextureView, depthView: PresetGpuTextureView?): PresetRenderPass {
-            val cv = (colorView as TextureViewWrapper).handle
+            val colorWrapper = colorView as TextureViewWrapper
             val dv = (depthView as? TextureViewWrapper)?.handle
-            val pass = handle.createRenderPass(label, cv, Optional.empty(), dv, OptionalDouble.empty())
-            return RenderPassWrapper(pass)
+            val pass = requireHandle().createRenderPass(colorWrapper.renderPassDescriptor(label, dv))
+            return if (reusablePass.inUse) RenderPassWrapper().reset(pass) else reusablePass.reset(pass)
         }
 
-        override fun createFence(): PresetFence = FenceWrapper(handle.createFence())
+        override fun createFence(): PresetFence = FenceWrapper(requireHandle().createFence())
 
-        override fun submit() = handle.submit()
+        override fun submit() {
+            val active = requireHandle()
+            handle = null
+            active.submit()
+        }
     }
 
-    private class RenderPassWrapper(val handle: RenderPass) : PresetRenderPass {
+    private class RenderPassWrapper : PresetRenderPass {
+        private var handle: RenderPass? = null
+
+        val inUse: Boolean
+            get() = handle != null
+
+        fun reset(pass: RenderPass): RenderPassWrapper {
+            handle = pass
+            return this
+        }
+
+        fun requireHandle(): RenderPass =
+            checkNotNull(handle) { "Render pass is closed" }
+
+        override fun pushDebugGroup(label: String) {
+            requireHandle().pushDebugGroup { label }
+        }
+
+        override fun popDebugGroup() {
+            requireHandle().popDebugGroup()
+        }
+
         override fun setPipeline(pipeline: PresetPipeline) {
-            handle.setPipeline((pipeline as PipelineWrapper).handle)
+            requireHandle().setPipeline((pipeline as PipelineWrapper).handle)
         }
 
         override fun setUniform(name: String, slice: PresetGpuBufferSlice) {
-            handle.setUniform(name, (slice as SliceWrapper).handle)
+            requireHandle().setUniform(name, (slice as SliceWrapper).handle)
         }
 
         override fun bindTexture(name: String, view: PresetGpuTextureView, sampler: PresetGpuSampler) {
-            handle.bindTexture(name, (view as TextureViewWrapper).handle, (sampler as SamplerWrapper).handle)
+            requireHandle().bindTexture(name, (view as TextureViewWrapper).handle, (sampler as SamplerWrapper).handle)
         }
 
         override fun enableScissor(x: Int, y: Int, width: Int, height: Int) {
-            handle.enableScissor(x, y, width, height)
+            requireHandle().enableScissor(x, y, width, height)
         }
 
         override fun disableScissor() {
-            handle.disableScissor()
+            requireHandle().disableScissor()
         }
 
         override fun setVertexBuffer(slot: Int, slice: PresetGpuBufferSlice) {
-            handle.setVertexBuffer(slot, (slice as SliceWrapper).handle)
+            requireHandle().setVertexBuffer(slot, (slice as SliceWrapper).handle)
         }
 
         override fun setIndexBuffer(buffer: PresetGpuBuffer, indexType: IndexType) {
-            handle.setIndexBuffer(
+            requireHandle().setIndexBuffer(
                 (buffer as BufferWrapper).handle,
                 if (indexType == IndexType.UINT16) com.mojang.blaze3d.IndexType.SHORT else com.mojang.blaze3d.IndexType.INT
             )
         }
 
         override fun setSequentialIndexBuffer(buffer: PresetSequentialBuffer) {
-            val seq = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS)
-            handle.setIndexBuffer((buffer.buffer as BufferWrapper).handle, seq.type())
+            val seq = buffer as SequentialBufferWrapper
+            requireHandle().setIndexBuffer(
+                requireNotNull(seq.rawBuffer),
+                requireNotNull(seq.indexType)
+            )
         }
 
         override fun draw(vertexCount: Int, instanceCount: Int, firstVertex: Int, firstInstance: Int) {
-            handle.draw(vertexCount, instanceCount, firstVertex, firstInstance)
+            requireHandle().draw(vertexCount, instanceCount, firstVertex, firstInstance)
         }
 
         override fun drawIndexed(indexCount: Int, instanceCount: Int, firstIndex: Int, baseVertex: Int, firstInstance: Int) {
-            handle.drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance)
+            requireHandle().drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance)
         }
 
-        override fun close() = handle.close()
+        override fun close() {
+            val active = handle ?: return
+            handle = null
+            active.close()
+        }
     }
 
     private fun PresetFormat.toBlaze3d(): GpuFormat = GpuFormat.valueOf(name)

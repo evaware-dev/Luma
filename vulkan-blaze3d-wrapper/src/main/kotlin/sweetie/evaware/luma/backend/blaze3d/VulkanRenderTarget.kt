@@ -12,7 +12,7 @@ import sweetie.evaware.luma.backend.blaze3d.preset.PresetGpuTextureView
 import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPreset
 import sweetie.evaware.luma.backend.blaze3d.preset.VulkanPresets
 
-class VulkanRenderTarget(
+class VulkanRenderTarget internal constructor(
     val gpuTexture: PresetGpuTexture,
     val colorView: PresetGpuTextureView,
     private val colorAsTexture: VulkanTexture,
@@ -21,13 +21,45 @@ class VulkanRenderTarget(
     private val depthAsTexture: VulkanTexture?,
     override val width: Int,
     override val height: Int,
-    private val ownsAttachments: Boolean = true
+    private val ownsAttachments: Boolean,
+    private var retirement: VulkanRetirementQueue?
 ) : RenderTargetHandle {
+    constructor(
+        gpuTexture: PresetGpuTexture,
+        colorView: PresetGpuTextureView,
+        colorAsTexture: VulkanTexture,
+        gpuDepthTexture: PresetGpuTexture?,
+        depthView: PresetGpuTextureView?,
+        depthAsTexture: VulkanTexture?,
+        width: Int,
+        height: Int,
+        ownsAttachments: Boolean = true
+    ) : this(
+        gpuTexture,
+        colorView,
+        colorAsTexture,
+        gpuDepthTexture,
+        depthView,
+        depthAsTexture,
+        width,
+        height,
+        ownsAttachments,
+        null
+    )
+
     override val colorTexture: TextureHandle get() = colorAsTexture
     override val depthTexture: TextureHandle? get() = depthAsTexture
     private var closed = false
 
     internal fun requireOpen() = check(!closed) { "Render target is closed" }
+
+    internal fun attachRetirement(queue: VulkanRetirementQueue) {
+        if (retirement == null) {
+            retirement = queue
+        }
+        colorAsTexture.attachRetirement(queue)
+        depthAsTexture?.attachRetirement(queue)
+    }
 
     override fun close() {
         if (closed) return
@@ -35,9 +67,27 @@ class VulkanRenderTarget(
         colorAsTexture.close()
         depthAsTexture?.close()
         if (ownsAttachments && (depthView != null || gpuDepthTexture != null)) {
-            VulkanResourceRetirement.defer {
-                depthView?.close()
-                gpuDepthTexture?.close()
+            val queue = retirement
+            if (queue != null) {
+                if (depthView != null) queue.defer(depthView)
+                if (gpuDepthTexture != null) queue.defer(gpuDepthTexture)
+            } else {
+                var failure: Throwable? = null
+                if (depthView != null) {
+                    try {
+                        depthView.close()
+                    } catch (throwable: Throwable) {
+                        failure = throwable
+                    }
+                }
+                if (gpuDepthTexture != null) {
+                    try {
+                        gpuDepthTexture.close()
+                    } catch (throwable: Throwable) {
+                        if (failure == null) failure = throwable else failure.addSuppressed(throwable)
+                    }
+                }
+                if (failure != null) throw failure
             }
         }
     }
@@ -53,7 +103,8 @@ class VulkanRenderTarget(
             format: RenderTargetFormat,
             sampler: PresetGpuSampler,
             uploads: TextureUploadQueue,
-            preset: VulkanPreset = VulkanPresets.active
+            preset: VulkanPreset,
+            retirement: VulkanRetirementQueue
         ): VulkanRenderTarget {
             val presetFormat = when (format) {
                 RenderTargetFormat.RGBA8 -> PresetFormat.RGBA8_UNORM
@@ -84,9 +135,9 @@ class VulkanRenderTarget(
                     depthView = preset.createTextureView(depthTexture)
                 }
 
-                val colorTexture = VulkanTexture(texture, textureView, sampler, width, height, uploads)
+                val colorTexture = VulkanTexture(texture, textureView, sampler, width, height, uploads, retirement = retirement)
                 val depthAsTexture = if (depthTexture != null && depthView != null) {
-                    VulkanTexture(depthTexture, depthView, sampler, width, height, null, false, false)
+                    VulkanTexture(depthTexture, depthView, sampler, width, height, null, false, false, false, retirement)
                 } else {
                     null
                 }
@@ -98,7 +149,9 @@ class VulkanRenderTarget(
                     depthView,
                     depthAsTexture,
                     width,
-                    height
+                    height,
+                    true,
+                    retirement
                 )
             } catch (throwable: Throwable) {
                 depthView?.close()
@@ -114,11 +167,19 @@ class VulkanRenderTarget(
             depthView: Any? = null,
             filter: RenderTargetFilter = RenderTargetFilter.NEAREST,
             preset: VulkanPreset = VulkanPresets.active
+        ): VulkanRenderTarget = borrow(colorView, depthView, filter, preset, VulkanTexture.activeBackendRetirement(preset))
+
+        internal fun borrow(
+            colorView: Any,
+            depthView: Any?,
+            filter: RenderTargetFilter,
+            preset: VulkanPreset,
+            retirement: VulkanRetirementQueue?
         ): VulkanRenderTarget {
-            val color = VulkanTexture.borrow(colorView, filter, preset)
+            val color = VulkanTexture.borrow(colorView, filter, preset, retirement)
             var depth: VulkanTexture? = null
             try {
-                depth = depthView?.let { VulkanTexture.borrow(it, RenderTargetFilter.NEAREST, preset) }
+                depth = depthView?.let { VulkanTexture.borrow(it, RenderTargetFilter.NEAREST, preset, retirement) }
                 val wrappedColor = color.view
                 val wrappedDepth = depth?.view
                 return VulkanRenderTarget(
@@ -130,7 +191,8 @@ class VulkanRenderTarget(
                     depth,
                     wrappedColor.getWidth(0),
                     wrappedColor.getHeight(0),
-                    false
+                    false,
+                    retirement
                 )
             } catch (failure: Throwable) {
                 depth?.close()
