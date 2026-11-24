@@ -6,8 +6,8 @@ import org.lwjgl.opengl.GL
 import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL30
 import sweetie.evaware.luma.Luma
-import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.RenderTargetFormat
+import sweetie.evaware.luma.api.SamplerState
 import sweetie.evaware.luma.backend.gl.Backend
 import sweetie.evaware.luma.backend.gl.GlRenderTarget
 import sweetie.evaware.luma.backend.gl.GlTexture
@@ -79,7 +79,7 @@ open class GlTestApp : BackendTestApp(960, 540, "Luma OpenGL") {
                 glTarget.fbo,
                 size,
                 size,
-                GlTexture.borrow(glTarget.color.textureId, size, size, RenderTargetFilter.NEAREST)
+                GlTexture.borrow(glTarget.color.textureId, size, size, SamplerState.NEAREST_CLAMP)
             )
             try {
                 Luma.render {
@@ -106,6 +106,15 @@ open class GlTestApp : BackendTestApp(960, 540, "Luma OpenGL") {
         } finally {
             target.close()
         }
+
+        FeatureVerificationSuite("OpenGL", backend, ::awaitGpu) { rt ->
+            val glRt = rt as GlRenderTarget
+            val pixels = BufferUtils.createByteBuffer(glRt.width * glRt.height * 4)
+            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, glRt.fbo)
+            GL11.glReadPixels(0, 0, glRt.width, glRt.height, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, pixels)
+            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0)
+            pixels
+        }.use { it.runAll() }
     }
 
     private fun renderFrame(window: Long) {

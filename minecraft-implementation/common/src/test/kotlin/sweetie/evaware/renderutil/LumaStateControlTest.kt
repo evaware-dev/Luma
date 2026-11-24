@@ -15,9 +15,12 @@ import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
+import sweetie.evaware.luma.api.SamplerState
+import sweetie.evaware.luma.api.TextureFormat
 import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.uniform.ShaderUniforms
-import sweetie.evaware.luma.vertex.VertexLayout
+import sweetie.evaware.luma.vertex.VertexInputLayout
 
 class LumaStateControlTest {
 
@@ -38,13 +41,13 @@ class LumaStateControlTest {
 
         override fun beginFrame() { framesBegun++ }
         override fun endFrame() { framesEnded++ }
-        override fun createProgram(vertexSource: String, fragmentSource: String, layout: VertexLayout): ProgramHandle = error("mock")
+        override fun createProgram(vertexSource: String, fragmentSource: String, layouts: VertexInputLayout, reflection: ShaderReflection?): ProgramHandle = error("mock")
         override fun bindProgram(program: ProgramHandle) {}
-        override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle = error("mock")
+        override fun createTexture(image: BufferedImage, mipmap: Boolean, format: TextureFormat, sampler: SamplerState): TextureHandle = error("mock")
         override fun updateTexture(texture: TextureHandle, x: Int, y: Int, image: BufferedImage) {}
         override fun bindTexture(texture: TextureHandle, unit: Int) {}
         override fun draw(program: ProgramHandle, vertices: FloatBuffer, vertexCount: Int, uniforms: ShaderUniforms, primitiveType: PrimitiveType) {}
-        override fun createRenderTarget(width: Int, height: Int, useDepth: Boolean, format: RenderTargetFormat): RenderTargetHandle = error("mock")
+        override fun createRenderTarget(width: Int, height: Int, useDepth: Boolean, format: RenderTargetFormat, sampler: SamplerState, useStencil: Boolean): RenderTargetHandle = error("mock")
         override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) {}
         override fun endRenderTarget() {}
         override fun blend(enabled: Boolean) { blendState = enabled }

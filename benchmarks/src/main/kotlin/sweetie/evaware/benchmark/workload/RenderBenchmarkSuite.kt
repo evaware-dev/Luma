@@ -17,6 +17,7 @@ import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.api.VertexBufferHandle
+import sweetie.evaware.luma.list.DrawList
 import sweetie.evaware.luma.shader.Shader
 import sweetie.evaware.luma.uniform.Float4Uniform
 import sweetie.evaware.luma.uniform.ShaderUniforms
@@ -50,6 +51,8 @@ internal class RenderBenchmarkSuite(
     private val directUniforms = ShaderUniforms()
     private val firstDirectUniforms = ShaderUniforms()
     private val secondDirectUniforms = ShaderUniforms()
+    private lateinit var cleanDrawList: DrawList
+    private lateinit var dirtyUniformDrawList: DrawList
 
     fun run() {
         prepareResources()
@@ -100,7 +103,30 @@ internal class RenderBenchmarkSuite(
         firstTexture = backend.createTexture(solidImage(0xFFFFFFFF.toInt()), false)
         secondTexture = backend.createTexture(solidImage(0xFF000000.toInt()), false)
         prepareDirectResources(backend)
+        prepareDrawListResources()
         synchronize()
+    }
+
+    private fun prepareDrawListResources() {
+        cleanDrawList = DrawList(initialCommandCapacity = 2_048, initialVertexFloats = 16_384).apply {
+            record {
+                shader.attach()
+                repeat(2_000) {
+                    putOffscreenTriangle(shader)
+                    shader.draw()
+                }
+            }
+        }
+        dirtyUniformDrawList = DrawList(initialCommandCapacity = 2_048, initialVertexFloats = 16_384).apply {
+            record {
+                uniformShader.attach()
+                repeat(2_000) { index ->
+                    uniformShader.uniforms.vec4(uniformColor, index.toFloat(), 1f, 1f, 1f)
+                    putOffscreenTriangle(uniformShader)
+                    uniformShader.draw()
+                }
+            }
+        }
     }
 
     private fun prepareDirectResources(backend: RenderBackend) {
@@ -354,6 +380,18 @@ internal class RenderBenchmarkSuite(
                 }
             }
         }
+
+        runner.measure("draw", "DrawList replay (clean)", 2_000) {
+            renderToTarget(firstTarget) {
+                cleanDrawList.replay()
+            }
+        }
+
+        runner.measure("draw", "DrawList replay (dirty uniform)", 2_000) {
+            renderToTarget(firstTarget) {
+                dirtyUniformDrawList.replay()
+            }
+        }
     }
 
     private fun benchmarkPasses() {
@@ -483,6 +521,8 @@ internal class RenderBenchmarkSuite(
     }
 
     private fun closeResources() {
+        if (::dirtyUniformDrawList.isInitialized) dirtyUniformDrawList.close()
+        if (::cleanDrawList.isInitialized) cleanDrawList.close()
         directIndexBuffer.close()
         directVertexBuffer.close()
         directUniformProgram.close()

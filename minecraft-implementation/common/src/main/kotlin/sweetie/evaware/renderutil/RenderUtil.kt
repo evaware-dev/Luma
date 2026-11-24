@@ -7,7 +7,7 @@ import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.CloseableResourceBase
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
-import sweetie.evaware.luma.api.RenderTargetFilter
+import sweetie.evaware.luma.api.SamplerState
 import sweetie.evaware.luma.matrix.MatrixControl
 import sweetie.evaware.luma.minecraft.MinecraftRenderTargets
 import sweetie.evaware.luma.resource.GlResources
@@ -135,10 +135,10 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
         }
     }
 
-    fun borrowMainTarget(filter: RenderTargetFilter = RenderTargetFilter.NEAREST): RenderTargetHandle? {
+    fun borrowMainTarget(sampler: SamplerState = SamplerState.NEAREST_CLAMP): RenderTargetHandle? {
         return try {
             val target = Minecraft.getInstance().gameRenderer.mainRenderTarget()
-            MinecraftRenderTargets.borrow(target, filter)
+            MinecraftRenderTargets.borrow(target, sampler)
         } catch (_: Throwable) {
             null
         }
@@ -227,21 +227,12 @@ object RenderUtil : CloseableResourceBase(), RenderApi {
         width: Int,
         height: Int,
         useDepth: Boolean = false,
-        format: RenderTargetFormat = RenderTargetFormat.RGBA8
+        format: RenderTargetFormat = RenderTargetFormat.RGBA8,
+        sampler: SamplerState = SamplerState.LINEAR_CLAMP,
+        useStencil: Boolean = false
     ): RenderTargetHandle {
         load()
-        return Luma.backend.createRenderTarget(width, height, useDepth, format)
-    }
-
-    fun createRenderTarget(
-        width: Int,
-        height: Int,
-        useDepth: Boolean,
-        format: RenderTargetFormat,
-        filter: RenderTargetFilter
-    ): RenderTargetHandle {
-        load()
-        return Luma.backend.createRenderTarget(width, height, useDepth, format, filter)
+        return Luma.backend.createRenderTarget(width, height, useDepth, format, sampler, useStencil)
     }
 
     fun renderToTarget(target: RenderTargetHandle, clearColor: FloatArray? = null, action: () -> Unit) {

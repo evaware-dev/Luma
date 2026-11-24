@@ -80,6 +80,38 @@ open class VulkanTestApp : BackendTestApp(64, 64, "Luma Vulkan") {
         backend.invalidatePipelineCache()
         renderScene()
         verifyPixels(true)
+
+        FeatureVerificationSuite("Vulkan", backend, ::awaitGpu, ::readBackTarget).use { it.runAll() }
+    }
+
+    private fun readBackTarget(rt: sweetie.evaware.luma.api.RenderTargetHandle): java.nio.ByteBuffer {
+        val vkRt = rt as VulkanRenderTarget
+        val byteSize = vkRt.width.toLong() * vkRt.height * 4
+        val readback = device.createBuffer(
+            { "Luma Vulkan feature readback" },
+            GpuBuffer.USAGE_MAP_READ or GpuBuffer.USAGE_COPY_DST,
+            byteSize
+        )
+        try {
+            val encoder = device.createCommandEncoder()
+            encoder.copyTextureToBuffer(vkRt.gpuTexture.unwrap(), readback, 0, {}, 0)
+            val fence = encoder.createFence()
+            try {
+                encoder.submit()
+                check(fence.awaitCompletion(Long.MAX_VALUE)) { "Timed out waiting for Vulkan readback" }
+            } finally {
+                fence.close()
+            }
+            val copy = org.lwjgl.BufferUtils.createByteBuffer(byteSize.toInt())
+            readback.map(true, false).use { mapped ->
+                val src = mapped.data().duplicate()
+                src.position(0).limit(byteSize.toInt())
+                copy.put(src).flip()
+            }
+            return copy
+        } finally {
+            readback.close()
+        }
     }
 
     private fun renderScene() {
