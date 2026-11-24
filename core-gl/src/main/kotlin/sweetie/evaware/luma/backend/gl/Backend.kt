@@ -21,6 +21,7 @@ import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
+import sweetie.evaware.luma.api.TextureFormat
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.api.VertexBufferHandle
 import sweetie.evaware.luma.texture.RgbaTransferBuffer
@@ -31,6 +32,7 @@ import sweetie.evaware.luma.vertex.VertexInputLayout
 class Backend(
     private val config: GlBackendConfig = GlBackendConfig()
 ) : RenderBackend {
+    private val preserveState = config.statePolicy == GlStatePolicy.PRESERVE
     private val frameSnapshot = GlStateSnapshot()
     private val viewportBuffer = IntArray(4)
     private val scissorBuffer = IntArray(4)
@@ -39,7 +41,7 @@ class Backend(
     private val clearColorBuffer = BufferUtils.createFloatBuffer(4)
     private val clearDepthBuffer = BufferUtils.createFloatBuffer(1)
     private val targetBindings = ArrayList<IntArray>()
-    private val pixelUnpackState = GlPixelUnpackState(config.statePolicy == GlStatePolicy.PRESERVE)
+    private val pixelUnpackState = GlPixelUnpackState(preserveState)
     private val textureTransfer = RgbaTransferBuffer()
 
     private var boundProgramId = -1
@@ -53,33 +55,102 @@ class Backend(
     private var frameActive = false
     private var targetDepth = 0
     private var ownedFixedStateKnown = false
+
+    // Save-on-write tracking for PRESERVE mode
+    private var dirtyRestoreMask = 0
+    private var preserveGuiDefaultsApplied = false
+
+    // Logical vs applied framebuffer & viewport state (lazy binding)
+    private var logicalDrawFramebuffer = HOST_FBO_SENTINEL
+    private var logicalReadFramebuffer = HOST_FBO_SENTINEL
     private var viewportX = 0
     private var viewportY = 0
     private var viewportWidth = 0
     private var viewportHeight = 0
+    private var hostViewportKnown = false
+    private var hostFramebufferCaptured = false
+    private var framebufferDirty = false
+    private var appliedFramebufferKnown = false
+    private var appliedDrawFramebuffer = -1
+    private var appliedReadFramebuffer = -1
+    private var appliedViewportKnown = false
+    private var appliedViewportX = 0
+    private var appliedViewportY = 0
+    private var appliedViewportWidth = 0
+    private var appliedViewportHeight = 0
+
+    // Scissor state
     private var scissorEnabled = false
     private var scissorX = 0
     private var scissorY = 0
     private var scissorWidth = 0
     private var scissorHeight = 0
+    private var scissorBoxDirty = false
+
+    // Direct draw bindings
     private val directVertexBuffers = arrayOfNulls<GlVertexBufferHandle>(16)
     private val directVertexOffsets = LongArray(16)
     private var directIndexBuffer: GlIndexBufferHandle? = null
 
+    // Consecutive immediate draw merging batch
+    private var pendingProgram: Program? = null
+    private var pendingPrimitive: PrimitiveType = PrimitiveType.TRIANGLES
+    private var pendingBaseVertex = 0
+    private var pendingVertexCount = 0
+    private var pendingInstanced = false
+
+    // One-time debug group capability state
+    private var debugGroupMode: Byte = DEBUG_GROUP_UNCHECKED
+    private var debugGroupDepth = 0
+
     private fun useProgram(programId: Int) {
         if (boundProgramId == programId) return
+        if (preserveState && frameActive && (dirtyRestoreMask and DIRTY_PROGRAM) == 0) {
+            val hostProgram = getInteger(GL20.GL_CURRENT_PROGRAM)
+            frameSnapshot.program = hostProgram
+            dirtyRestoreMask = dirtyRestoreMask or DIRTY_PROGRAM
+            if (hostProgram == programId) {
+                boundProgramId = programId
+                return
+            }
+        }
         GL20.glUseProgram(programId)
         boundProgramId = programId
     }
 
     private fun bindVertexArray(vertexArrayId: Int) {
         if (boundVertexArrayId == vertexArrayId) return
+        if (preserveState && frameActive && (dirtyRestoreMask and DIRTY_VAO) == 0) {
+            val hostVao = getInteger(GL30.GL_VERTEX_ARRAY_BINDING)
+            frameSnapshot.vertexArray = hostVao
+            dirtyRestoreMask = dirtyRestoreMask or DIRTY_VAO
+            if (hostVao == vertexArrayId) {
+                boundVertexArrayId = vertexArrayId
+                return
+            }
+        }
         GL30.glBindVertexArray(vertexArrayId)
         boundVertexArrayId = vertexArrayId
     }
 
+    private fun saveArrayBufferIfNeeded() {
+        if (preserveState && frameActive && (dirtyRestoreMask and DIRTY_ARRAY_BUFFER) == 0) {
+            frameSnapshot.arrayBuffer = getInteger(GL15.GL_ARRAY_BUFFER_BINDING)
+            dirtyRestoreMask = dirtyRestoreMask or DIRTY_ARRAY_BUFFER
+        }
+    }
+
     private fun bindArrayBuffer(bufferId: Int) {
         if (boundArrayBufferId == bufferId) return
+        if (preserveState && frameActive && (dirtyRestoreMask and DIRTY_ARRAY_BUFFER) == 0) {
+            val hostBuffer = getInteger(GL15.GL_ARRAY_BUFFER_BINDING)
+            frameSnapshot.arrayBuffer = hostBuffer
+            dirtyRestoreMask = dirtyRestoreMask or DIRTY_ARRAY_BUFFER
+            if (hostBuffer == bufferId) {
+                boundArrayBufferId = bufferId
+                return
+            }
+        }
         GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, bufferId)
         boundArrayBufferId = bufferId
     }
@@ -93,43 +164,64 @@ class Backend(
     }
 
     override fun beginFrame() {
-        if (config.statePolicy == GlStatePolicy.PRESERVE) {
-            captureState(frameSnapshot)
-            applyGuiState(frameSnapshot)
-            activeTextureUnit = frameSnapshot.activeTexture - GL13.GL_TEXTURE0
-            renderState.resetGui()
+        dirtyRestoreMask = 0
+        preserveGuiDefaultsApplied = false
+        clearPendingDraw()
+        targetDepth = 0
+        logicalDrawFramebuffer = HOST_FBO_SENTINEL
+        logicalReadFramebuffer = HOST_FBO_SENTINEL
+        hostViewportKnown = false
+        hostFramebufferCaptured = false
+        framebufferDirty = false
+        appliedFramebufferKnown = false
+        appliedViewportKnown = false
+        scissorEnabled = false
+        scissorBoxDirty = false
+        frameSnapshot.clearTextureUnits()
+        invalidateBindingCache()
+        if (preserveState) {
+            activeTextureUnit = -1
+            renderState.invalidate()
         } else {
             prepareOwnedFrame()
         }
-        framebufferState.seed(
-            frameSnapshot.drawFramebuffer,
-            frameSnapshot.readFramebuffer,
-            frameSnapshot.viewportX,
-            frameSnapshot.viewportY,
-            frameSnapshot.viewportWidth,
-            frameSnapshot.viewportHeight
-        )
-        viewportX = frameSnapshot.viewportX
-        viewportY = frameSnapshot.viewportY
-        viewportWidth = frameSnapshot.viewportWidth
-        viewportHeight = frameSnapshot.viewportHeight
-        scissorEnabled = false
-        invalidateBindingCache()
-        targetDepth = 0
         frameActive = true
     }
 
     override fun endFrame() {
         try {
+            flushPendingDraw()
             try {
                 pixelUnpackState.restore()
             } finally {
-                if (config.statePolicy == GlStatePolicy.PRESERVE) restoreState(frameSnapshot)
+                if (preserveState) {
+                    restoreState(frameSnapshot)
+                } else {
+                    if (scissorEnabled) {
+                        GL11.glDisable(GL11.GL_SCISSOR_TEST)
+                        scissorEnabled = false
+                    }
+                    if (hostFramebufferCaptured) {
+                        logicalDrawFramebuffer = HOST_FBO_SENTINEL
+                        logicalReadFramebuffer = HOST_FBO_SENTINEL
+                        framebufferDirty = true
+                        flushFramebuffer()
+                    }
+                }
             }
         } finally {
+            clearPendingDraw()
             frameActive = false
             targetDepth = 0
-            if (config.statePolicy == GlStatePolicy.PRESERVE) {
+            dirtyRestoreMask = 0
+            preserveGuiDefaultsApplied = false
+            hostFramebufferCaptured = false
+            hostViewportKnown = false
+            framebufferDirty = false
+            scissorBoxDirty = false
+            appliedFramebufferKnown = false
+            appliedViewportKnown = false
+            if (preserveState) {
                 invalidateStateCache()
             } else {
                 invalidateBindingCache()
@@ -191,18 +283,49 @@ class Backend(
 
     override fun bindProgram(program: ProgramHandle) {
         val glProgram = program as Program
+        if (pendingProgram != null && pendingProgram !== glProgram) {
+            flushPendingDraw()
+        }
         useProgram(glProgram.programId)
         bindVertexArray(glProgram.vertexBuffer.vao)
-        bindArrayBuffer(glProgram.vertexBuffer.vbo)
     }
 
-    override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle {
-        if (!frameActive) return GlTexture.create(image, mipmap)
+    override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle =
+        createTexture(image, mipmap, TextureFormat.RGBA8)
+
+    override fun createTexture(image: BufferedImage, mipmap: Boolean, format: TextureFormat): TextureHandle {
+        require(format.supportsBufferedImageUpload) {
+            "BufferedImage upload is not supported for format $format; upload raw ByteBuffer data instead"
+        }
+        if (!frameActive) return GlTexture.create(image, mipmap, format)
+        flushPendingDraw()
         pixelUnpackState.prepare()
-        val texture = GlTexture(GL11.glGenTextures(), image.width, image.height, mipmap)
+        val texture = GlTexture(GL11.glGenTextures(), image.width, image.height, mipmap, format = format)
         try {
             bindTextureForUpload(texture)
             texture.initializeBound(image, textureTransfer)
+            return texture
+        } catch (failure: Throwable) {
+            texture.close()
+            throw failure
+        }
+    }
+
+    override fun createTexture(
+        width: Int,
+        height: Int,
+        data: ByteBuffer?,
+        format: TextureFormat,
+        mipmap: Boolean
+    ): TextureHandle {
+        require(width > 0 && height > 0) { "Texture dimensions must be positive: ${width}x${height}" }
+        if (!frameActive) return GlTexture.createRaw(width, height, data, format, mipmap)
+        flushPendingDraw()
+        pixelUnpackState.prepare()
+        val texture = GlTexture(GL11.glGenTextures(), width, height, mipmap, format = format)
+        try {
+            bindTextureForUpload(texture)
+            texture.initializeBoundRaw(data)
             return texture
         } catch (failure: Throwable) {
             texture.close()
@@ -216,9 +339,29 @@ class Backend(
             glTexture.update(x, y, image)
             return
         }
+        flushPendingDraw()
         pixelUnpackState.prepare()
         bindTextureForUpload(glTexture)
         glTexture.updateBound(x, y, image, textureTransfer)
+    }
+
+    override fun updateTexture(
+        texture: TextureHandle,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        data: ByteBuffer
+    ) {
+        val glTexture = texture as GlTexture
+        if (!frameActive) {
+            glTexture.update(x, y, width, height, data)
+            return
+        }
+        flushPendingDraw()
+        pixelUnpackState.prepare()
+        bindTextureForUpload(glTexture)
+        glTexture.updateBoundRaw(x, y, width, height, data)
     }
 
     override fun bindTexture(texture: TextureHandle, unit: Int) {
@@ -226,6 +369,8 @@ class Backend(
         val glTexture = texture as GlTexture
         glTexture.requireOpen()
         if (textureBindings.isBound(unit, glTexture)) return
+
+        if (pendingProgram != null) flushPendingDraw()
 
         if (frameActive) {
             prepareTextureUnit(unit)
@@ -244,11 +389,13 @@ class Backend(
         GlIndexBufferHandle(sizeBytes, indexType, usage)
 
     override fun updateVertexBuffer(buffer: VertexBufferHandle, offsetBytes: Long, data: ByteBuffer) {
+        if (pendingProgram != null) flushPendingDraw()
         (buffer as GlVertexBufferHandle).update(offsetBytes, data)
         boundArrayBufferId = -1
     }
 
     override fun updateIndexBuffer(buffer: IndexBufferHandle, offsetBytes: Long, data: ByteBuffer) {
+        if (pendingProgram != null) flushPendingDraw()
         (buffer as GlIndexBufferHandle).update(offsetBytes, data)
         boundArrayBufferId = -1
     }
@@ -275,14 +422,19 @@ class Backend(
     ) {
         require(firstVertex >= 0 && vertexCount >= 0 && instanceCount >= 0 && firstInstance >= 0)
         require(primitiveType != PrimitiveType.QUADS) { "Direct QUADS require an index buffer" }
-        val glProgram = prepareDirectDraw(program, uniforms)
+        if (pendingProgram != null) flushPendingDraw()
+        prepareDrawTargetAndState()
+        prepareDirectDraw(program, uniforms)
         val mode = primitiveType.glPrimitive
         if (firstInstance == 0) {
-            GL31.glDrawArraysInstanced(mode, firstVertex, vertexCount, instanceCount)
+            if (instanceCount == 1) {
+                GL11.glDrawArrays(mode, firstVertex, vertexCount)
+            } else {
+                GL31.glDrawArraysInstanced(mode, firstVertex, vertexCount, instanceCount)
+            }
         } else {
             GL42.glDrawArraysInstancedBaseInstance(mode, firstVertex, vertexCount, instanceCount, firstInstance)
         }
-        bindVertexArray(glProgram.directVertexArray)
     }
 
     override fun drawIndexed(
@@ -297,41 +449,52 @@ class Backend(
     ) {
         require(firstIndex >= 0 && indexCount >= 0 && instanceCount >= 0 && firstInstance >= 0)
         require(primitiveType != PrimitiveType.QUADS) { "Indexed QUADS must use TRIANGLES topology" }
-        prepareDirectDraw(program, uniforms)
+        if (pendingProgram != null) flushPendingDraw()
+        prepareDrawTargetAndState()
+        val glProgram = prepareDirectDraw(program, uniforms)
         val indices = requireNotNull(directIndexBuffer) { "Index buffer is not bound" }
         indices.requireOpen()
-        GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, indices.id)
-        GL42.glDrawElementsInstancedBaseVertexBaseInstance(
-            primitiveType.glPrimitive,
-            indexCount,
-            indices.indexType.glType,
-            firstIndex.toLong() * indices.indexType.byteSize,
-            instanceCount,
-            vertexOffset,
-            firstInstance
-        )
+        if (glProgram.configuredElementBuffer !== indices) {
+            GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, indices.id)
+            glProgram.configuredElementBuffer = indices
+        }
+        val mode = primitiveType.glPrimitive
+        val glIndexType = indices.indexType.glType
+        val byteOffset = firstIndex.toLong() * indices.indexType.byteSize
+        if (firstInstance == 0) {
+            if (instanceCount == 1) {
+                if (vertexOffset == 0) {
+                    GL11.glDrawElements(mode, indexCount, glIndexType, byteOffset)
+                } else {
+                    GL32.glDrawElementsBaseVertex(mode, indexCount, glIndexType, byteOffset, vertexOffset)
+                }
+            } else if (vertexOffset == 0) {
+                GL31.glDrawElementsInstanced(mode, indexCount, glIndexType, byteOffset, instanceCount)
+            } else {
+                GL32.glDrawElementsInstancedBaseVertex(mode, indexCount, glIndexType, byteOffset, instanceCount, vertexOffset)
+            }
+        } else {
+            GL42.glDrawElementsInstancedBaseVertexBaseInstance(
+                mode,
+                indexCount,
+                glIndexType,
+                byteOffset,
+                instanceCount,
+                vertexOffset,
+                firstInstance
+            )
+        }
     }
 
     private fun prepareDirectDraw(program: ProgramHandle, uniforms: ShaderUniforms): Program {
         val glProgram = program as Program
         useProgram(glProgram.programId)
-        glProgram.configureDirectBindings(directVertexBuffers, directVertexOffsets)
-        boundVertexArrayId = glProgram.directVertexArray
-        boundArrayBufferId = -1
-        uploadUniforms(glProgram, uniforms)
-        return glProgram
-    }
-
-    private fun uploadUniforms(program: Program, uniforms: ShaderUniforms) {
-        val prepared = program.getPreparedUniforms(uniforms)
-        for (index in prepared.indices) {
-            val uniform = prepared[index]
-            val handle = uniform.uniform.getHandle(uniforms)
-            if (handle != null && handle.isDirty) {
-                uniform.uniform.upload(uniform.location, uniforms)
-                handle.isDirty = false
-            }
+        bindVertexArray(glProgram.directVertexArray)
+        if (glProgram.configureDirectBindings(directVertexBuffers, directVertexOffsets) { saveArrayBufferIfNeeded() }) {
+            boundArrayBufferId = -1
         }
+        glProgram.uploadUniforms(uniforms)
+        return glProgram
     }
 
     override fun draw(
@@ -341,36 +504,105 @@ class Backend(
         uniforms: ShaderUniforms,
         primitiveType: PrimitiveType
     ) {
+        if (vertexCount <= 0) return
         val glProgram = program as Program
+        val vb = glProgram.vertexBuffer
+        val floatCount = vertices.limit()
 
-        useProgram(glProgram.programId)
-        bindVertexArray(glProgram.vertexBuffer.vao)
-        bindArrayBuffer(glProgram.vertexBuffer.vbo)
-
-        glProgram.vertexBuffer.upload(vertices)
-
-        val prepared = glProgram.getPreparedUniforms(uniforms)
-        for (i in prepared.indices) {
-            val p = prepared[i]
-            val handle = p.uniform.getHandle(uniforms)
-            if (handle != null && handle.isDirty) {
-                p.uniform.upload(p.location, uniforms)
-                handle.isDirty = false
+        if (
+            frameActive &&
+            pendingProgram === glProgram &&
+            pendingPrimitive == primitiveType &&
+            !glProgram.hasPendingUniformUpload(uniforms) &&
+            floatCount == vertexCount * vb.layout.strideFloats &&
+            (primitiveType != PrimitiveType.QUADS || ((vertexCount and 3) == 0 && (pendingVertexCount and 3) == 0)) &&
+            vb.canAppendContiguously(floatCount)
+        ) {
+            val baseVertex = uploadVertexBuffer(vb, vertices)
+            if (baseVertex == pendingBaseVertex + pendingVertexCount) {
+                pendingVertexCount += vertexCount
+                return
             }
+            // Defensive fallback if offset was not contiguous
+            flushPendingDraw()
+            pendingProgram = glProgram
+            pendingPrimitive = primitiveType
+            pendingBaseVertex = baseVertex
+            pendingVertexCount = vertexCount
+            pendingInstanced = vb.layout.instanced
+            return
         }
 
+        if (pendingProgram != null) {
+            flushPendingDraw()
+        }
+
+        prepareDrawTargetAndState()
+        useProgram(glProgram.programId)
+        bindVertexArray(vb.vao)
+
+        val baseVertex = uploadVertexBuffer(vb, vertices)
+        glProgram.uploadUniforms(uniforms)
+
+        if (frameActive) {
+            pendingProgram = glProgram
+            pendingPrimitive = primitiveType
+            pendingBaseVertex = baseVertex
+            pendingVertexCount = vertexCount
+            pendingInstanced = vb.layout.instanced
+        } else {
+            executeImmediateDraw(glProgram, primitiveType, baseVertex, vertexCount, vb.layout.instanced)
+        }
+    }
+
+    private fun uploadVertexBuffer(vb: GlVertexBuffer, vertices: FloatBuffer): Int {
+        return vb.uploadStreaming(vertices) { boundId ->
+            saveArrayBufferIfNeeded()
+            boundArrayBufferId = boundId
+        }
+    }
+
+    private fun flushPendingDraw() {
+        val glProgram = pendingProgram ?: return
+        val primitive = pendingPrimitive
+        val baseVertex = pendingBaseVertex
+        val vertexCount = pendingVertexCount
+        val instanced = pendingInstanced
+        pendingProgram = null
+        pendingVertexCount = 0
+        if (vertexCount <= 0) return
+        useProgram(glProgram.programId)
+        bindVertexArray(glProgram.vertexBuffer.vao)
+        executeImmediateDraw(glProgram, primitive, baseVertex, vertexCount, instanced)
+    }
+
+    private fun clearPendingDraw() {
+        pendingProgram = null
+        pendingVertexCount = 0
+    }
+
+    private fun executeImmediateDraw(
+        glProgram: Program,
+        primitiveType: PrimitiveType,
+        baseVertex: Int,
+        vertexCount: Int,
+        instanced: Boolean
+    ) {
+        val vb = glProgram.vertexBuffer
         when {
-            glProgram.vertexBuffer.layout.instanced -> {
-                GL31.glDrawArraysInstanced(
-                    GL11.GL_TRIANGLES, 0, glProgram.vertexBuffer.layout.baseVertexCount, vertexCount
-                )
+            instanced -> {
+                vb.drawInstancedBaseInstance(vb.layout.baseVertexCount, vertexCount, baseVertex)
             }
             primitiveType == PrimitiveType.QUADS -> {
-                val indexCount = glProgram.vertexBuffer.bindQuadIndices(vertexCount)
-                GL11.glDrawElements(GL11.GL_TRIANGLES, indexCount, GL11.GL_UNSIGNED_INT, 0L)
+                val indexCount = vb.bindQuadIndices(vertexCount)
+                if (baseVertex == 0) {
+                    GL11.glDrawElements(GL11.GL_TRIANGLES, indexCount, GL11.GL_UNSIGNED_INT, 0L)
+                } else {
+                    GL32.glDrawElementsBaseVertex(GL11.GL_TRIANGLES, indexCount, GL11.GL_UNSIGNED_INT, 0L, baseVertex)
+                }
             }
-            primitiveType == PrimitiveType.LINES -> GL11.glDrawArrays(GL11.GL_LINES, 0, vertexCount)
-            else -> GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, vertexCount)
+            primitiveType == PrimitiveType.LINES -> GL11.glDrawArrays(GL11.GL_LINES, baseVertex, vertexCount)
+            else -> GL11.glDrawArrays(GL11.GL_TRIANGLES, baseVertex, vertexCount)
         }
     }
 
@@ -396,111 +628,204 @@ class Backend(
         clearColor: FloatArray?
     ) {
         check(frameActive) { "Cannot begin a render target outside a frame" }
+        if (pendingProgram != null) flushPendingDraw()
         val glTarget = target as GlRenderTarget
         if (targetDepth == targetBindings.size) targetBindings.add(IntArray(6))
         val previous = targetBindings[targetDepth]
-        if (config.statePolicy == GlStatePolicy.PRESERVE) {
-            GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewportBuffer)
-            framebufferState.seed(
-                getInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING),
-                getInteger(GL30.GL_READ_FRAMEBUFFER_BINDING),
-                viewportBuffer[0],
-                viewportBuffer[1],
-                viewportBuffer[2],
-                viewportBuffer[3]
-            )
-        }
-        check(framebufferState.saveTo(previous))
+        previous[0] = logicalDrawFramebuffer
+        previous[1] = logicalReadFramebuffer
+        previous[2] = viewportX
+        previous[3] = viewportY
+        previous[4] = viewportWidth
+        previous[5] = viewportHeight
         targetDepth++
-        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, glTarget.fbo)
-        GL11.glViewport(0, 0, glTarget.width, glTarget.height)
-        framebufferState.seed(glTarget.fbo, glTarget.fbo, 0, 0, glTarget.width, glTarget.height)
+
+        logicalDrawFramebuffer = glTarget.fbo
+        logicalReadFramebuffer = glTarget.fbo
         viewportX = 0
         viewportY = 0
         viewportWidth = glTarget.width
         viewportHeight = glTarget.height
+        framebufferDirty = true
+        if (scissorEnabled) scissorBoxDirty = true
+
         if (clearColor != null) {
+            ensurePreserveClearState()
+            flushFramebuffer()
             if (scissorEnabled) GL11.glDisable(GL11.GL_SCISSOR_TEST)
-            GL30.glClearBufferfv(GL11.GL_COLOR, 0, clearColor)
-            if (scissorEnabled) GL11.glEnable(GL11.GL_SCISSOR_TEST)
+            try {
+                GL30.glClearBufferfv(GL11.GL_COLOR, 0, clearColor)
+            } finally {
+                if (scissorEnabled) GL11.glEnable(GL11.GL_SCISSOR_TEST)
+            }
         }
-        applyScissor()
     }
 
     override fun endRenderTarget() {
         check(targetDepth > 0) { "No render target to end" }
+        if (pendingProgram != null) flushPendingDraw()
         val previous = targetBindings[--targetDepth]
-        GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, previous[0])
-        GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, previous[1])
-        GL11.glViewport(previous[2], previous[3], previous[4], previous[5])
-        framebufferState.restoreFrom(previous)
+        logicalDrawFramebuffer = previous[0]
+        logicalReadFramebuffer = previous[1]
         viewportX = previous[2]
         viewportY = previous[3]
         viewportWidth = previous[4]
         viewportHeight = previous[5]
-        applyScissor()
+        framebufferDirty = !(logicalDrawFramebuffer == HOST_FBO_SENTINEL && !hostFramebufferCaptured)
+        if (scissorEnabled) scissorBoxDirty = true
     }
 
     override fun blend(enabled: Boolean) {
         if (!renderState.blend(enabled)) return
+        if (pendingProgram != null) flushPendingDraw()
+        if (preserveState && frameActive && (dirtyRestoreMask and DIRTY_BLEND_ENABLE) == 0) {
+            val host = GL11.glIsEnabled(GL11.GL_BLEND)
+            frameSnapshot.blendEnabled = host
+            dirtyRestoreMask = dirtyRestoreMask or DIRTY_BLEND_ENABLE
+            if (host == enabled) return
+        }
         if (enabled) GL11.glEnable(GL11.GL_BLEND) else GL11.glDisable(GL11.GL_BLEND)
     }
 
     override fun blendFunction(function: BlendFunction) {
         if (!renderState.blendFunction(function)) return
-        GL14.glBlendFuncSeparate(
-            blendFactor(function.sourceColor),
-            blendFactor(function.destinationColor),
-            blendFactor(function.sourceAlpha),
-            blendFactor(function.destinationAlpha)
-        )
-        GL20.glBlendEquationSeparate(blendOp(function.colorOp), blendOp(function.alphaOp))
+        if (pendingProgram != null) flushPendingDraw()
+        val srcRgb = blendFactor(function.sourceColor)
+        val dstRgb = blendFactor(function.destinationColor)
+        val srcAlpha = blendFactor(function.sourceAlpha)
+        val dstAlpha = blendFactor(function.destinationAlpha)
+        val eqRgb = blendOp(function.colorOp)
+        val eqAlpha = blendOp(function.alphaOp)
+        if (preserveState && frameActive && (dirtyRestoreMask and DIRTY_BLEND_FUNC) == 0) {
+            saveBlendFuncSnapshot()
+            if (
+                frameSnapshot.blendSrcRgb != srcRgb ||
+                frameSnapshot.blendDstRgb != dstRgb ||
+                frameSnapshot.blendSrcAlpha != srcAlpha ||
+                frameSnapshot.blendDstAlpha != dstAlpha
+            ) {
+                GL14.glBlendFuncSeparate(srcRgb, dstRgb, srcAlpha, dstAlpha)
+            }
+            if (frameSnapshot.blendEquationRgb != eqRgb || frameSnapshot.blendEquationAlpha != eqAlpha) {
+                GL20.glBlendEquationSeparate(eqRgb, eqAlpha)
+            }
+            return
+        }
+        GL14.glBlendFuncSeparate(srcRgb, dstRgb, srcAlpha, dstAlpha)
+        GL20.glBlendEquationSeparate(eqRgb, eqAlpha)
     }
 
     override fun depthTest(enabled: Boolean) {
         if (!renderState.depthTest(enabled)) return
+        if (pendingProgram != null) flushPendingDraw()
+        if (preserveState && frameActive && (dirtyRestoreMask and DIRTY_DEPTH_ENABLE) == 0) {
+            val host = GL11.glIsEnabled(GL11.GL_DEPTH_TEST)
+            frameSnapshot.depthEnabled = host
+            dirtyRestoreMask = dirtyRestoreMask or DIRTY_DEPTH_ENABLE
+            if (host == enabled) return
+        }
         if (enabled) GL11.glEnable(GL11.GL_DEPTH_TEST) else GL11.glDisable(GL11.GL_DEPTH_TEST)
     }
 
     override fun depthWrite(enabled: Boolean) {
         if (!renderState.depthWrite(enabled)) return
+        if (pendingProgram != null) flushPendingDraw()
+        if (preserveState && frameActive && (dirtyRestoreMask and DIRTY_DEPTH_WRITE) == 0) {
+            val host = getInteger(GL11.GL_DEPTH_WRITEMASK) != 0
+            frameSnapshot.depthWrite = host
+            dirtyRestoreMask = dirtyRestoreMask or DIRTY_DEPTH_WRITE
+            if (host == enabled) return
+        }
         GL11.glDepthMask(enabled)
     }
 
     override fun depthCompare(compare: DepthCompare) {
         if (!renderState.depthCompare(compare)) return
-        GL11.glDepthFunc(depthFunction(compare))
+        if (pendingProgram != null) flushPendingDraw()
+        val glFunc = depthFunction(compare)
+        if (preserveState && frameActive && (dirtyRestoreMask and DIRTY_DEPTH_FUNC) == 0) {
+            val host = getInteger(GL11.GL_DEPTH_FUNC)
+            frameSnapshot.depthFunc = host
+            dirtyRestoreMask = dirtyRestoreMask or DIRTY_DEPTH_FUNC
+            if (host == glFunc) return
+        }
+        GL11.glDepthFunc(glFunc)
     }
 
     override fun cull(enabled: Boolean) {
         if (!renderState.cull(enabled)) return
+        if (pendingProgram != null) flushPendingDraw()
+        if (preserveState && frameActive && (dirtyRestoreMask and DIRTY_CULL) == 0) {
+            val host = GL11.glIsEnabled(GL11.GL_CULL_FACE)
+            frameSnapshot.cullEnabled = host
+            dirtyRestoreMask = dirtyRestoreMask or DIRTY_CULL
+            if (host == enabled) return
+        }
         if (enabled) GL11.glEnable(GL11.GL_CULL_FACE) else GL11.glDisable(GL11.GL_CULL_FACE)
     }
 
     override fun scissor(x: Int, y: Int, width: Int, height: Int) {
-        require(x >= 0 && y >= 0 && width > 0 && height > 0)
-        require(x + width <= viewportWidth && y + height <= viewportHeight) {
-            "Scissor [$x, $y, $width, $height] exceeds viewport [$viewportWidth, $viewportHeight]"
+        val activeViewportWidth: Int
+        val activeViewportHeight: Int
+        if (logicalDrawFramebuffer == HOST_FBO_SENTINEL) {
+            ensureHostViewportKnown()
+            activeViewportWidth = frameSnapshot.viewportWidth
+            activeViewportHeight = frameSnapshot.viewportHeight
+        } else {
+            activeViewportWidth = viewportWidth
+            activeViewportHeight = viewportHeight
         }
+        require(x >= 0 && y >= 0 && width > 0 && height > 0)
+        require(x + width <= activeViewportWidth && y + height <= activeViewportHeight) {
+            "Scissor [$x, $y, $width, $height] exceeds viewport [$activeViewportWidth, $activeViewportHeight]"
+        }
+        if (scissorEnabled && scissorX == x && scissorY == y && scissorWidth == width && scissorHeight == height) {
+            return
+        }
+        if (pendingProgram != null) flushPendingDraw()
         scissorX = x
         scissorY = y
         scissorWidth = width
         scissorHeight = height
         if (!scissorEnabled) {
-            GL11.glEnable(GL11.GL_SCISSOR_TEST)
+            val saveNow = preserveState && frameActive && (dirtyRestoreMask and DIRTY_SCISSOR_ENABLE) == 0
+            if (saveNow) {
+                saveScissorEnableIfNeeded()
+                if (!frameSnapshot.scissorEnabled) {
+                    GL11.glEnable(GL11.GL_SCISSOR_TEST)
+                }
+            } else {
+                GL11.glEnable(GL11.GL_SCISSOR_TEST)
+            }
             scissorEnabled = true
         }
-        applyScissor()
+        saveScissorBoxIfNeeded()
+        scissorBoxDirty = true
+        flushScissor()
     }
 
     override fun disableScissor() {
-        if (!scissorEnabled) return
+        if (!scissorEnabled) {
+            if (preserveState && frameActive && (dirtyRestoreMask and DIRTY_SCISSOR_ENABLE) == 0) {
+                saveScissorEnableIfNeeded()
+                if (frameSnapshot.scissorEnabled) {
+                    GL11.glDisable(GL11.GL_SCISSOR_TEST)
+                }
+            }
+            return
+        }
+        if (pendingProgram != null) flushPendingDraw()
+        saveScissorEnableIfNeeded()
         GL11.glDisable(GL11.GL_SCISSOR_TEST)
         scissorEnabled = false
+        scissorBoxDirty = false
     }
 
     override fun clearColor(red: Float, green: Float, blue: Float, alpha: Float) {
         check(frameActive) { "Cannot clear outside a frame" }
+        if (pendingProgram != null) flushPendingDraw()
+        ensurePreserveClearState()
+        flushFramebuffer()
         clearColorBuffer.put(0, red).put(1, green).put(2, blue).put(3, alpha)
         clearWithoutScissor { GL30.glClearBufferfv(GL11.GL_COLOR, 0, clearColorBuffer) }
     }
@@ -508,8 +833,50 @@ class Backend(
     override fun clearDepth(depth: Double) {
         check(frameActive) { "Cannot clear outside a frame" }
         require(depth in 0.0..1.0) { "Depth clear value must be in 0..1" }
+        if (pendingProgram != null) flushPendingDraw()
+        prepareDrawTargetAndState()
         clearDepthBuffer.put(0, depth.toFloat())
         clearWithoutScissor { GL30.glClearBufferfv(GL11.GL_DEPTH, 0, clearDepthBuffer) }
+    }
+
+    override fun pushDebugGroup(label: String) {
+        val mode = resolveDebugGroupMode()
+        if (mode == DEBUG_GROUP_NONE) return
+        if (pendingProgram != null) flushPendingDraw()
+        if (mode == DEBUG_GROUP_GL43) {
+            GL43.glPushDebugGroup(GL43.GL_DEBUG_SOURCE_APPLICATION, 0, label)
+        } else {
+            KHRDebug.glPushDebugGroup(KHRDebug.GL_DEBUG_SOURCE_APPLICATION, 0, label)
+        }
+        debugGroupDepth++
+    }
+
+    override fun popDebugGroup() {
+        if (debugGroupDepth <= 0) return
+        if (pendingProgram != null) flushPendingDraw()
+        debugGroupDepth--
+        if (debugGroupMode == DEBUG_GROUP_GL43) {
+            GL43.glPopDebugGroup()
+        } else if (debugGroupMode == DEBUG_GROUP_KHR) {
+            KHRDebug.glPopDebugGroup()
+        }
+    }
+
+    private fun resolveDebugGroupMode(): Byte {
+        val current = debugGroupMode
+        if (current != DEBUG_GROUP_UNCHECKED) return current
+        val caps = try {
+            GL.getCapabilities()
+        } catch (_: IllegalStateException) {
+            return DEBUG_GROUP_NONE
+        }
+        val detected = when {
+            caps.OpenGL43 -> DEBUG_GROUP_GL43
+            caps.GL_KHR_debug -> DEBUG_GROUP_KHR
+            else -> DEBUG_GROUP_NONE
+        }
+        debugGroupMode = detected
+        return detected
     }
 
     private inline fun clearWithoutScissor(action: () -> Unit) {
@@ -521,11 +888,201 @@ class Backend(
         }
     }
 
-    private fun applyScissor() {
+    private fun prepareDrawTargetAndState() {
+        if (preserveState && frameActive && !preserveGuiDefaultsApplied) {
+            applyLazyPreserveGuiDefaults()
+        }
+        if (framebufferDirty) {
+            flushFramebuffer()
+        }
+        if (scissorBoxDirty) {
+            flushScissor()
+        }
+    }
+
+    private fun ensurePreserveClearState() {
+        if (!preserveState || !frameActive) return
+        ensureColorMaskWritable()
+        if (!scissorEnabled && (dirtyRestoreMask and DIRTY_SCISSOR_ENABLE) == 0) {
+            saveScissorEnableIfNeeded()
+            if (frameSnapshot.scissorEnabled) {
+                GL11.glDisable(GL11.GL_SCISSOR_TEST)
+            }
+        }
+    }
+
+    private fun applyLazyPreserveGuiDefaults() {
+        if ((dirtyRestoreMask and DIRTY_DEPTH_ENABLE) == 0) depthTest(false)
+        if ((dirtyRestoreMask and DIRTY_DEPTH_WRITE) == 0) depthWrite(false)
+        if ((dirtyRestoreMask and DIRTY_DEPTH_FUNC) == 0) depthCompare(DepthCompare.ALWAYS)
+        if ((dirtyRestoreMask and DIRTY_CULL) == 0) cull(false)
+        if ((dirtyRestoreMask and DIRTY_BLEND_ENABLE) == 0) blend(true)
+        if ((dirtyRestoreMask and DIRTY_BLEND_FUNC) == 0) blendFunction(BlendFunction.TRANSLUCENT)
+        ensureColorMaskWritable()
+        if (!scissorEnabled && (dirtyRestoreMask and DIRTY_SCISSOR_ENABLE) == 0) {
+            saveScissorEnableIfNeeded()
+            if (frameSnapshot.scissorEnabled) {
+                GL11.glDisable(GL11.GL_SCISSOR_TEST)
+            }
+        }
+        preserveGuiDefaultsApplied = true
+    }
+
+    private fun ensureColorMaskWritable() {
+        if ((dirtyRestoreMask and DIRTY_COLOR_MASK) != 0) return
+        GL11.glGetIntegerv(GL11.GL_COLOR_WRITEMASK, colorMaskBuffer)
+        val r = colorMaskBuffer[0] != 0
+        val g = colorMaskBuffer[1] != 0
+        val b = colorMaskBuffer[2] != 0
+        val a = colorMaskBuffer[3] != 0
+        frameSnapshot.colorMaskRed = r
+        frameSnapshot.colorMaskGreen = g
+        frameSnapshot.colorMaskBlue = b
+        frameSnapshot.colorMaskAlpha = a
+        dirtyRestoreMask = dirtyRestoreMask or DIRTY_COLOR_MASK
+        if (!r || !g || !b || !a) {
+            GL11.glColorMask(true, true, true, true)
+        }
+    }
+
+    private fun saveBlendFuncSnapshot() {
+        frameSnapshot.blendSrcRgb = getInteger(GL14.GL_BLEND_SRC_RGB)
+        frameSnapshot.blendDstRgb = getInteger(GL14.GL_BLEND_DST_RGB)
+        frameSnapshot.blendSrcAlpha = getInteger(GL14.GL_BLEND_SRC_ALPHA)
+        frameSnapshot.blendDstAlpha = getInteger(GL14.GL_BLEND_DST_ALPHA)
+        frameSnapshot.blendEquationRgb = getInteger(GL20.GL_BLEND_EQUATION_RGB)
+        frameSnapshot.blendEquationAlpha = getInteger(GL20.GL_BLEND_EQUATION_ALPHA)
+        dirtyRestoreMask = dirtyRestoreMask or DIRTY_BLEND_FUNC
+    }
+
+    private fun saveScissorEnableIfNeeded() {
+        if (preserveState && frameActive && (dirtyRestoreMask and DIRTY_SCISSOR_ENABLE) == 0) {
+            frameSnapshot.scissorEnabled = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)
+            dirtyRestoreMask = dirtyRestoreMask or DIRTY_SCISSOR_ENABLE
+        }
+    }
+
+    private fun saveScissorBoxIfNeeded() {
+        if (preserveState && frameActive && (dirtyRestoreMask and DIRTY_SCISSOR_BOX) == 0) {
+            GL11.glGetIntegerv(GL11.GL_SCISSOR_BOX, scissorBuffer)
+            frameSnapshot.scissorX = scissorBuffer[0]
+            frameSnapshot.scissorY = scissorBuffer[1]
+            frameSnapshot.scissorWidth = scissorBuffer[2]
+            frameSnapshot.scissorHeight = scissorBuffer[3]
+            dirtyRestoreMask = dirtyRestoreMask or DIRTY_SCISSOR_BOX
+        }
+    }
+
+    private fun ensureHostViewportKnown() {
+        if (hostViewportKnown) return
+        val viewport = viewportBuffer
+        if (preserveState) {
+            GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport)
+        } else {
+            if (!Luma.platform.getViewport(viewport)) GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport)
+        }
+        frameSnapshot.viewportX = viewport[0]
+        frameSnapshot.viewportY = viewport[1]
+        frameSnapshot.viewportWidth = viewport[2]
+        frameSnapshot.viewportHeight = viewport[3]
+        hostViewportKnown = true
+    }
+
+    private fun captureHostFramebuffer() {
+        ensureHostViewportKnown()
+        if (preserveState) {
+            frameSnapshot.drawFramebuffer = getInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING)
+            frameSnapshot.readFramebuffer = getInteger(GL30.GL_READ_FRAMEBUFFER_BINDING)
+            dirtyRestoreMask = dirtyRestoreMask or DIRTY_FRAMEBUFFER
+        } else {
+            frameSnapshot.drawFramebuffer = config.ownedDrawFramebuffer
+            frameSnapshot.readFramebuffer = config.ownedReadFramebuffer
+        }
+        appliedDrawFramebuffer = frameSnapshot.drawFramebuffer
+        appliedReadFramebuffer = frameSnapshot.readFramebuffer
+        appliedFramebufferKnown = true
+        appliedViewportX = frameSnapshot.viewportX
+        appliedViewportY = frameSnapshot.viewportY
+        appliedViewportWidth = frameSnapshot.viewportWidth
+        appliedViewportHeight = frameSnapshot.viewportHeight
+        appliedViewportKnown = true
+        hostFramebufferCaptured = true
+    }
+
+    private fun flushFramebuffer() {
+        if (!framebufferDirty) return
+        if (!hostFramebufferCaptured) {
+            captureHostFramebuffer()
+        }
+        val drawFbo: Int
+        val readFbo: Int
+        val vx: Int
+        val vy: Int
+        val vw: Int
+        val vh: Int
+        if (logicalDrawFramebuffer == HOST_FBO_SENTINEL) {
+            drawFbo = frameSnapshot.drawFramebuffer
+            readFbo = frameSnapshot.readFramebuffer
+            vx = frameSnapshot.viewportX
+            vy = frameSnapshot.viewportY
+            vw = frameSnapshot.viewportWidth
+            vh = frameSnapshot.viewportHeight
+        } else {
+            drawFbo = logicalDrawFramebuffer
+            readFbo = logicalReadFramebuffer
+            vx = viewportX
+            vy = viewportY
+            vw = viewportWidth
+            vh = viewportHeight
+        }
+        if (!appliedFramebufferKnown || appliedDrawFramebuffer != drawFbo || appliedReadFramebuffer != readFbo) {
+            if (drawFbo == readFbo) {
+                GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, drawFbo)
+            } else {
+                GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, drawFbo)
+                GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, readFbo)
+            }
+            appliedDrawFramebuffer = drawFbo
+            appliedReadFramebuffer = readFbo
+            appliedFramebufferKnown = true
+        }
+        if (
+            !appliedViewportKnown ||
+            appliedViewportX != vx ||
+            appliedViewportY != vy ||
+            appliedViewportWidth != vw ||
+            appliedViewportHeight != vh
+        ) {
+            GL11.glViewport(vx, vy, vw, vh)
+            appliedViewportX = vx
+            appliedViewportY = vy
+            appliedViewportWidth = vw
+            appliedViewportHeight = vh
+            appliedViewportKnown = true
+        }
+        framebufferDirty = false
+    }
+
+    private fun flushScissor() {
+        if (!scissorBoxDirty) return
+        scissorBoxDirty = false
         if (!scissorEnabled) return
+        val vx: Int
+        val vy: Int
+        val vh: Int
+        if (logicalDrawFramebuffer == HOST_FBO_SENTINEL) {
+            ensureHostViewportKnown()
+            vx = frameSnapshot.viewportX
+            vy = frameSnapshot.viewportY
+            vh = frameSnapshot.viewportHeight
+        } else {
+            vx = viewportX
+            vy = viewportY
+            vh = viewportHeight
+        }
         GL11.glScissor(
-            viewportX + scissorX,
-            viewportY + viewportHeight - scissorY - scissorHeight,
+            vx + scissorX,
+            vy + vh - scissorY - scissorHeight,
             scissorWidth,
             scissorHeight
         )
@@ -543,17 +1100,72 @@ class Backend(
         activeTextureUnit = -1
         renderState.invalidate()
         framebufferState.invalidate()
+        appliedFramebufferKnown = false
+        appliedViewportKnown = false
         ownedFixedStateKnown = false
     }
 
     fun <T> externalGl(action: () -> T): T {
+        flushPendingDraw()
+        flushFramebuffer()
+        flushScissor()
+        if (frameActive && preserveState) {
+            captureAllUnsavedState(frameSnapshot)
+        }
         pixelUnpackState.invalidate()
         invalidateStateCache()
         return try {
             action()
         } finally {
             invalidateStateCache()
+            if (frameActive && (targetDepth > 0 || hostFramebufferCaptured)) {
+                framebufferDirty = true
+            }
+            if (scissorEnabled) scissorBoxDirty = true
         }
+    }
+
+    private fun captureAllUnsavedState(snapshot: GlStateSnapshot) {
+        val mask = dirtyRestoreMask
+        if ((mask and DIRTY_FRAMEBUFFER) == 0) {
+            ensureHostViewportKnown()
+            snapshot.drawFramebuffer = getInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING)
+            snapshot.readFramebuffer = getInteger(GL30.GL_READ_FRAMEBUFFER_BINDING)
+            hostFramebufferCaptured = true
+        }
+        if ((mask and DIRTY_BLEND_ENABLE) == 0) snapshot.blendEnabled = GL11.glIsEnabled(GL11.GL_BLEND)
+        if ((mask and DIRTY_DEPTH_ENABLE) == 0) snapshot.depthEnabled = GL11.glIsEnabled(GL11.GL_DEPTH_TEST)
+        if ((mask and DIRTY_DEPTH_WRITE) == 0) snapshot.depthWrite = getInteger(GL11.GL_DEPTH_WRITEMASK) != 0
+        if ((mask and DIRTY_DEPTH_FUNC) == 0) snapshot.depthFunc = getInteger(GL11.GL_DEPTH_FUNC)
+        if ((mask and DIRTY_CULL) == 0) snapshot.cullEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE)
+        if ((mask and DIRTY_SCISSOR_ENABLE) == 0) snapshot.scissorEnabled = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)
+        if ((mask and DIRTY_SCISSOR_BOX) == 0) {
+            GL11.glGetIntegerv(GL11.GL_SCISSOR_BOX, scissorBuffer)
+            snapshot.scissorX = scissorBuffer[0]
+            snapshot.scissorY = scissorBuffer[1]
+            snapshot.scissorWidth = scissorBuffer[2]
+            snapshot.scissorHeight = scissorBuffer[3]
+        }
+        if ((mask and DIRTY_COLOR_MASK) == 0) {
+            GL11.glGetIntegerv(GL11.GL_COLOR_WRITEMASK, colorMaskBuffer)
+            snapshot.colorMaskRed = colorMaskBuffer[0] != 0
+            snapshot.colorMaskGreen = colorMaskBuffer[1] != 0
+            snapshot.colorMaskBlue = colorMaskBuffer[2] != 0
+            snapshot.colorMaskAlpha = colorMaskBuffer[3] != 0
+        }
+        if ((mask and DIRTY_BLEND_FUNC) == 0) {
+            snapshot.blendSrcRgb = getInteger(GL14.GL_BLEND_SRC_RGB)
+            snapshot.blendDstRgb = getInteger(GL14.GL_BLEND_DST_RGB)
+            snapshot.blendSrcAlpha = getInteger(GL14.GL_BLEND_SRC_ALPHA)
+            snapshot.blendDstAlpha = getInteger(GL14.GL_BLEND_DST_ALPHA)
+            snapshot.blendEquationRgb = getInteger(GL20.GL_BLEND_EQUATION_RGB)
+            snapshot.blendEquationAlpha = getInteger(GL20.GL_BLEND_EQUATION_ALPHA)
+        }
+        if ((mask and DIRTY_PROGRAM) == 0) snapshot.program = getInteger(GL20.GL_CURRENT_PROGRAM)
+        if ((mask and DIRTY_VAO) == 0) snapshot.vertexArray = getInteger(GL30.GL_VERTEX_ARRAY_BINDING)
+        if ((mask and DIRTY_ARRAY_BUFFER) == 0) snapshot.arrayBuffer = getInteger(GL15.GL_ARRAY_BUFFER_BINDING)
+        if ((mask and DIRTY_ACTIVE_TEXTURE) == 0) snapshot.activeTexture = getInteger(GL13.GL_ACTIVE_TEXTURE)
+        dirtyRestoreMask = ALL_DIRTY_MASK
     }
 
     private fun compile(type: Int, source: String): Int {
@@ -570,88 +1182,82 @@ class Backend(
         return shaderId
     }
 
-    private fun captureState(snapshot: GlStateSnapshot) {
-        val viewport = viewportBuffer
-        GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport)
-        snapshot.viewportX = viewport[0]
-        snapshot.viewportY = viewport[1]
-        snapshot.viewportWidth = viewport[2]
-        snapshot.viewportHeight = viewport[3]
-
-        snapshot.drawFramebuffer = getInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING)
-        snapshot.readFramebuffer = getInteger(GL30.GL_READ_FRAMEBUFFER_BINDING)
-
-        snapshot.blendEnabled = GL11.glIsEnabled(GL11.GL_BLEND)
-        snapshot.depthEnabled = GL11.glIsEnabled(GL11.GL_DEPTH_TEST)
-        snapshot.depthWrite = getInteger(GL11.GL_DEPTH_WRITEMASK) != 0
-        snapshot.depthFunc = getInteger(GL11.GL_DEPTH_FUNC)
-        snapshot.cullEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE)
-        snapshot.scissorEnabled = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)
-        GL11.glGetIntegerv(GL11.GL_SCISSOR_BOX, scissorBuffer)
-        snapshot.scissorX = scissorBuffer[0]
-        snapshot.scissorY = scissorBuffer[1]
-        snapshot.scissorWidth = scissorBuffer[2]
-        snapshot.scissorHeight = scissorBuffer[3]
-        GL11.glGetIntegerv(GL11.GL_COLOR_WRITEMASK, colorMaskBuffer)
-        snapshot.colorMaskRed = colorMaskBuffer[0] != 0
-        snapshot.colorMaskGreen = colorMaskBuffer[1] != 0
-        snapshot.colorMaskBlue = colorMaskBuffer[2] != 0
-        snapshot.colorMaskAlpha = colorMaskBuffer[3] != 0
-
-        snapshot.blendSrcRgb = getInteger(GL14.GL_BLEND_SRC_RGB)
-        snapshot.blendDstRgb = getInteger(GL14.GL_BLEND_DST_RGB)
-        snapshot.blendSrcAlpha = getInteger(GL14.GL_BLEND_SRC_ALPHA)
-        snapshot.blendDstAlpha = getInteger(GL14.GL_BLEND_DST_ALPHA)
-        snapshot.blendEquationRgb = getInteger(GL20.GL_BLEND_EQUATION_RGB)
-        snapshot.blendEquationAlpha = getInteger(GL20.GL_BLEND_EQUATION_ALPHA)
-
-        snapshot.program = getInteger(GL20.GL_CURRENT_PROGRAM)
-        snapshot.vertexArray = getInteger(GL30.GL_VERTEX_ARRAY_BINDING)
-        snapshot.arrayBuffer = getInteger(GL15.GL_ARRAY_BUFFER_BINDING)
-
-        snapshot.activeTexture = getInteger(GL13.GL_ACTIVE_TEXTURE)
-        snapshot.clearTextureUnits()
-    }
-
     private fun restoreState(snapshot: GlStateSnapshot) {
-        GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, snapshot.drawFramebuffer)
-        GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, snapshot.readFramebuffer)
-        GL11.glViewport(snapshot.viewportX, snapshot.viewportY, snapshot.viewportWidth, snapshot.viewportHeight)
+        val mask = dirtyRestoreMask
+        val texCount = snapshot.textureUnitCount
+        if (mask == 0 && texCount == 0) return
 
-        if (snapshot.blendEnabled) GL11.glEnable(GL11.GL_BLEND) else GL11.glDisable(GL11.GL_BLEND)
-        if (snapshot.depthEnabled) GL11.glEnable(GL11.GL_DEPTH_TEST) else GL11.glDisable(GL11.GL_DEPTH_TEST)
-        GL11.glDepthMask(snapshot.depthWrite)
-        GL11.glDepthFunc(snapshot.depthFunc)
-        if (snapshot.cullEnabled) GL11.glEnable(GL11.GL_CULL_FACE) else GL11.glDisable(GL11.GL_CULL_FACE)
-        if (snapshot.scissorEnabled) GL11.glEnable(GL11.GL_SCISSOR_TEST) else GL11.glDisable(GL11.GL_SCISSOR_TEST)
-        GL11.glScissor(snapshot.scissorX, snapshot.scissorY, snapshot.scissorWidth, snapshot.scissorHeight)
-        GL11.glColorMask(
-            snapshot.colorMaskRed,
-            snapshot.colorMaskGreen,
-            snapshot.colorMaskBlue,
-            snapshot.colorMaskAlpha
-        )
-
-        GL14.glBlendFuncSeparate(snapshot.blendSrcRgb, snapshot.blendDstRgb, snapshot.blendSrcAlpha, snapshot.blendDstAlpha)
-        GL20.glBlendEquationSeparate(snapshot.blendEquationRgb, snapshot.blendEquationAlpha)
-
-        GL20.glUseProgram(snapshot.program)
-        GL30.glBindVertexArray(snapshot.vertexArray)
-        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, snapshot.arrayBuffer)
-
-        for (index in 0 until snapshot.textureUnitCount) {
+        if ((mask and DIRTY_FRAMEBUFFER) != 0) {
+            if (snapshot.drawFramebuffer == snapshot.readFramebuffer) {
+                GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, snapshot.drawFramebuffer)
+            } else {
+                GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, snapshot.drawFramebuffer)
+                GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, snapshot.readFramebuffer)
+            }
+            GL11.glViewport(snapshot.viewportX, snapshot.viewportY, snapshot.viewportWidth, snapshot.viewportHeight)
+        }
+        if ((mask and DIRTY_BLEND_ENABLE) != 0) {
+            if (snapshot.blendEnabled) GL11.glEnable(GL11.GL_BLEND) else GL11.glDisable(GL11.GL_BLEND)
+        }
+        if ((mask and DIRTY_DEPTH_ENABLE) != 0) {
+            if (snapshot.depthEnabled) GL11.glEnable(GL11.GL_DEPTH_TEST) else GL11.glDisable(GL11.GL_DEPTH_TEST)
+        }
+        if ((mask and DIRTY_DEPTH_WRITE) != 0) {
+            GL11.glDepthMask(snapshot.depthWrite)
+        }
+        if ((mask and DIRTY_DEPTH_FUNC) != 0) {
+            GL11.glDepthFunc(snapshot.depthFunc)
+        }
+        if ((mask and DIRTY_CULL) != 0) {
+            if (snapshot.cullEnabled) GL11.glEnable(GL11.GL_CULL_FACE) else GL11.glDisable(GL11.GL_CULL_FACE)
+        }
+        if ((mask and DIRTY_SCISSOR_ENABLE) != 0) {
+            if (snapshot.scissorEnabled) GL11.glEnable(GL11.GL_SCISSOR_TEST) else GL11.glDisable(GL11.GL_SCISSOR_TEST)
+        }
+        if ((mask and DIRTY_SCISSOR_BOX) != 0) {
+            GL11.glScissor(snapshot.scissorX, snapshot.scissorY, snapshot.scissorWidth, snapshot.scissorHeight)
+        }
+        if ((mask and DIRTY_COLOR_MASK) != 0) {
+            GL11.glColorMask(
+                snapshot.colorMaskRed,
+                snapshot.colorMaskGreen,
+                snapshot.colorMaskBlue,
+                snapshot.colorMaskAlpha
+            )
+        }
+        if ((mask and DIRTY_BLEND_FUNC) != 0) {
+            GL14.glBlendFuncSeparate(
+                snapshot.blendSrcRgb,
+                snapshot.blendDstRgb,
+                snapshot.blendSrcAlpha,
+                snapshot.blendDstAlpha
+            )
+            GL20.glBlendEquationSeparate(snapshot.blendEquationRgb, snapshot.blendEquationAlpha)
+        }
+        if ((mask and DIRTY_PROGRAM) != 0) {
+            GL20.glUseProgram(snapshot.program)
+        }
+        if ((mask and DIRTY_VAO) != 0) {
+            GL30.glBindVertexArray(snapshot.vertexArray)
+        }
+        if ((mask and DIRTY_ARRAY_BUFFER) != 0) {
+            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, snapshot.arrayBuffer)
+        }
+        for (index in 0 until texCount) {
             val unit = snapshot.textureUnit(index)
             GL13.glActiveTexture(GL13.GL_TEXTURE0 + unit)
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, snapshot.boundTexture(index))
             GL33.glBindSampler(unit, snapshot.samplerBinding(index))
         }
-        GL13.glActiveTexture(snapshot.activeTexture)
+        if ((mask and DIRTY_ACTIVE_TEXTURE) != 0 || texCount > 0) {
+            GL13.glActiveTexture(snapshot.activeTexture)
+        }
     }
 
     private fun prepareTextureUnit(unit: Int) {
         activateTextureUnit(unit)
         ensureSamplerCapacity(unit + 1)
-        if (config.statePolicy == GlStatePolicy.OWNED) {
+        if (!preserveState) {
             ensureSamplerUnbound(unit)
             return
         }
@@ -670,6 +1276,16 @@ class Backend(
 
     private fun activateTextureUnit(unit: Int) {
         if (activeTextureUnit == unit) return
+        if (preserveState && frameActive && (dirtyRestoreMask and DIRTY_ACTIVE_TEXTURE) == 0) {
+            val hostActive = getInteger(GL13.GL_ACTIVE_TEXTURE)
+            frameSnapshot.activeTexture = hostActive
+            dirtyRestoreMask = dirtyRestoreMask or DIRTY_ACTIVE_TEXTURE
+            val hostUnit = hostActive - GL13.GL_TEXTURE0
+            if (hostUnit == unit) {
+                activeTextureUnit = unit
+                return
+            }
+        }
         GL13.glActiveTexture(GL13.GL_TEXTURE0 + unit)
         activeTextureUnit = unit
     }
@@ -703,40 +1319,6 @@ class Backend(
         Arrays.fill(samplerBindings, previousSize, capacity, UNKNOWN_SAMPLER_BINDING)
     }
 
-    private fun applyGuiState(snapshot: GlStateSnapshot) {
-        if (snapshot.depthEnabled) GL11.glDisable(GL11.GL_DEPTH_TEST)
-        if (snapshot.depthWrite) GL11.glDepthMask(false)
-        if (snapshot.depthFunc != GL11.GL_ALWAYS) GL11.glDepthFunc(GL11.GL_ALWAYS)
-        if (snapshot.cullEnabled) GL11.glDisable(GL11.GL_CULL_FACE)
-        if (snapshot.scissorEnabled) GL11.glDisable(GL11.GL_SCISSOR_TEST)
-        if (!snapshot.blendEnabled) GL11.glEnable(GL11.GL_BLEND)
-        if (
-            !snapshot.colorMaskRed ||
-            !snapshot.colorMaskGreen ||
-            !snapshot.colorMaskBlue ||
-            !snapshot.colorMaskAlpha
-        ) {
-            GL11.glColorMask(true, true, true, true)
-        }
-
-        if (snapshot.blendEquationRgb != GL14.GL_FUNC_ADD || snapshot.blendEquationAlpha != GL14.GL_FUNC_ADD) {
-            GL20.glBlendEquationSeparate(GL14.GL_FUNC_ADD, GL14.GL_FUNC_ADD)
-        }
-        if (
-            snapshot.blendSrcRgb != GL11.GL_SRC_ALPHA ||
-            snapshot.blendDstRgb != GL11.GL_ONE_MINUS_SRC_ALPHA ||
-            snapshot.blendSrcAlpha != GL11.GL_ONE ||
-            snapshot.blendDstAlpha != GL11.GL_ONE_MINUS_SRC_ALPHA
-        ) {
-            GL14.glBlendFuncSeparate(
-                GL11.GL_SRC_ALPHA,
-                GL11.GL_ONE_MINUS_SRC_ALPHA,
-                GL11.GL_ONE,
-                GL11.GL_ONE_MINUS_SRC_ALPHA
-            )
-        }
-    }
-
     private fun getInteger(parameter: Int): Int {
         GL11.glGetIntegerv(parameter, scalarStateBuffer)
         return scalarStateBuffer.get(0)
@@ -745,13 +1327,6 @@ class Backend(
     private fun prepareOwnedFrame() {
         frameSnapshot.drawFramebuffer = config.ownedDrawFramebuffer
         frameSnapshot.readFramebuffer = config.ownedReadFramebuffer
-        val viewport = viewportBuffer
-        if (!Luma.platform.getViewport(viewport)) GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport)
-        frameSnapshot.viewportX = viewport[0]
-        frameSnapshot.viewportY = viewport[1]
-        frameSnapshot.viewportWidth = viewport[2]
-        frameSnapshot.viewportHeight = viewport[3]
-        frameSnapshot.clearTextureUnits()
         applyOwnedGuiState()
         activateTextureUnit(0)
     }
@@ -772,6 +1347,27 @@ class Backend(
 
     private companion object {
         const val UNKNOWN_SAMPLER_BINDING = Int.MIN_VALUE
+        const val DEBUG_GROUP_UNCHECKED: Byte = -1
+        const val DEBUG_GROUP_NONE: Byte = 0
+        const val DEBUG_GROUP_GL43: Byte = 1
+        const val DEBUG_GROUP_KHR: Byte = 2
+        const val HOST_FBO_SENTINEL = -2
+
+        const val DIRTY_FRAMEBUFFER = 1 shl 0
+        const val DIRTY_BLEND_ENABLE = 1 shl 1
+        const val DIRTY_BLEND_FUNC = 1 shl 2
+        const val DIRTY_DEPTH_ENABLE = 1 shl 3
+        const val DIRTY_DEPTH_WRITE = 1 shl 4
+        const val DIRTY_DEPTH_FUNC = 1 shl 5
+        const val DIRTY_CULL = 1 shl 6
+        const val DIRTY_SCISSOR_ENABLE = 1 shl 7
+        const val DIRTY_SCISSOR_BOX = 1 shl 8
+        const val DIRTY_COLOR_MASK = 1 shl 9
+        const val DIRTY_PROGRAM = 1 shl 10
+        const val DIRTY_VAO = 1 shl 11
+        const val DIRTY_ARRAY_BUFFER = 1 shl 12
+        const val DIRTY_ACTIVE_TEXTURE = 1 shl 13
+        const val ALL_DIRTY_MASK = (1 shl 14) - 1
 
         fun depthFunction(compare: DepthCompare): Int = when (compare) {
             DepthCompare.ALWAYS -> GL11.GL_ALWAYS

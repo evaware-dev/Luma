@@ -1,15 +1,13 @@
 package sweetie.evaware.luma.backend.gl
 
-import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL15
 import org.lwjgl.opengl.GL20
 import org.lwjgl.opengl.GL30
 import org.lwjgl.opengl.GL33
 import sweetie.evaware.luma.api.ProgramHandle
-import sweetie.evaware.luma.uniform.*
-import sweetie.evaware.luma.vertex.VertexLayout
+import sweetie.evaware.luma.uniform.ShaderUniforms
 import sweetie.evaware.luma.vertex.VertexInputLayout
-import sweetie.evaware.luma.vertex.ShaderVertType
+import sweetie.evaware.luma.vertex.VertexLayout
 
 class Program(
     val programId: Int,
@@ -20,10 +18,14 @@ class Program(
     val layout = layouts.layout(0)
     val vertexBuffer = GlVertexBuffer(layout)
     val directVertexArray = GL30.glGenVertexArrays()
-    private val configuredBufferIds = IntArray(layouts.size()) { -1 }
-    private val configuredBufferOffsets = LongArray(layouts.size()) { -1L }
+    internal val configuredBuffers = arrayOfNulls<GlVertexBufferHandle>(layouts.size())
+    internal val configuredBufferOffsets = LongArray(layouts.size()) { -1L }
+    internal val singleBinding = layouts.size() == 1
+    internal var configuredBuffer0: GlVertexBufferHandle? = null
+    internal var configuredOffset0: Long = -1L
+    internal var configuredElementBuffer: GlIndexBufferHandle? = null
     private val uniformLocations = HashMap<String, Int>()
-    private var preparedUniforms: List<PreparedGlUniform>? = null
+    private val uniformCache = GlUniformCache(::getUniformLocation)
 
     fun getUniformLocation(name: String): Int {
         return uniformLocations.getOrPut(name) {
@@ -31,81 +33,84 @@ class Program(
         }
     }
 
-    fun getPreparedUniforms(uniforms: ShaderUniforms): List<PreparedGlUniform> {
-        var list = preparedUniforms
-        if (list == null) {
-            list = uniforms.registry.entries.mapNotNull { entry ->
-                val loc = getUniformLocation(entry.name)
-                if (loc >= 0) {
-                    val uniform = when (entry.handle) {
-                        is Float1Uniform -> GlFloat1Uniform(entry.name)
-                        is Float2Uniform -> GlFloat2Uniform(entry.name)
-                        is Float3Uniform -> GlFloat3Uniform(entry.name)
-                        is Float4Uniform -> GlFloat4Uniform(entry.name)
-                        is Int1Uniform -> GlInt1Uniform(entry.name)
-                        is Mat4Uniform -> GlMat4Uniform(entry.name)
-                    }
-                    PreparedGlUniform(uniform, loc)
-                } else {
-                    null
-                }
-            }
-            preparedUniforms = list
-        }
-        return list
+    fun getPreparedUniforms(uniforms: ShaderUniforms): List<PreparedGlUniform> =
+        uniformCache.getPreparedUniforms(uniforms)
+
+    internal fun hasPendingUniformUpload(uniforms: ShaderUniforms): Boolean =
+        !uniformCache.isClean(uniforms)
+
+    internal fun uploadUniforms(uniforms: ShaderUniforms) {
+        uniformCache.upload(uniforms)
     }
 
     override fun close() {
+        configuredBuffers.fill(null)
+        configuredBuffer0 = null
+        configuredOffset0 = -1L
+        configuredElementBuffer = null
         vertexBuffer.close()
         GL30.glDeleteVertexArrays(directVertexArray)
         GL20.glDeleteProgram(programId)
     }
 
-    internal fun configureDirectBindings(buffers: Array<GlVertexBufferHandle?>, offsets: LongArray) {
-        GL30.glBindVertexArray(directVertexArray)
+    internal inline fun configureDirectBindings(
+        buffers: Array<GlVertexBufferHandle?>,
+        offsets: LongArray,
+        onBeforeBindArrayBuffer: () -> Unit
+    ): Boolean {
+        if (singleBinding) {
+            val buffer = requireNotNull(buffers[0]) { "Vertex binding 0 is not set" }
+            buffer.requireOpen()
+            val offset = offsets[0]
+            if (configuredBuffer0 === buffer && configuredOffset0 == offset) return false
+            onBeforeBindArrayBuffer()
+            bindDirectSlot(0, buffer, offset)
+            configuredBuffer0 = buffer
+            configuredOffset0 = offset
+            return true
+        }
+        var arrayBufferBound = false
         for (binding in 0 until layouts.size()) {
             val buffer = requireNotNull(buffers[binding]) { "Vertex binding $binding is not set" }
             buffer.requireOpen()
-            if (configuredBufferIds[binding] == buffer.id && configuredBufferOffsets[binding] == offsets[binding]) {
+            val offset = offsets[binding]
+            if (configuredBuffers[binding] === buffer && configuredBufferOffsets[binding] == offset) {
                 continue
             }
-            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, buffer.id)
-            val layout = layouts.layout(binding)
-            var attributeOffset = offsets[binding]
-            val stride = layout.strideBytes
-            for (index in 0 until layout.size()) {
-                val location = layout.layoutPos(index)
-                GL20.glEnableVertexAttribArray(location)
-                val type = layout.type(index)
-                if (type.integer && !layout.normalized(index)) {
-                    GL30.glVertexAttribIPointer(location, layout.count(index), type.glType, stride, attributeOffset)
-                } else {
-                    GL20.glVertexAttribPointer(
-                        location,
-                        layout.count(index),
-                        type.glType,
-                        layout.normalized(index),
-                        stride,
-                        attributeOffset
-                    )
-                }
-                GL33.glVertexAttribDivisor(location, layouts.stepRate(binding))
-                attributeOffset += layout.byteSize(index)
+            if (!arrayBufferBound) {
+                onBeforeBindArrayBuffer()
+                arrayBufferBound = true
             }
-            configuredBufferIds[binding] = buffer.id
-            configuredBufferOffsets[binding] = offsets[binding]
+            bindDirectSlot(binding, buffer, offset)
+            configuredBuffers[binding] = buffer
+            configuredBufferOffsets[binding] = offset
+        }
+        return arrayBufferBound
+    }
+
+    internal fun bindDirectSlot(binding: Int, buffer: GlVertexBufferHandle, offset: Long) {
+        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, buffer.id)
+        val layout = layouts.layout(binding)
+        var attributeOffset = offset
+        val stride = layout.strideBytes
+        for (index in 0 until layout.size()) {
+            val location = layout.layoutPos(index)
+            GL20.glEnableVertexAttribArray(location)
+            val type = layout.type(index)
+            if (type.integer && !layout.normalized(index)) {
+                GL30.glVertexAttribIPointer(location, layout.count(index), type.glType, stride, attributeOffset)
+            } else {
+                GL20.glVertexAttribPointer(
+                    location,
+                    layout.count(index),
+                    type.glType,
+                    layout.normalized(index),
+                    stride,
+                    attributeOffset
+                )
+            }
+            GL33.glVertexAttribDivisor(location, layouts.stepRate(binding))
+            attributeOffset += layout.byteSize(index)
         }
     }
 }
-
-private val ShaderVertType.glType: Int
-    get() = when (this) {
-        ShaderVertType.FLOAT32 -> GL11.GL_FLOAT
-        ShaderVertType.FLOAT16 -> GL30.GL_HALF_FLOAT
-        ShaderVertType.INT8 -> GL11.GL_BYTE
-        ShaderVertType.UINT8 -> GL11.GL_UNSIGNED_BYTE
-        ShaderVertType.INT16 -> GL11.GL_SHORT
-        ShaderVertType.UINT16 -> GL11.GL_UNSIGNED_SHORT
-        ShaderVertType.INT32 -> GL11.GL_INT
-        ShaderVertType.UINT32 -> GL11.GL_UNSIGNED_INT
-    }

@@ -4,34 +4,35 @@ import sweetie.evaware.luma.api.BlendFunction
 import sweetie.evaware.luma.api.DepthCompare
 
 internal class GlRenderStateCache {
-    private var blendEnabled: Boolean? = null
+    private var blendEnabled: Byte = UNKNOWN
     private var blendFunction: BlendFunction? = null
-    private var depthEnabled: Boolean? = null
-    private var depthWriteEnabled: Boolean? = null
+    private var depthEnabled: Byte = UNKNOWN
+    private var depthWriteEnabled: Byte = UNKNOWN
     private var depthCompare: DepthCompare? = null
-    private var cullEnabled: Boolean? = null
+    private var cullEnabled: Byte = UNKNOWN
 
     fun resetGui() {
-        blendEnabled = true
+        blendEnabled = TRUE
         blendFunction = BlendFunction.TRANSLUCENT
-        depthEnabled = false
-        depthWriteEnabled = false
+        depthEnabled = FALSE
+        depthWriteEnabled = FALSE
         depthCompare = DepthCompare.ALWAYS
-        cullEnabled = false
+        cullEnabled = FALSE
     }
 
     fun invalidate() {
-        blendEnabled = null
+        blendEnabled = UNKNOWN
         blendFunction = null
-        depthEnabled = null
-        depthWriteEnabled = null
+        depthEnabled = UNKNOWN
+        depthWriteEnabled = UNKNOWN
         depthCompare = null
-        cullEnabled = null
+        cullEnabled = UNKNOWN
     }
 
     fun blend(enabled: Boolean): Boolean {
-        if (blendEnabled == enabled) return false
-        blendEnabled = enabled
+        val next = if (enabled) TRUE else FALSE
+        if (blendEnabled == next) return false
+        blendEnabled = next
         return true
     }
 
@@ -42,14 +43,16 @@ internal class GlRenderStateCache {
     }
 
     fun depthTest(enabled: Boolean): Boolean {
-        if (depthEnabled == enabled) return false
-        depthEnabled = enabled
+        val next = if (enabled) TRUE else FALSE
+        if (depthEnabled == next) return false
+        depthEnabled = next
         return true
     }
 
     fun depthWrite(enabled: Boolean): Boolean {
-        if (depthWriteEnabled == enabled) return false
-        depthWriteEnabled = enabled
+        val next = if (enabled) TRUE else FALSE
+        if (depthWriteEnabled == next) return false
+        depthWriteEnabled = next
         return true
     }
 
@@ -60,8 +63,15 @@ internal class GlRenderStateCache {
     }
 
     fun cull(enabled: Boolean): Boolean {
-        if (cullEnabled == enabled) return false
-        cullEnabled = enabled
+        val next = if (enabled) TRUE else FALSE
+        if (cullEnabled == next) return false
+        cullEnabled = next
         return true
+    }
+
+    private companion object {
+        const val UNKNOWN: Byte = -1
+        const val FALSE: Byte = 0
+        const val TRUE: Byte = 1
     }
 }

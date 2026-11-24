@@ -45,14 +45,14 @@ internal class GlPixelUnpackState(
     }
 
     private fun setRequired() {
-        if (saved[0] != 4) GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 4)
+        if (saved[0] != 1) GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 1)
         if (saved[1] != 0) GL11.glPixelStorei(GL11.GL_UNPACK_ROW_LENGTH, 0)
         if (saved[2] != 0) GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_ROWS, 0)
         if (saved[3] != 0) GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_PIXELS, 0)
     }
 
     private fun setRequiredUnconditionally() {
-        GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 4)
+        GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 1)
         GL11.glPixelStorei(GL11.GL_UNPACK_ROW_LENGTH, 0)
         GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_ROWS, 0)
         GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_PIXELS, 0)
