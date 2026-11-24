@@ -13,11 +13,14 @@ import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.RenderBackend
+import sweetie.evaware.luma.api.SamplerState
+import sweetie.evaware.luma.api.TextureFormat
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.api.RenderTargetHandle
 import sweetie.evaware.luma.api.RenderTargetFormat
+import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.uniform.ShaderUniforms
-import sweetie.evaware.luma.vertex.VertexLayout
+import sweetie.evaware.luma.vertex.VertexInputLayout
 
 class TextureAtlasTest {
     private var originalBackend: RenderBackend? = null
@@ -36,9 +39,19 @@ class TextureAtlasTest {
         var textureUpdates = 0
         override fun beginFrame() {}
         override fun endFrame() {}
-        override fun createProgram(vertexSource: String, fragmentSource: String, layout: VertexLayout): ProgramHandle = error("mock")
+        override fun createProgram(
+            vertexSource: String,
+            fragmentSource: String,
+            layouts: VertexInputLayout,
+            reflection: ShaderReflection?
+        ): ProgramHandle = error("mock")
         override fun bindProgram(program: ProgramHandle) {}
-        override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle {
+        override fun createTexture(
+            image: BufferedImage,
+            mipmap: Boolean,
+            format: TextureFormat,
+            sampler: SamplerState
+        ): TextureHandle {
             lastCreatedImage = image
             createdTextures++
             return MockTextureHandle(image.width, image.height)
@@ -58,7 +71,9 @@ class TextureAtlasTest {
             width: Int,
             height: Int,
             useDepth: Boolean,
-            format: RenderTargetFormat
+            format: RenderTargetFormat,
+            sampler: SamplerState,
+            useStencil: Boolean
         ): RenderTargetHandle = error("mock")
         override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) {}
         override fun endRenderTarget() {}

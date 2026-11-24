@@ -3,7 +3,13 @@ package sweetie.evaware.luma
 import sweetie.evaware.luma.api.BlendFunction
 import sweetie.evaware.luma.api.DepthCompare
 import sweetie.evaware.luma.api.RenderBackend
+import sweetie.evaware.luma.api.RenderTargetHandle
+import sweetie.evaware.luma.api.SamplerState
+import sweetie.evaware.luma.api.StencilCompare
+import sweetie.evaware.luma.api.StencilOp
+import sweetie.evaware.luma.api.TextureFilter
 import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.list.DrawList
 import sweetie.evaware.luma.matrix.MatrixControl
 import sweetie.evaware.luma.shader.translator.RawShaderTranslator
 import sweetie.evaware.luma.shader.translator.ShaderTranslator
@@ -96,35 +102,55 @@ object Luma {
 
     inline fun renderToMainFramebuffer(action: () -> Unit) = render(action)
 
-    fun bindTexture(texture: TextureHandle, unit: Int = 0) {
-        backend.bindTexture(texture, unit)
-    }
+    fun bindTexture(texture: TextureHandle, unit: Int = 0) = backend.bindTexture(texture, unit)
+    fun setTextureSampler(texture: TextureHandle, sampler: SamplerState) = backend.setTextureSampler(texture, sampler)
+    fun generateMipmaps(texture: TextureHandle) = backend.generateMipmaps(texture)
 
     fun enableBlend() = backend.blend(true)
     fun disableBlend() = backend.blend(false)
     fun blendFunction(function: BlendFunction) = backend.blendFunction(function)
-    fun enableDepthTest() {
-        backend.depthTest(true)
-    }
+    fun colorMask(red: Boolean, green: Boolean, blue: Boolean, alpha: Boolean) =
+        backend.colorMask(red, green, blue, alpha)
 
-    fun disableDepthTest() {
-        backend.depthTest(false)
-    }
-
+    fun enableDepthTest() = backend.depthTest(true)
+    fun disableDepthTest() = backend.depthTest(false)
     fun depthWrite(enabled: Boolean) = backend.depthWrite(enabled)
-
     fun depthCompare(compare: DepthCompare) = backend.depthCompare(compare)
 
-    fun enableCull() {
-        backend.cull(true)
-    }
+    fun enableStencilTest() = backend.stencilTest(true)
+    fun disableStencilTest() = backend.stencilTest(false)
+    fun stencilFunc(compare: StencilCompare, ref: Int, readMask: Int = 0xFF) =
+        backend.stencilFunc(compare, ref, readMask)
+    fun stencilOp(stencilFail: StencilOp, depthFail: StencilOp, pass: StencilOp) =
+        backend.stencilOp(stencilFail, depthFail, pass)
+    fun stencilMask(writeMask: Int) = backend.stencilMask(writeMask)
 
-    fun disableCull() {
-        backend.cull(false)
-    }
+    fun enableCull() = backend.cull(true)
+    fun disableCull() = backend.cull(false)
+
+    fun clearColor(red: Float, green: Float, blue: Float, alpha: Float) = backend.clearColor(red, green, blue, alpha)
+    fun clearDepth(depth: Double) = backend.clearDepth(depth)
+    fun clearStencil(value: Int = 0) = backend.clearStencil(value)
+
+    fun blitRenderTarget(
+        source: RenderTargetHandle,
+        destination: RenderTargetHandle?,
+        srcX: Int = 0,
+        srcY: Int = 0,
+        srcWidth: Int = source.width,
+        srcHeight: Int = source.height,
+        dstX: Int = 0,
+        dstY: Int = 0,
+        dstWidth: Int = destination?.width ?: srcWidth,
+        dstHeight: Int = destination?.height ?: srcHeight,
+        filter: TextureFilter = TextureFilter.LINEAR,
+        copyColor: Boolean = true,
+        copyDepth: Boolean = false
+    ) = backend.blitRenderTarget(
+        source, destination, srcX, srcY, srcWidth, srcHeight, dstX, dstY, dstWidth, dstHeight, filter, copyColor, copyDepth
+    )
 
     fun pushDebugGroup(label: String) = backend.pushDebugGroup(label)
-
     fun popDebugGroup() = backend.popDebugGroup()
 
     inline fun <T> debugGroup(label: String, action: () -> T): T {
@@ -139,4 +165,8 @@ object Luma {
     fun invalidatePipelineCache() {
         if (::backend.isInitialized) backend.invalidatePipelineCache()
     }
+
+    inline fun record(list: DrawList, action: () -> Unit) = list.record(backend, action)
+
+    fun replay(list: DrawList) = list.replay(backend)
 }

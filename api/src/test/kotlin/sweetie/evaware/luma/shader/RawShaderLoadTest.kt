@@ -15,12 +15,15 @@ import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
+import sweetie.evaware.luma.api.SamplerState
+import sweetie.evaware.luma.api.TextureFormat
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.shader.translator.RawShaderTranslator
+import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.shader.translator.ShaderTranslator
 import sweetie.evaware.luma.shader.translator.TranslationResult
 import sweetie.evaware.luma.uniform.ShaderUniforms
-import sweetie.evaware.luma.vertex.VertexLayout
+import sweetie.evaware.luma.vertex.VertexInputLayout
 
 class RawShaderLoadTest {
     private var originalBackend: RenderBackend? = null
@@ -141,7 +144,8 @@ class RawShaderLoadTest {
         override fun createProgram(
             vertexSource: String,
             fragmentSource: String,
-            layout: VertexLayout
+            layouts: VertexInputLayout,
+            reflection: ShaderReflection?
         ): ProgramHandle {
             this.vertexSource = vertexSource
             this.fragmentSource = fragmentSource
@@ -151,8 +155,12 @@ class RawShaderLoadTest {
         }
 
         override fun bindProgram(program: ProgramHandle) {}
-        override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle =
-            unsupported<TextureHandle>()
+        override fun createTexture(
+            image: BufferedImage,
+            mipmap: Boolean,
+            format: TextureFormat,
+            sampler: SamplerState
+        ): TextureHandle = unsupported<TextureHandle>()
 
         override fun updateTexture(texture: TextureHandle, x: Int, y: Int, image: BufferedImage) {
             throw UnsupportedOperationException()
@@ -177,7 +185,9 @@ class RawShaderLoadTest {
             width: Int,
             height: Int,
             useDepth: Boolean,
-            format: RenderTargetFormat
+            format: RenderTargetFormat,
+            sampler: SamplerState,
+            useStencil: Boolean
         ): RenderTargetHandle = unsupported<RenderTargetHandle>()
 
         override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) {

@@ -1,6 +1,7 @@
 package sweetie.evaware.luma.texture
 
 import sweetie.evaware.luma.Luma
+import sweetie.evaware.luma.api.SamplerState
 import sweetie.evaware.luma.api.TextureFormat
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.resource.GlResources
@@ -9,7 +10,8 @@ import java.awt.image.BufferedImage
 class Texture @JvmOverloads constructor(
     val image: BufferedImage,
     val mipmap: Boolean = true,
-    val format: TextureFormat = TextureFormat.RGBA8
+    val format: TextureFormat = TextureFormat.RGBA8,
+    val sampler: SamplerState = SamplerState.LINEAR_CLAMP
 ) : AutoCloseable {
     var handle: TextureHandle? = null
     private var loaded = false
@@ -19,11 +21,7 @@ class Texture @JvmOverloads constructor(
 
     fun load() {
         if (loaded) return
-        handle = if (format == TextureFormat.RGBA8) {
-            Luma.backend.createTexture(image, mipmap)
-        } else {
-            Luma.backend.createTexture(image, mipmap, format)
-        }
+        handle = Luma.backend.createTexture(image, mipmap, format, sampler)
         GlResources.track(this)
         loaded = true
     }

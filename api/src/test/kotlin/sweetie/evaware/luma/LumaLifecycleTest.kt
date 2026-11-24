@@ -14,10 +14,13 @@ import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
+import sweetie.evaware.luma.api.SamplerState
+import sweetie.evaware.luma.api.TextureFormat
 import sweetie.evaware.luma.api.TextureHandle
+import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.texture.TextureAtlasManager
 import sweetie.evaware.luma.uniform.ShaderUniforms
-import sweetie.evaware.luma.vertex.VertexLayout
+import sweetie.evaware.luma.vertex.VertexInputLayout
 
 class LumaLifecycleTest {
     private var originalBackend: RenderBackend? = null
@@ -100,12 +103,18 @@ class LumaLifecycleTest {
         override fun createProgram(
             vertexSource: String,
             fragmentSource: String,
-            layout: VertexLayout
+            layouts: VertexInputLayout,
+            reflection: ShaderReflection?
         ): ProgramHandle = unsupported()
 
         override fun bindProgram(program: ProgramHandle) = unsupported<Unit>()
 
-        override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle =
+        override fun createTexture(
+            image: BufferedImage,
+            mipmap: Boolean,
+            format: TextureFormat,
+            sampler: SamplerState
+        ): TextureHandle =
             object : TextureHandle {
                 override val width = image.width
                 override val height = image.height
@@ -128,7 +137,9 @@ class LumaLifecycleTest {
             width: Int,
             height: Int,
             useDepth: Boolean,
-            format: RenderTargetFormat
+            format: RenderTargetFormat,
+            sampler: SamplerState,
+            useStencil: Boolean
         ): RenderTargetHandle = unsupported()
 
         override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) = unsupported<Unit>()

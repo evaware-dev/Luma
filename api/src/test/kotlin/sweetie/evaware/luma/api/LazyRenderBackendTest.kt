@@ -10,8 +10,9 @@ import kotlin.test.assertFalse
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import sweetie.evaware.luma.Luma
+import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.uniform.ShaderUniforms
-import sweetie.evaware.luma.vertex.VertexLayout
+import sweetie.evaware.luma.vertex.VertexInputLayout
 
 class LazyRenderBackendTest {
     private var originalBackend: RenderBackend? = null
@@ -111,11 +112,19 @@ class LazyRenderBackendTest {
 
         override fun beginFrame() { beginFrameCalls++ }
         override fun endFrame() { endFrameCalls++ }
-        override fun createProgram(vertexSource: String, fragmentSource: String, layout: VertexLayout): ProgramHandle =
-            throw UnsupportedOperationException()
+        override fun createProgram(
+            vertexSource: String,
+            fragmentSource: String,
+            layouts: VertexInputLayout,
+            reflection: ShaderReflection?
+        ): ProgramHandle = throw UnsupportedOperationException()
         override fun bindProgram(program: ProgramHandle) {}
-        override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle =
-            throw UnsupportedOperationException()
+        override fun createTexture(
+            image: BufferedImage,
+            mipmap: Boolean,
+            format: TextureFormat,
+            sampler: SamplerState
+        ): TextureHandle = throw UnsupportedOperationException()
         override fun updateTexture(texture: TextureHandle, x: Int, y: Int, image: BufferedImage) {}
         override fun bindTexture(texture: TextureHandle, unit: Int) {}
         override fun draw(
@@ -129,7 +138,9 @@ class LazyRenderBackendTest {
             width: Int,
             height: Int,
             useDepth: Boolean,
-            format: RenderTargetFormat
+            format: RenderTargetFormat,
+            sampler: SamplerState,
+            useStencil: Boolean
         ): RenderTargetHandle = throw UnsupportedOperationException()
         override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) {}
         override fun endRenderTarget() {}
