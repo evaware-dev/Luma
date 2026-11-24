@@ -76,7 +76,7 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
         vertices: FloatBuffer,
         onArrayBufferBound: (Int) -> Unit
     ): Int {
-        val floatCount = vertices.limit()
+        val floatCount = vertices.remaining()
         if (floatCount <= 0) return 0
         val bytes = floatCount * Float.SIZE_BYTES
         val alignedBytes = alignToStride(bytes)
@@ -239,7 +239,6 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
             copyFloatsToAddress(vertices, floatCount, MemoryUtil.memAddress(mapped))
             GL15.glUnmapBuffer(GL15.GL_ARRAY_BUFFER)
         } else {
-            vertices.position(0)
             GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, writeOffset.toLong(), vertices)
         }
         regionWriteOffsetBytes = writeOffset + alignedBytes
@@ -248,11 +247,12 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
 
     private fun copyFloatsToAddress(vertices: FloatBuffer, floatCount: Int, dstAddress: Long) {
         if (vertices.isDirect) {
-            MemoryUtil.memCopy(MemoryUtil.memAddress(vertices, 0), dstAddress, floatCount.toLong() * Float.SIZE_BYTES)
+            MemoryUtil.memCopy(MemoryUtil.memAddress(vertices), dstAddress, floatCount.toLong() * Float.SIZE_BYTES)
         } else {
+            val pos = vertices.position()
             var dst = dstAddress
             for (i in 0 until floatCount) {
-                MemoryUtil.memPutFloat(dst, vertices.get(i))
+                MemoryUtil.memPutFloat(dst, vertices.get(pos + i))
                 dst += Float.SIZE_BYTES
             }
         }

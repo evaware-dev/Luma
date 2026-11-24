@@ -31,6 +31,22 @@ class GlStateSnapshot {
     var colorMaskGreen = true
     var colorMaskBlue = true
     var colorMaskAlpha = true
+    var stencilEnabled = false
+    var stencilFrontFunc = 0
+    var stencilFrontRef = 0
+    var stencilFrontValueMask = 0xFF
+    var stencilBackFunc = 0
+    var stencilBackRef = 0
+    var stencilBackValueMask = 0xFF
+    var stencilFrontFail = 0
+    var stencilFrontDepthFail = 0
+    var stencilFrontPass = 0
+    var stencilBackFail = 0
+    var stencilBackDepthFail = 0
+    var stencilBackPass = 0
+    var stencilFrontWriteMask = 0xFF
+    var stencilBackWriteMask = 0xFF
+
     private var textureUnits = IntArray(INITIAL_TEXTURE_UNITS)
     private var boundTextures = IntArray(INITIAL_TEXTURE_UNITS)
     private var samplerBindings = IntArray(INITIAL_TEXTURE_UNITS)

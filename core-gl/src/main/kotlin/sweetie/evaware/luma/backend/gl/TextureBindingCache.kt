@@ -13,6 +13,15 @@ internal class TextureBindingCache(initialUnits: Int) {
         textures[unit] = texture
     }
 
+    inline fun forEachBoundUnit(texture: GlTexture, action: (Int) -> Unit) {
+        val current = textures
+        for (unit in current.indices) {
+            if (current[unit] === texture) {
+                action(unit)
+            }
+        }
+    }
+
     fun invalidateAll() {
         textures.fill(null)
     }

@@ -8,7 +8,7 @@ import org.lwjgl.opengl.GL13
 import org.lwjgl.opengl.GL14
 import org.lwjgl.opengl.GL30
 import org.lwjgl.opengl.GL33
-import sweetie.evaware.luma.api.RenderTargetFilter
+import sweetie.evaware.luma.api.SamplerState
 import sweetie.evaware.luma.api.TextureFormat
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.texture.RgbaTransferBuffer
@@ -17,14 +17,25 @@ class GlTexture @JvmOverloads constructor(
     val textureId: Int,
     override val width: Int,
     override val height: Int,
-    private val mipmap: Boolean = false,
-    internal val samplerId: Int = 0,
+    internal var mipmap: Boolean = false,
+    internal var samplerId: Int = 0,
     private val ownsTexture: Boolean = true,
-    override val format: TextureFormat = TextureFormat.RGBA8
+    override val format: TextureFormat = TextureFormat.RGBA8,
+    internal var samplerState: SamplerState = SamplerState.LINEAR_CLAMP,
+    private var ownsSampler: Boolean = samplerId != 0
 ) : TextureHandle {
     private var closed = false
 
     internal fun requireOpen() = check(!closed) { "Texture is closed" }
+
+    internal fun replaceSampler(sampler: SamplerState, newSamplerId: Int, newOwnsSampler: Boolean) {
+        if (ownsSampler && samplerId != 0 && samplerId != newSamplerId) {
+            GL33.glDeleteSamplers(samplerId)
+        }
+        samplerState = sampler
+        samplerId = newSamplerId
+        ownsSampler = newOwnsSampler
+    }
 
     fun update(x: Int, y: Int, image: BufferedImage) {
         requireOpen()
@@ -67,6 +78,26 @@ class GlTexture @JvmOverloads constructor(
     internal fun bindCurrentUnit() {
         requireOpen()
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
+    }
+
+    internal fun generateMipmapsBound() {
+        requireOpen()
+        mipmap = true
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL12.GL_TEXTURE_MAX_LEVEL, 1000)
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL12.GL_TEXTURE_MIN_LOD, -1000)
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL12.GL_TEXTURE_MAX_LOD, 1000)
+        GL30.glGenerateMipmap(GL11.GL_TEXTURE_2D)
+    }
+
+    internal fun generateMipmapsUnbound() {
+        requireOpen()
+        val previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
+        try {
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
+            generateMipmapsBound()
+        } finally {
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture)
+        }
     }
 
     internal fun initializeBound(image: BufferedImage, transfer: RgbaTransferBuffer) {
@@ -180,7 +211,7 @@ class GlTexture @JvmOverloads constructor(
     override fun close() {
         if (closed) return
         closed = true
-        if (samplerId != 0) GL33.glDeleteSamplers(samplerId)
+        if (ownsSampler && samplerId != 0) GL33.glDeleteSamplers(samplerId)
         if (ownsTexture) GL11.glDeleteTextures(textureId)
     }
 
@@ -206,36 +237,63 @@ class GlTexture @JvmOverloads constructor(
                 TextureFormat.RGBA16F -> GL30.GL_HALF_FLOAT
             }
 
-        fun borrow(textureId: Int, width: Int, height: Int, filter: RenderTargetFilter): GlTexture {
-            val sampler = GL33.glGenSamplers()
-            val glFilter = when (filter) {
-                RenderTargetFilter.NEAREST -> GL11.GL_NEAREST
-                RenderTargetFilter.LINEAR -> GL11.GL_LINEAR
-            }
-            GL33.glSamplerParameteri(sampler, GL11.GL_TEXTURE_MIN_FILTER, glFilter)
-            GL33.glSamplerParameteri(sampler, GL11.GL_TEXTURE_MAG_FILTER, glFilter)
-            GL33.glSamplerParameteri(sampler, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE)
-            GL33.glSamplerParameteri(sampler, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE)
-            return GlTexture(textureId, width, height, false, sampler, false)
+        @JvmOverloads
+        fun borrow(
+            textureId: Int,
+            width: Int,
+            height: Int,
+            sampler: SamplerState = SamplerState.NEAREST_CLAMP
+        ): GlTexture {
+            val samplerId = GlSamplerCache.createOwnedSampler(sampler, mipmap = false)
+            return GlTexture(
+                textureId = textureId,
+                width = width,
+                height = height,
+                mipmap = false,
+                samplerId = samplerId,
+                ownsTexture = false,
+                format = TextureFormat.RGBA8,
+                samplerState = sampler,
+                ownsSampler = true
+            )
         }
 
         @JvmOverloads
-        fun create(image: BufferedImage, mipmap: Boolean, format: TextureFormat = TextureFormat.RGBA8): GlTexture {
+        fun create(
+            image: BufferedImage,
+            mipmap: Boolean,
+            format: TextureFormat = TextureFormat.RGBA8,
+            sampler: SamplerState = SamplerState.LINEAR_CLAMP,
+            samplerId: Int = 0,
+            ownsSampler: Boolean = samplerId == 0
+        ): GlTexture {
             require(format.supportsBufferedImageUpload) {
                 "BufferedImage upload is not supported for format $format; upload raw ByteBuffer data instead"
             }
+            val resolvedSamplerId = if (samplerId != 0) samplerId else GlSamplerCache.createOwnedSampler(sampler, mipmap)
+            val resolvedOwnsSampler = if (samplerId != 0) ownsSampler else true
             val textureId = GL11.glGenTextures()
             val previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
             val pixelStore = capturePixelStore(pixelStoreState.get())
 
-            val texture = GlTexture(textureId, image.width, image.height, mipmap, format = format)
+            val texture = GlTexture(
+                textureId = textureId,
+                width = image.width,
+                height = image.height,
+                mipmap = mipmap,
+                samplerId = resolvedSamplerId,
+                ownsTexture = true,
+                format = format,
+                samplerState = sampler,
+                ownsSampler = resolvedOwnsSampler
+            )
             try {
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
                 setRequiredPixelStore()
                 texture.initializeBound(image, transfer.get())
                 return texture
             } catch (failure: Throwable) {
-                GL11.glDeleteTextures(textureId)
+                texture.close()
                 throw failure
             } finally {
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture)
@@ -243,12 +301,16 @@ class GlTexture @JvmOverloads constructor(
             }
         }
 
+        @JvmOverloads
         fun createRaw(
             width: Int,
             height: Int,
             data: ByteBuffer?,
             format: TextureFormat = TextureFormat.RGBA8,
-            mipmap: Boolean = false
+            mipmap: Boolean = false,
+            sampler: SamplerState = SamplerState.LINEAR_CLAMP,
+            samplerId: Int = 0,
+            ownsSampler: Boolean = samplerId == 0
         ): GlTexture {
             require(width > 0 && height > 0) { "Texture dimensions must be positive: ${width}x${height}" }
             if (data != null) {
@@ -257,18 +319,30 @@ class GlTexture @JvmOverloads constructor(
                     "Texture data has ${data.remaining()} bytes, expected at least $requiredBytes bytes for $format ${width}x${height}"
                 }
             }
+            val resolvedSamplerId = if (samplerId != 0) samplerId else GlSamplerCache.createOwnedSampler(sampler, mipmap)
+            val resolvedOwnsSampler = if (samplerId != 0) ownsSampler else true
             val textureId = GL11.glGenTextures()
             val previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D)
             val pixelStore = capturePixelStore(pixelStoreState.get())
 
-            val texture = GlTexture(textureId, width, height, mipmap, format = format)
+            val texture = GlTexture(
+                textureId = textureId,
+                width = width,
+                height = height,
+                mipmap = mipmap,
+                samplerId = resolvedSamplerId,
+                ownsTexture = true,
+                format = format,
+                samplerState = sampler,
+                ownsSampler = resolvedOwnsSampler
+            )
             try {
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId)
                 setRequiredPixelStore()
                 texture.initializeBoundRaw(data)
                 return texture
             } catch (failure: Throwable) {
-                GL11.glDeleteTextures(textureId)
+                texture.close()
                 throw failure
             } finally {
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture)
