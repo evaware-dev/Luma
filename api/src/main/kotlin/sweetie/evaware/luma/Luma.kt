@@ -11,15 +11,12 @@ import sweetie.evaware.luma.texture.TextureAtlasManager
 
 object Luma {
     @JvmField
-    var mockRenderTargetWidth: Int? = null
-
-    @JvmField
-    var mockRenderTargetHeight: Int? = null
-
-    @JvmField
     var frameActive = false
 
     lateinit var backend: RenderBackend
+    val isBackendInitialized: Boolean
+        get() = ::backend.isInitialized
+
     var shaderTranslator: ShaderTranslator = RawShaderTranslator
 
     @JvmField
@@ -41,13 +38,7 @@ object Luma {
             TextureAtlasManager.processPending()
             MatrixControl.beginGuiFrame()
         } catch (failure: Throwable) {
-            try {
-                backend.endFrame()
-            } catch (endFailure: Throwable) {
-                failure.addSuppressed(endFailure)
-            } finally {
-                frameActive = false
-            }
+            endFrameHandlingFailure(failure)
             throw failure
         }
     }
@@ -61,7 +52,12 @@ object Luma {
         }
     }
 
-    inline fun render(action: () -> Unit) {
+    inline fun render(action: () -> Unit) = executeFrame(processPendingAtlases = true, action = action)
+
+    inline fun frame(action: () -> Unit) = executeFrame(processPendingAtlases = false, action = action)
+
+    @PublishedApi
+    internal inline fun executeFrame(processPendingAtlases: Boolean, action: () -> Unit) {
         if (frameActive) {
             action()
             return
@@ -70,45 +66,31 @@ object Luma {
         frameActive = true
         var actionFailure: Throwable? = null
         try {
-            TextureAtlasManager.processPending()
+            if (processPendingAtlases) TextureAtlasManager.processPending()
             action()
         } catch (failure: Throwable) {
             actionFailure = failure
             throw failure
         } finally {
-            try {
-                backend.endFrame()
-            } catch (endFailure: Throwable) {
-                if (actionFailure == null) throw endFailure
-                actionFailure.addSuppressed(endFailure)
-            } finally {
-                frameActive = false
-            }
+            endFrameHandlingFailure(actionFailure)
         }
     }
 
-    inline fun frame(action: () -> Unit) {
-        if (frameActive) {
-            action()
-            return
-        }
-        backend.beginFrame()
-        frameActive = true
-        var actionFailure: Throwable? = null
+    @PublishedApi
+    internal fun endFrameHandlingFailure(actionFailure: Throwable?) {
         try {
-            action()
-        } catch (failure: Throwable) {
-            actionFailure = failure
-            throw failure
+            backend.endFrame()
+        } catch (endFailure: Throwable) {
+            if (actionFailure == null) throw endFailure
+            actionFailure.addSuppressed(endFailure)
         } finally {
-            try {
-                backend.endFrame()
-            } catch (endFailure: Throwable) {
-                if (actionFailure == null) throw endFailure
-                actionFailure.addSuppressed(endFailure)
-            } finally {
-                frameActive = false
-            }
+            frameActive = false
+        }
+    }
+
+    internal fun replaceBackendIfSame(expected: RenderBackend, replacement: RenderBackend) {
+        if (::backend.isInitialized && backend === expected) {
+            backend = replacement
         }
     }
 
@@ -139,6 +121,19 @@ object Luma {
 
     fun disableCull() {
         backend.cull(false)
+    }
+
+    fun pushDebugGroup(label: String) = backend.pushDebugGroup(label)
+
+    fun popDebugGroup() = backend.popDebugGroup()
+
+    inline fun <T> debugGroup(label: String, action: () -> T): T {
+        backend.pushDebugGroup(label)
+        return try {
+            action()
+        } finally {
+            backend.popDebugGroup()
+        }
     }
 
     fun invalidatePipelineCache() {

@@ -62,4 +62,50 @@ class UniformHandleTest {
         handle.projectionVersion = 5
         assertEquals(5, handle.projectionVersion)
     }
+
+    @Test
+    fun `registry revision bumps only on actual mutations`() {
+        val registry = UniformRegistry()
+        val initialRevision = registry.revision
+
+        val f1 = registry.registerFloat1("uFloat")
+        val mat = registry.registerMat4("uMatrix")
+        assertTrue(registry.revision > initialRevision)
+
+        f1.isDirty = false
+        mat.isDirty = false
+        val cleanRevision = registry.revision
+
+        // No-op writes must not bump revision
+        registry.setFloat1(f1, 0f)
+        registry.setMatrix4(mat, org.joml.Matrix4f())
+        assertEquals(cleanRevision, registry.revision)
+        assertFalse(f1.isDirty)
+        assertFalse(mat.isDirty)
+
+        // Mutating value bumps revision
+        registry.setFloat1(f1, 2.5f)
+        val afterFloat = registry.revision
+        assertTrue(afterFloat > cleanRevision)
+        assertTrue(f1.isDirty)
+
+        // Clearing dirty flag does not bump revision
+        f1.isDirty = false
+        assertEquals(afterFloat, registry.revision)
+
+        // Direct handle mutation also bumps revision
+        f1.value = 3.5f
+        val afterDirect = registry.revision
+        assertTrue(afterDirect > afterFloat)
+
+        // Matrix projection version update bumps only when version changes
+        mat.isDirty = false
+        val beforeProj = registry.revision
+        registry.setProjectionMatrix4(mat, org.joml.Matrix4f().scale(2f), 1)
+        val afterProj1 = registry.revision
+        assertTrue(afterProj1 > beforeProj)
+        mat.isDirty = false
+        registry.setProjectionMatrix4(mat, org.joml.Matrix4f().scale(3f), 1)
+        assertEquals(afterProj1, registry.revision)
+    }
 }

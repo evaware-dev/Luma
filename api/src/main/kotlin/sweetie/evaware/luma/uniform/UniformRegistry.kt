@@ -10,29 +10,31 @@ class UniformRegistry {
 
     val entries = ArrayList<Entry>(8)
 
-    fun registerFloat1(name: String) = Float1Uniform().also {
-        entries.add(Entry(name, it))
+    var revision: Int = 1
+        private set
+
+    internal fun bumpRevision() {
+        revision++
     }
 
-    fun registerFloat2(name: String) = Float2Uniform().also {
-        entries.add(Entry(name, it))
+    private fun <T : UniformHandle> register(name: String, handle: T): T {
+        handle.owner = this
+        entries.add(Entry(name, handle))
+        bumpRevision()
+        return handle
     }
 
-    fun registerFloat3(name: String) = Float3Uniform().also {
-        entries.add(Entry(name, it))
-    }
+    fun registerFloat1(name: String) = register(name, Float1Uniform())
 
-    fun registerFloat4(name: String) = Float4Uniform().also {
-        entries.add(Entry(name, it))
-    }
+    fun registerFloat2(name: String) = register(name, Float2Uniform())
 
-    fun registerInt1(name: String) = Int1Uniform().also {
-        entries.add(Entry(name, it))
-    }
+    fun registerFloat3(name: String) = register(name, Float3Uniform())
 
-    fun registerMat4(name: String) = Mat4Uniform().also {
-        entries.add(Entry(name, it))
-    }
+    fun registerFloat4(name: String) = register(name, Float4Uniform())
+
+    fun registerInt1(name: String) = register(name, Int1Uniform())
+
+    fun registerMat4(name: String) = register(name, Mat4Uniform())
 
     fun setFloat1(handle: Float1Uniform, value: Float) {
         handle.value = value

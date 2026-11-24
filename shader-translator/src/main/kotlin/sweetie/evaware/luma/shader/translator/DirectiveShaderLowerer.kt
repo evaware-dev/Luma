@@ -5,24 +5,82 @@ import sweetie.evaware.luma.LumaNames
 internal object DirectiveShaderLowerer {
     fun translate(vertexSource: String, fragmentSource: String, target: ShaderTarget): TranslationResult {
         val blaze3d = target == ShaderTarget.BLAZE3D
+        val sharedUniformLines = (
+            extractUniformLines(vertexSource) + extractUniformLines(fragmentSource)
+        ).distinctBy { it.trim() }
+        val attributes = ArrayList<ShaderAttributeInfo>()
+        val samplers = LinkedHashMap<Int, ShaderSamplerInfo>()
+
+        val loweredVertex: String
+        val loweredFragment: String
         if (!blaze3d) {
-            return TranslationResult(
-                lower(vertexSource, false, emptyList(), emptyMap(), true),
-                lower(fragmentSource, false, emptyList(), emptyMap(), false)
+            loweredVertex = lower(
+                vertexSource,
+                false,
+                sharedUniformLines,
+                emptyMap(),
+                true,
+                attributes,
+                samplers
+            )
+            loweredFragment = lower(
+                fragmentSource,
+                false,
+                sharedUniformLines,
+                emptyMap(),
+                false,
+                attributes,
+                samplers
+            )
+        } else {
+            val outputs = extractShaderOutputs(vertexSource)
+            val outputLocations = HashMap<String, Int>(outputs.size)
+            for (index in outputs.indices) outputLocations[outputs[index]] = index
+
+            loweredVertex = lower(
+                vertexSource,
+                true,
+                sharedUniformLines,
+                outputLocations,
+                true,
+                attributes,
+                samplers
+            )
+            loweredFragment = lower(
+                fragmentSource,
+                true,
+                sharedUniformLines,
+                outputLocations,
+                false,
+                attributes,
+                samplers
             )
         }
 
-        val sharedUniforms = (
-            extractUniformLines(vertexSource) + extractUniformLines(fragmentSource)
-        ).distinct()
-        val outputs = extractShaderOutputs(vertexSource)
-        val outputLocations = HashMap<String, Int>(outputs.size)
-        for (index in outputs.indices) outputLocations[outputs[index]] = index
-
-        return TranslationResult(
-            lower(vertexSource, true, sharedUniforms, outputLocations, true),
-            lower(fragmentSource, true, sharedUniforms, outputLocations, false)
+        val reflection = ShaderReflection(
+            attributes = attributes,
+            uniforms = parseUniformInfos(sharedUniformLines),
+            samplers = ArrayList(samplers.values)
         )
+        return TranslationResult(loweredVertex, loweredFragment, reflection)
+    }
+
+    private fun parseUniformInfos(uniformLines: List<String>): List<ShaderUniformInfo> {
+        if (uniformLines.isEmpty()) return emptyList()
+        val result = ArrayList<ShaderUniformInfo>(uniformLines.size)
+        for (line in uniformLines) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("//")) continue
+            val declaration = trimmed.substringBefore("//").trim().removeSuffix(";").trim()
+            if (declaration.isEmpty()) continue
+            val parts = declaration.split(WHITESPACE)
+            if (parts.size >= 2) {
+                val name = parts[parts.size - 1]
+                val type = parts[parts.size - 2]
+                result.add(ShaderUniformInfo(name, type))
+            }
+        }
+        return result
     }
 
     private fun extractUniformLines(source: String): List<String> {
@@ -32,7 +90,7 @@ internal object DirectiveShaderLowerer {
             val trimmed = line.trim()
             when {
                 trimmed == UNIFORMS_OPEN -> inside = true
-                trimmed == UNIFORMS_CLOSE -> return result
+                trimmed == UNIFORMS_CLOSE -> inside = false
                 inside && trimmed.isNotEmpty() -> result.add(line)
             }
         }
@@ -52,7 +110,9 @@ internal object DirectiveShaderLowerer {
         blaze3d: Boolean,
         sharedUniformLines: List<String>,
         outputLocations: Map<String, Int>,
-        vertex: Boolean
+        vertex: Boolean,
+        attributes: MutableList<ShaderAttributeInfo>,
+        samplers: MutableMap<Int, ShaderSamplerInfo>
     ): String {
         val lines = source.lines()
         val result = StringBuilder(source.length + 128)
@@ -95,8 +155,8 @@ internal object DirectiveShaderLowerer {
                 if (trimmed.isNotEmpty()) uniformLines.add(line)
                 continue
             }
-            if (appendAttribute(result, line, blaze3d, renames)) continue
-            if (appendSampler(result, line, blaze3d, sharedUniformLines.isNotEmpty(), renames)) continue
+            if (appendAttribute(result, line, blaze3d, renames, vertex, attributes)) continue
+            if (appendSampler(result, line, blaze3d, sharedUniformLines.isNotEmpty(), renames, samplers)) continue
             if (appendVarying(result, trimmed, blaze3d, vertex, outputLocations)) continue
             result.appendLine(line)
         }
@@ -128,10 +188,16 @@ internal object DirectiveShaderLowerer {
         result: StringBuilder,
         line: String,
         blaze3d: Boolean,
-        renames: MutableList<Pair<String, String>>
+        renames: MutableList<Pair<String, String>>,
+        vertex: Boolean,
+        attributes: MutableList<ShaderAttributeInfo>
     ): Boolean {
         val match = ATTRIBUTE.matchEntire(line) ?: return false
         val (location, type, name, backendName) = match.destructured
+        val resolvedBackendName = if (blaze3d) backendName else name
+        if (vertex) {
+            attributes.add(ShaderAttributeInfo(location.toInt(), type, name, resolvedBackendName))
+        }
         if (blaze3d) {
             result.appendLine("// ${LumaNames.ATTRIBUTE_DIRECTIVE} $location $type $name $backendName")
             result.appendLine("layout(location = $location) in $type $backendName;")
@@ -147,15 +213,17 @@ internal object DirectiveShaderLowerer {
         line: String,
         blaze3d: Boolean,
         hasSharedUniforms: Boolean,
-        renames: MutableList<Pair<String, String>>
+        renames: MutableList<Pair<String, String>>,
+        samplers: MutableMap<Int, ShaderSamplerInfo>
     ): Boolean {
         val match = SAMPLER.matchEntire(line) ?: return false
         val type = match.groupValues[1]
         val name = match.groupValues[2]
         val index = match.groupValues[3].toInt()
+        val backendName = if (blaze3d) "${LumaNames.SAMPLER_PREFIX}$index" else name
+        val binding = if (blaze3d && hasSharedUniforms) index + 1 else index
+        samplers.putIfAbsent(index, ShaderSamplerInfo(name, backendName, type, index, binding))
         if (blaze3d) {
-            val backendName = "${LumaNames.SAMPLER_PREFIX}$index"
-            val binding = if (hasSharedUniforms) index + 1 else index
             result.appendLine("layout(binding = $binding) uniform $type $backendName;")
             renames.add(name to backendName)
         } else {
@@ -214,6 +282,7 @@ internal object DirectiveShaderLowerer {
     private const val VERTEX_ID_GL = "gl_VertexID"
     private const val VERTEX_ID_VULKAN = "gl_VertexIndex"
 
+    private val WHITESPACE = Regex("""\s+""")
     private val UNIFORM_KEYWORD = Regex("""^\s*uniform\s+""")
     private val ATTRIBUTE = Regex(
         """^\s*${Regex.escape(LumaNames.ATTRIBUTE_DIRECTIVE)}\s+(\d+)\s+([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s*$"""

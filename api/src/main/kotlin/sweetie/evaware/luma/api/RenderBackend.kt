@@ -3,6 +3,7 @@ package sweetie.evaware.luma.api
 import java.awt.image.BufferedImage
 import java.nio.ByteBuffer
 import java.nio.FloatBuffer
+import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.uniform.ShaderUniforms
 import sweetie.evaware.luma.vertex.VertexInputLayout
 import sweetie.evaware.luma.vertex.VertexLayout
@@ -11,13 +12,53 @@ interface RenderBackend {
     fun beginFrame()
     fun endFrame()
     fun createProgram(vertexSource: String, fragmentSource: String, layout: VertexLayout): ProgramHandle
+    fun createProgram(
+        vertexSource: String,
+        fragmentSource: String,
+        layout: VertexLayout,
+        reflection: ShaderReflection?
+    ): ProgramHandle = createProgram(vertexSource, fragmentSource, layout)
     fun createProgram(vertexSource: String, fragmentSource: String, layouts: VertexInputLayout): ProgramHandle {
         require(layouts.size() == 1) { "This backend does not support multiple vertex bindings" }
         return createProgram(vertexSource, fragmentSource, layouts.layout(0))
     }
+    fun createProgram(
+        vertexSource: String,
+        fragmentSource: String,
+        layouts: VertexInputLayout,
+        reflection: ShaderReflection?
+    ): ProgramHandle {
+        if (layouts.size() == 1) {
+            return createProgram(vertexSource, fragmentSource, layouts.layout(0), reflection)
+        }
+        return createProgram(vertexSource, fragmentSource, layouts)
+    }
     fun bindProgram(program: ProgramHandle)
     fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle
+    fun createTexture(image: BufferedImage, mipmap: Boolean, format: TextureFormat): TextureHandle {
+        require(format == TextureFormat.RGBA8) { "Texture format $format is not supported by this backend" }
+        return createTexture(image, mipmap)
+    }
+    fun createTexture(
+        width: Int,
+        height: Int,
+        data: ByteBuffer?,
+        format: TextureFormat = TextureFormat.RGBA8,
+        mipmap: Boolean = false
+    ): TextureHandle {
+        throw UnsupportedOperationException("Raw texture creation is not supported")
+    }
     fun updateTexture(texture: TextureHandle, x: Int, y: Int, image: BufferedImage)
+    fun updateTexture(
+        texture: TextureHandle,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        data: ByteBuffer
+    ) {
+        throw UnsupportedOperationException("Raw texture updates are not supported")
+    }
     fun bindTexture(texture: TextureHandle, unit: Int)
     fun createVertexBuffer(sizeBytes: Long, usage: BufferUsage): VertexBufferHandle =
         throw UnsupportedOperationException("GPU vertex buffers are not supported")
@@ -93,6 +134,8 @@ interface RenderBackend {
     fun clearDepth(depth: Double) {
         throw UnsupportedOperationException("Depth attachment clearing is not supported")
     }
+    fun pushDebugGroup(label: String) {}
+    fun popDebugGroup() {}
     fun invalidatePipelineCache() {}
     fun close()
     fun hasContext(): Boolean
@@ -103,4 +146,5 @@ interface ProgramHandle : AutoCloseable
 interface TextureHandle : AutoCloseable {
     val width: Int
     val height: Int
+    val format: TextureFormat get() = TextureFormat.RGBA8
 }

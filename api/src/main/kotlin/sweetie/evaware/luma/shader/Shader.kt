@@ -42,7 +42,12 @@ open class Shader(
         val rawFrag = loadResource(fragmentPath)
 
         val translated = (translator ?: Luma.shaderTranslator).translate(rawVert, rawFrag, vertices.layout)
-        programHandle = Luma.backend.createProgram(translated.vertexSource, translated.fragmentSource, vertices.layout)
+        programHandle = Luma.backend.createProgram(
+            translated.vertexSource,
+            translated.fragmentSource,
+            vertices.layout,
+            translated.reflection
+        )
 
         GlResources.track(this)
         loaded = true

@@ -3,7 +3,14 @@ package sweetie.evaware.luma.uniform
 import org.joml.Matrix4f
 
 sealed class UniformHandle {
+    @JvmField
+    internal var owner: UniformRegistry? = null
+
     var isDirty = true
+        set(value) {
+            field = value
+            if (value) owner?.bumpRevision()
+        }
 }
 
 class Float1Uniform internal constructor() : UniformHandle() {

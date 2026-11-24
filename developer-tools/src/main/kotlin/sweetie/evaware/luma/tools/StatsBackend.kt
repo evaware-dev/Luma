@@ -14,8 +14,10 @@ import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
+import sweetie.evaware.luma.api.TextureFormat
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.api.VertexBufferHandle
+import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.uniform.ShaderUniforms
 import sweetie.evaware.luma.vertex.VertexLayout
 import sweetie.evaware.luma.vertex.VertexInputLayout
@@ -69,9 +71,33 @@ class StatsBackend(
     override fun createProgram(
         vertexSource: String,
         fragmentSource: String,
+        layout: VertexLayout,
+        reflection: ShaderReflection?
+    ): ProgramHandle {
+        val program = delegate.createProgram(vertexSource, fragmentSource, layout, reflection)
+        countFrame(FrameStats::programCreated)
+        lifetime.programsCreated++
+        return TrackedProgram(this, program, layout)
+    }
+
+    override fun createProgram(
+        vertexSource: String,
+        fragmentSource: String,
         layouts: VertexInputLayout
     ): ProgramHandle {
         val program = delegate.createProgram(vertexSource, fragmentSource, layouts)
+        countFrame(FrameStats::programCreated)
+        lifetime.programsCreated++
+        return TrackedProgram(this, program, null)
+    }
+
+    override fun createProgram(
+        vertexSource: String,
+        fragmentSource: String,
+        layouts: VertexInputLayout,
+        reflection: ShaderReflection?
+    ): ProgramHandle {
+        val program = delegate.createProgram(vertexSource, fragmentSource, layouts, reflection)
         countFrame(FrameStats::programCreated)
         lifetime.programsCreated++
         return TrackedProgram(this, program, null)
@@ -83,19 +109,62 @@ class StatsBackend(
 
     override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle {
         val texture = delegate.createTexture(image, mipmap)
-        val bytes = image.width.toLong() * image.height.toLong() * Integer.BYTES
+        recordTextureCreated(image.width.toLong() * image.height.toLong() * texture.format.bytesPerPixel)
+        return texture
+    }
+
+    override fun createTexture(image: BufferedImage, mipmap: Boolean, format: TextureFormat): TextureHandle {
+        val texture = delegate.createTexture(image, mipmap, format)
+        recordTextureCreated(image.width.toLong() * image.height.toLong() * format.bytesPerPixel)
+        return texture
+    }
+
+    override fun createTexture(
+        width: Int,
+        height: Int,
+        data: ByteBuffer?,
+        format: TextureFormat,
+        mipmap: Boolean
+    ): TextureHandle {
+        val texture = delegate.createTexture(width, height, data, format, mipmap)
+        val bytes = if (data != null) width.toLong() * height.toLong() * format.bytesPerPixel else 0L
         countFrame(FrameStats::textureCreated)
-        if (frameActive) currentFrame.textureUpload(bytes)
         lifetime.texturesCreated++
-        lifetime.textureUploads++
-        lifetime.uploadedBytes += bytes
+        if (bytes > 0L) {
+            if (frameActive) currentFrame.textureUpload(bytes)
+            lifetime.textureUploads++
+            lifetime.uploadedBytes += bytes
+        }
         return texture
     }
 
     override fun updateTexture(texture: TextureHandle, x: Int, y: Int, image: BufferedImage) {
-        val bytes = image.width.toLong() * image.height.toLong() * Integer.BYTES
+        val bytes = image.width.toLong() * image.height.toLong() * texture.format.bytesPerPixel
         delegate.updateTexture(texture, x, y, image)
         if (frameActive) currentFrame.textureUpload(bytes)
+        lifetime.textureUploads++
+        lifetime.uploadedBytes += bytes
+    }
+
+    override fun updateTexture(
+        texture: TextureHandle,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        data: ByteBuffer
+    ) {
+        val bytes = width.toLong() * height.toLong() * texture.format.bytesPerPixel
+        delegate.updateTexture(texture, x, y, width, height, data)
+        if (frameActive) currentFrame.textureUpload(bytes)
+        lifetime.textureUploads++
+        lifetime.uploadedBytes += bytes
+    }
+
+    private fun recordTextureCreated(bytes: Long) {
+        countFrame(FrameStats::textureCreated)
+        if (frameActive) currentFrame.textureUpload(bytes)
+        lifetime.texturesCreated++
         lifetime.textureUploads++
         lifetime.uploadedBytes += bytes
     }
@@ -261,6 +330,12 @@ class StatsBackend(
         delegate.clearColor(red, green, blue, alpha)
 
     override fun clearDepth(depth: Double) = delegate.clearDepth(depth)
+
+    override fun pushDebugGroup(label: String) = delegate.pushDebugGroup(label)
+
+    override fun popDebugGroup() = delegate.popDebugGroup()
+
+    override fun invalidatePipelineCache() = delegate.invalidatePipelineCache()
 
     override fun close() = delegate.close()
 

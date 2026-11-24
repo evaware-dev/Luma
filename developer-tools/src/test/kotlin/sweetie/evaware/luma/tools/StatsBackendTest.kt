@@ -1,6 +1,7 @@
 package sweetie.evaware.luma.tools
 
 import java.awt.image.BufferedImage
+import java.nio.ByteBuffer
 import java.nio.FloatBuffer
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -12,6 +13,7 @@ import sweetie.evaware.luma.api.RenderBackend
 import sweetie.evaware.luma.api.RenderTargetFilter
 import sweetie.evaware.luma.api.RenderTargetFormat
 import sweetie.evaware.luma.api.RenderTargetHandle
+import sweetie.evaware.luma.api.TextureFormat
 import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.uniform.ShaderUniforms
 import sweetie.evaware.luma.vertex.ShaderVertType
@@ -163,10 +165,28 @@ class StatsBackendTest {
         assertEquals(0L, backend.lifetime.renderTargetsCreated)
     }
 
+    @Test
+    fun accountsFormatByteSizeAndForwardsDebugGroups() {
+        val delegate = FakeBackend()
+        val backend = StatsBackend(delegate)
+
+        backend.beginFrame()
+        backend.pushDebugGroup("Fonts")
+        val r8Tex = backend.createTexture(BufferedImage(8, 4, BufferedImage.TYPE_INT_ARGB), false, TextureFormat.R8)
+        backend.updateTexture(r8Tex, 0, 0, 4, 2, ByteBuffer.allocate(8))
+        backend.popDebugGroup()
+        backend.endFrame()
+
+        assertEquals(32L + 8L, backend.lastFrame.uploadedBytes)
+        assertEquals(2L, backend.lastFrame.textureUploads)
+        assertEquals(listOf("push:Fonts", "pop"), delegate.debugEvents)
+    }
+
     private class FakeBackend : RenderBackend {
         var lastFilter: RenderTargetFilter? = null
         var failCreation = false
         var failEndFrame = false
+        val debugEvents = ArrayList<String>()
 
         override fun beginFrame() {}
         override fun endFrame() {
@@ -184,10 +204,25 @@ class StatsBackendTest {
         override fun bindProgram(program: ProgramHandle) {}
         override fun createTexture(image: BufferedImage, mipmap: Boolean): TextureHandle {
             check(!failCreation)
-            return FakeTexture(image.width, image.height)
+            return FakeTexture(image.width, image.height, TextureFormat.RGBA8)
+        }
+
+        override fun createTexture(image: BufferedImage, mipmap: Boolean, format: TextureFormat): TextureHandle {
+            check(!failCreation)
+            return FakeTexture(image.width, image.height, format)
         }
 
         override fun updateTexture(texture: TextureHandle, x: Int, y: Int, image: BufferedImage) {}
+        override fun updateTexture(
+            texture: TextureHandle,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+            data: ByteBuffer
+        ) {}
+        override fun pushDebugGroup(label: String) { debugEvents.add("push:$label") }
+        override fun popDebugGroup() { debugEvents.add("pop") }
         override fun bindTexture(texture: TextureHandle, unit: Int) {}
         override fun draw(
             program: ProgramHandle,
@@ -230,7 +265,8 @@ class StatsBackendTest {
 
     private class FakeTexture(
         override val width: Int,
-        override val height: Int
+        override val height: Int,
+        override val format: TextureFormat = TextureFormat.RGBA8
     ) : TextureHandle {
         override fun close() {}
     }
