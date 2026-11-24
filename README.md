@@ -1,42 +1,40 @@
-# Luma
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/banner-light.png">
+    <img alt="Luma" src="assets/banner-dark.png" height="72">
+  </picture>
 
-High-performance dual-backend (OpenGL & Blaze3D Vulkan) rendering engine and abstraction library for Minecraft and standalone Kotlin/Java applications.
+  <p>Dual-backend OpenGL 3.3+ and Blaze3D Vulkan rendering library for Minecraft and standalone JVM apps.</p>
+
+  <p>
+    <img alt="Java 25+" src="https://img.shields.io/badge/Java-25%2B-1f2328?style=flat&labelColor=0d1117">
+    <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-1f2328?style=flat&labelColor=0d1117"></a>
+  </p>
+</div>
 
 ## Features
 
-- **Dual-backend execution**: Seamlessly switches between OpenGL 3.3+ and Vulkan with a unified abstraction layer.
-- **Draw Call Merging**: Dynamic batching of draw passes sharing pipelines, textures, and scissor state.
-- **Explicit GPU buffers**: Direct vertex/index buffers, multi-stream vertex layouts (`VertexInputLayout`), and hardware instancing.
-- **Shader preprocessor**: Custom `@in`, `@uniforms`, and `#import` directives compiled into GLSL 330 and SPIR-V std140 UBO layout.
-- **Render targets**: Dynamic offscreen framebuffers, texture filters, and borrowed target lifecycle management.
-- **Texture atlases**: Shelf-packed dynamically resized 2D texture atlases with transfer buffers.
-- **Zero-allocation state management**: State isolation with `GlStatePolicy.PRESERVE/OWNED` and non-allocating metrics via `developer-tools`.
+- **Dual backends**: unified API over OpenGL 3.3+ and Mojang Blaze3D Vulkan.
+- **Draw call merging**: automatic batching across shared pipelines, textures, and scissor state.
+- **Explicit GPU buffers**: direct vertex/index buffers, multi-stream `VertexInputLayout`, and hardware instancing.
+- **Shader preprocessor**: `@in`, `@uniforms`, and `#import` directives targeting GLSL 330 and SPIR-V `std140` UBOs.
+- **Render targets & atlases**: dynamic offscreen framebuffers, borrowed target lifecycles, and shelf-packed 2D texture atlases.
+- **GL state isolation**: `GlStatePolicy.PRESERVE` (default) or `OWNED`, with raw GL via `Backend.externalGl { ... }`.
 
-## Project structure
+## Modules
 
-- **[api](api)**: Common interfaces, rendering contracts, and resource management.
-- **[core-gl](core-gl)**: OpenGL backend implementation.
-- **[vulkan-blaze3d-wrapper](vulkan-blaze3d-wrapper)**: Vulkan backend implementation integrated into Mojang Blaze3D.
-- **[shader-translator](shader-translator)**: Luma shader preprocessor supporting both OpenGL and Vulkan/SPIR-V targets.
-- **[minecraft-render-library](minecraft-render-library)**: Minecraft integration library, automatically choosing OpenGL or Vulkan backend.
-- **[minecraft-implementation](minecraft-implementation)**: Integration mod example for Minecraft.
-- **[developer-tools](developer-tools)**: Optional frame and lifetime statistics backend decorator.
-- **[standalone-app](standalone-app)**: Standalone OpenGL and Blaze3D Vulkan applications and window lifecycle.
-- **[benchmarks](benchmarks)**: Isolated, comparable OpenGL and Blaze3D Vulkan benchmarks.
-
-## Documentation
-
-- [Minecraft integration guide](minecraft-implementation/README.md) — Blaze3D render targets, lifecycle hooks, and mod setup.
-- [Shader usage](docs/shader_usage.md) — configuring and rendering with a `Shader` from Kotlin.
-- [Shader preprocessor syntax](docs/shader_example.md) — the `@`-directive shader source syntax.
-- [Developer tools](docs/developer_tools.md) — optional allocation-free frame and lifetime statistics.
-- [Backend benchmarks](docs/benchmarks.md) — comparable OpenGL and Blaze3D Vulkan workloads.
-
-The OpenGL backend defaults to `GlStatePolicy.PRESERVE`, which snapshots and restores the surrounding renderer's state. Applications that own the whole GL context can select `GlStatePolicy.OWNED` to remove that integration overhead. Raw GL remains available through `Backend.externalGl { ... }`; Luma invalidates its caches around the call instead of restricting what the application may do.
-
-## Requirements
-
-- **JDK 25+** (Mojang Blaze3D / Minecraft 26.2+)
+| Module | Purpose |
+| --- | --- |
+| [api](api) | Core rendering interfaces and resource lifecycle |
+| [core-gl](core-gl) | OpenGL 3.3+ backend |
+| [vulkan-blaze3d-wrapper](vulkan-blaze3d-wrapper) | Mojang Blaze3D Vulkan backend |
+| [shader-translator](shader-translator) | GLSL / SPIR-V shader preprocessor |
+| [minecraft-render-library](minecraft-render-library) | Minecraft integration with automatic backend selection |
+| [minecraft-implementation](minecraft-implementation) | Example Fabric integration mod |
+| [developer-tools](developer-tools) | Optional allocation-free frame and lifetime metrics |
+| [standalone-app](standalone-app) | Standalone OpenGL and Blaze3D Vulkan window apps |
+| [benchmarks](benchmarks) | Isolated OpenGL vs. Blaze3D Vulkan workloads |
 
 ## Installation
 
@@ -54,18 +52,12 @@ repositories {
     }
 }
 
-ext {
-    // See latest release: https://github.com/evaware-dev/Luma/releases
-    luma_version = 'VERSION'
-}
-
 dependencies {
-    // For Minecraft Fabric mods (transitive core included):
+    // Minecraft Fabric (26.2 or 26.3, includes transitive core):
     implementation "sweetie.evaware.luma:minecraft-render-library-26.2:$luma_version"
-    // or for Minecraft 26.3:
     // implementation "sweetie.evaware.luma:minecraft-render-library-26.3:$luma_version"
 
-    // Standalone or modular setups:
+    // Standalone / modular:
     implementation "sweetie.evaware.luma:api:$luma_version"
     implementation "sweetie.evaware.luma:core-gl:$luma_version"
     implementation "sweetie.evaware.luma:vulkan-blaze3d-wrapper:$luma_version"
@@ -82,18 +74,11 @@ repositories {
     maven { url 'https://jitpack.io' }
 }
 
-ext {
-    // See latest release: https://github.com/evaware-dev/Luma/releases
-    luma_version = 'TAG'
-}
-
 dependencies {
-    // For Minecraft Fabric mods:
     implementation "com.github.evaware-dev.Luma:minecraft-render-library-26.2:$luma_version"
-    // or for Minecraft 26.3:
     // implementation "com.github.evaware-dev.Luma:minecraft-render-library-26.3:$luma_version"
 
-    // Standalone or modular setups:
+    // Standalone / modular:
     implementation "com.github.evaware-dev.Luma:api:$luma_version"
     implementation "com.github.evaware-dev.Luma:core-gl:$luma_version"
     implementation "com.github.evaware-dev.Luma:vulkan-blaze3d-wrapper:$luma_version"
@@ -101,3 +86,15 @@ dependencies {
     implementation "com.github.evaware-dev.Luma:developer-tools:$luma_version"
 }
 ```
+
+Releases: [github.com/evaware-dev/Luma/releases](https://github.com/evaware-dev/Luma/releases)
+
+## Documentation
+
+- [Minecraft integration](minecraft-implementation/README.md) — render targets, lifecycle hooks, and mod setup
+- [Shader usage](docs/shader_usage.md) — configuring and drawing with `Shader` in Kotlin
+- [Shader preprocessor syntax](docs/shader_example.md) — `@`-directive syntax reference
+- [Developer tools](docs/developer_tools.md) — allocation-free frame and lifetime statistics
+- [Benchmarks](docs/benchmarks.md) — OpenGL and Blaze3D Vulkan benchmark workloads
+
+[MIT License](LICENSE)
