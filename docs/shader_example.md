@@ -1,12 +1,12 @@
-# Shader Example with `@` Syntax
+# Shader Preprocessor (`@` Syntax)
 
-Luma uses a custom preprocessor to translate shaders into Vulkan (Blaze3D) or OpenGL targets. Shaders must use `@` directives instead of `#luma-` prefixed ones.
+`DefaultShaderTranslator` translates Luma GLSL sources into either OpenGL 330 core or Blaze3D/Renderpearl Vulkan GLSL 450 and emits structured `ShaderReflection` metadata (`attributes`, `uniforms`, `samplers`).
 
 ## Directives
 
 - `@in <location> <type> <localName> <backendName>`: Declares a vertex attribute.
-- `@uniforms` / `@end`: Encloses shared uniform variable declarations.
-- `@sampler <type> <name> <binding>`: Declares a texture sampler.
+- `@uniforms` / `@end`: Encloses uniform declarations lowered to an std140 UBO on Vulkan or standard uniforms on OpenGL.
+- `@sampler <type> <name> <binding>`: Declares a texture sampler bound to the given texture unit / binding index.
 
 ## Vertex Shader Example
 
@@ -57,7 +57,8 @@ void main() {
 }
 ```
 
-## Backend Translation Notes
+## Backend Translation & Reflection
 
-- **Vulkan / SPIR-V (Blaze3D)**: Vertex attributes and varyings are assigned explicit `layout(location = ...)` indices. Built-in `gl_VertexID` is automatically rewritten to `gl_VertexIndex`, and `@uniforms` blocks are translated into `layout(std140, binding = ...)` uniform buffer blocks.
-- **OpenGL**: Directives are lowered into standard GLSL 330 core uniform blocks and vertex attribute bindings.
+- **Vulkan / SPIR-V (`ShaderTarget.BLAZE3D`)**: Vertex attributes and varyings receive explicit `layout(location = ...)` qualifiers, `gl_VertexID` is rewritten to `gl_VertexIndex`, and `@uniforms` blocks are lowered to `layout(std140, binding = ...) uniform LumaUniforms { ... }`.
+- **OpenGL (`ShaderTarget.OPENGL`)**: Directives lower to standard GLSL 330 core `in`, `uniform`, and `sampler2D` declarations.
+- **Typed `ShaderReflection`**: `TranslatedShader.reflection` carries parsed `ShaderAttributeInfo`, `ShaderUniformInfo`, and `ShaderSamplerInfo` lists directly to `RenderBackend.createProgram(..., reflection)`, avoiding runtime source regex parsing in backends.

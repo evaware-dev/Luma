@@ -1,14 +1,14 @@
-# Backend benchmarks
+# Backend Benchmarks
 
-The `benchmarks` module contains comparable OpenGL and Blaze3D Vulkan benchmarks. It reuses the backend window lifecycle from `standalone-app`, while all workloads, launchers, and benchmark shaders remain isolated in the benchmark module. Both backends run the same workloads and load the same shader source files through `shader-translator`; only the translation target differs.
+The `benchmarks` module runs comparable OpenGL (`OWNED` and `PRESERVE`) and Blaze3D Vulkan microbenchmarks in isolated JVM processes. All profiles execute identical workloads and translate the same shader sources via `shader-translator`.
 
-Run both backends in isolated JVM processes:
+## Running
 
 ```bash
 ./gradlew :benchmarks:runBenchmarks
 ```
 
-Run one backend:
+Or run an individual backend:
 
 ```bash
 ./gradlew :benchmarks:runGlBenchmark
@@ -16,22 +16,14 @@ Run one backend:
 ./gradlew :benchmarks:runVulkanBenchmark
 ```
 
-Run the interactive standalone application by selecting a backend:
+Standalone verification app:
 
 ```bash
-./gradlew :standalone-app:runStandaloneApp --args='--backend=gl'
-./gradlew :standalone-app:runStandaloneApp --args='--backend=vulkan'
+./gradlew :standalone-app:runStandaloneApp --args='--backend=gl --verify-only'
+./gradlew :standalone-app:runStandaloneApp --args='--backend=vulkan --verify-only'
 ```
 
-Each benchmark performs warm-up samples before recording measurements. Results are sorted and reported as average, median, minimum, maximum, p05, p95, and p05–p95 spread. Every workload reports three metrics:
-
-- `submit` measures CPU-side command construction and submission.
-- `complete` additionally waits for the GPU to finish the submitted work.
-- `allocation` reports JVM bytes allocated on the submitting thread per operation.
-
-The workloads are grouped by `lifecycle`, `state`, `binding`, `draw`, `pass`, `upload`, and `resource`. They cover empty frames before and after peak load, flat and nested render-target stacks, redundant and alternating state commands, texture binding, clean and dirty uniforms, programs, textures, triangles, lines, quads, batching, instancing, render-pass switches, texture uploads, render-target creation, and shader creation.
-
-For allocation type stacks and allocations performed by other JVM threads, record a Java Flight Recorder profile:
+JFR allocation profiles (output written to `benchmarks/build/jfr`):
 
 ```bash
 ./gradlew :benchmarks:profileGlAllocations
@@ -39,12 +31,18 @@ For allocation type stacks and allocations performed by other JVM threads, recor
 ./gradlew :benchmarks:profileVulkanAllocations
 ```
 
-Recordings are written to `benchmarks/build/jfr`. The normal benchmark has no profiler dependency or agent overhead; allocation byte counts use the JDK management API.
+## Methodology
 
-The OpenGL benchmark runs both `GlStatePolicy.OWNED` and `GlStatePolicy.PRESERVE`. The owned profile measures Luma with exclusive context control. The preserve profile measures the state capture and restoration required when Luma shares a context with another renderer, as in Minecraft. Vulkan `complete` measurements attach a fence to the workload's real command submission rather than submitting a separate empty command buffer.
+Each workload runs warm-up samples before recording sorted measurements (`avg`, `median`, `min`, `max`, `p05`, `p95`, `spread`) across three metrics:
 
-Texture upload submission differs by backend: OpenGL performs the upload call immediately, while Vulkan records the upload for the next frame submission. Use `complete` when comparing end-to-end upload cost and `submit` when investigating CPU-side API overhead.
+- **`submit`**: CPU-side command recording and submission time (`ns/op`).
+- **`complete`**: End-to-end time including GPU completion synchronization (`ns/op`). On Vulkan, the completion fence is attached to the workload's real command buffer submission.
+- **`allocation`**: JVM bytes allocated on the submitting thread (`B/op`, measured via `ThreadMXBean`, zero agent overhead).
 
-The suite covers individual draw submissions, batched triangles, instanced triangles, texture creation/upload, and subimage upload. Geometry is rendered outside the clip region so the measurements focus on Luma and backend command paths rather than fragment fill rate.
+Workloads are grouped by `lifecycle`, `state`, `binding`, `draw` (including `DrawList` replay), `pass`, `upload`, and `resource`. Geometry is placed outside the clip volume so measurements focus on Luma and backend submission paths rather than fragment fill rate.
 
-These are local microbenchmarks, not FPS measurements. Compare runs on the same machine, driver, JVM, and power profile; use a profiler and a representative application scene before drawing architectural conclusions.
+## Notes
+
+- OpenGL runs both `GlStatePolicy.OWNED` (exclusive context control) and `GlStatePolicy.PRESERVE` (lazy state capture/restoration when sharing a context, as in Minecraft).
+- Texture uploads differ by backend: OpenGL uploads synchronously on the call, whereas Vulkan stages the upload for the next frame submission. Compare `complete` for end-to-end cost and `submit` for CPU-side overhead.
+- These are local microbenchmarks, not FPS measurements. Compare runs only on the same machine, driver, JVM, and power profile.
