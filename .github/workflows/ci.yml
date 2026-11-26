@@ -45,8 +45,8 @@ jobs:
             developer-tools/build/libs/*.jar
             shader-translator/build/libs/*.jar
             vulkan-blaze3d-wrapper/build/libs/*.jar
-            minecraft-render-library/build/libs/*.jar
-            minecraft-implementation/build/libs/*.jar
+            minecraft-render-library/*/build/libs/*.jar
+            minecraft-implementation/*/build/libs/*.jar
             standalone-app/build/libs/*.jar
           if-no-files-found: ignore
           retention-days: 14

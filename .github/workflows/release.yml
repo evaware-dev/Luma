@@ -72,7 +72,7 @@ jobs:
             developer-tools/build/libs/*.jar
             shader-translator/build/libs/*.jar
             vulkan-blaze3d-wrapper/build/libs/*.jar
-            minecraft-render-library/build/libs/*.jar
+            minecraft-render-library/*/build/libs/*.jar
 
       - name: Warm up JitPack build
         env:
