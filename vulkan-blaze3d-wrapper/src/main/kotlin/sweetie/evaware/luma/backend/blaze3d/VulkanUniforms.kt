@@ -5,91 +5,131 @@ import sweetie.evaware.luma.uniform.*
 
 data class UniformInfo(val name: String, val type: String)
 
-internal abstract class VulkanUniform(
-    val name: String,
-    val type: String,
-    val alignmentBytes: Int,
-    val sizeBytes: Int
-) {
-    private var cachedIndex = -1
+internal class VulkanUniformLayout(uniformInfos: List<UniformInfo>) {
+    private val names = Array(uniformInfos.size) { uniformInfos[it].name }
+    private val typeCodes = ByteArray(uniformInfos.size) { typeCodeFor(uniformInfos[it].type) }
+    private val cachedIndices = IntArray(uniformInfos.size) { -1 }
+    private val resolvedHandles = arrayOfNulls<UniformHandle>(uniformInfos.size)
+    private var resolvedUniforms: ShaderUniforms? = null
+    private var resolvedEntryCount: Int = -1
 
-    fun getHandle(uniforms: ShaderUniforms): UniformHandle? {
+    val isEmpty: Boolean get() = typeCodes.isEmpty()
+
+    val blockBytes: Int = run {
+        var bytes = 0
+        for (i in typeCodes.indices) {
+            val code = typeCodes[i]
+            val alignment = alignmentBytes(code)
+            val size = sizeBytes(code)
+            val rem = bytes % alignment
+            val aligned = if (rem == 0) bytes else Math.addExact(bytes, alignment - rem)
+            bytes = Math.addExact(aligned, size)
+        }
+        bytes
+    }
+
+    fun resolveHandles(uniforms: ShaderUniforms): Array<UniformHandle?> {
         val entries = uniforms.registry.entries
-        val cached = cachedIndex
-        if (cached in entries.indices && entries[cached].name == name) {
-            return entries[cached].handle
+        val entryCount = entries.size
+        if (resolvedUniforms === uniforms && resolvedEntryCount == entryCount) {
+            return resolvedHandles
         }
-        for (i in entries.indices) {
-            if (entries[i].name == name) {
-                cachedIndex = i
-                return entries[i].handle
+        for (i in names.indices) {
+            val name = names[i]
+            val cached = cachedIndices[i]
+            var found: UniformHandle? = null
+            if (cached in entries.indices && entries[cached].name == name) {
+                found = entries[cached].handle
+            } else {
+                for (j in entries.indices) {
+                    if (entries[j].name == name) {
+                        cachedIndices[i] = j
+                        found = entries[j].handle
+                        break
+                    }
+                }
             }
+            resolvedHandles[i] = found
         }
-        return null
+        resolvedUniforms = uniforms
+        resolvedEntryCount = entryCount
+        return resolvedHandles
     }
 
-    abstract fun write(writer: Std140Writer, handle: UniformHandle?)
-}
-
-internal class VulkanFloat1Uniform(name: String, type: String) :
-    VulkanUniform(name, type, Float.SIZE_BYTES, Float.SIZE_BYTES) {
-    override fun write(writer: Std140Writer, handle: UniformHandle?) {
-        val typed = handle as? Float1Uniform
-        writer.putFloat(typed?.value ?: 0f)
-    }
-}
-
-internal class VulkanFloat2Uniform(name: String, type: String) :
-    VulkanUniform(name, type, 2 * Float.SIZE_BYTES, 2 * Float.SIZE_BYTES) {
-    override fun write(writer: Std140Writer, handle: UniformHandle?) {
-        val typed = handle as? Float2Uniform
-        if (typed != null) {
-            writer.putVec2(typed.first, typed.second)
-        } else {
-            writer.putVec2(0f, 0f)
-        }
-    }
-}
-
-internal class VulkanFloat3Uniform(name: String, type: String) :
-    VulkanUniform(name, type, 4 * Float.SIZE_BYTES, 4 * Float.SIZE_BYTES) {
-    override fun write(writer: Std140Writer, handle: UniformHandle?) {
-        val typed = handle as? Float3Uniform
-        if (typed != null) {
-            writer.putVec3(typed.first, typed.second, typed.third)
-        } else {
-            writer.putVec3(0f, 0f, 0f)
-        }
-    }
-}
-
-internal class VulkanFloat4Uniform(name: String, type: String) :
-    VulkanUniform(name, type, 4 * Float.SIZE_BYTES, 4 * Float.SIZE_BYTES) {
-    override fun write(writer: Std140Writer, handle: UniformHandle?) {
-        val typed = handle as? Float4Uniform
-        if (typed != null) {
-            writer.putVec4(typed.first, typed.second, typed.third, typed.fourth)
-        } else {
-            writer.putVec4(0f, 0f, 0f, 0f)
+    fun writeAll(writer: Std140Writer, handles: Array<UniformHandle?>) {
+        val codes = typeCodes
+        for (i in codes.indices) {
+            val handle = handles[i]
+            when (codes[i]) {
+                TYPE_FLOAT1 -> {
+                    val h = handle as? Float1Uniform
+                    writer.putFloat(h?.value ?: 0f)
+                }
+                TYPE_FLOAT2 -> {
+                    val h = handle as? Float2Uniform
+                    if (h != null) writer.putVec2(h.first, h.second) else writer.putVec2(0f, 0f)
+                }
+                TYPE_FLOAT3 -> {
+                    val h = handle as? Float3Uniform
+                    if (h != null) writer.putVec3(h.first, h.second, h.third) else writer.putVec3(0f, 0f, 0f)
+                }
+                TYPE_FLOAT4 -> {
+                    val h = handle as? Float4Uniform
+                    if (h != null) writer.putVec4(h.first, h.second, h.third, h.fourth) else writer.putVec4(0f, 0f, 0f, 0f)
+                }
+                TYPE_INT1 -> {
+                    val h = handle as? Int1Uniform
+                    writer.putInt(h?.value ?: 0)
+                }
+                TYPE_MAT4 -> {
+                    val h = handle as? Mat4Uniform
+                    writer.putMat4(h?.value ?: IDENTITY_MATRIX)
+                }
+            }
+            if (handle != null) handle.isDirty = false
         }
     }
-}
 
-internal class VulkanInt1Uniform(name: String, type: String) :
-    VulkanUniform(name, type, Int.SIZE_BYTES, Int.SIZE_BYTES) {
-    override fun write(writer: Std140Writer, handle: UniformHandle?) {
-        val typed = handle as? Int1Uniform
-        writer.putInt(typed?.value ?: 0)
+    fun clearCache() {
+        resolvedHandles.fill(null)
+        resolvedUniforms = null
+        resolvedEntryCount = -1
     }
-}
 
-private val IDENTITY_MATRIX = Matrix4f()
+    private companion object {
+        private const val TYPE_FLOAT1: Byte = 0
+        private const val TYPE_FLOAT2: Byte = 1
+        private const val TYPE_FLOAT3: Byte = 2
+        private const val TYPE_FLOAT4: Byte = 3
+        private const val TYPE_INT1: Byte = 4
+        private const val TYPE_MAT4: Byte = 5
 
-internal class VulkanMat4Uniform(name: String, type: String) :
-    VulkanUniform(name, type, 4 * Float.SIZE_BYTES, 16 * Float.SIZE_BYTES) {
-    override fun write(writer: Std140Writer, handle: UniformHandle?) {
-        val typed = handle as? Mat4Uniform
-        writer.putMat4(typed?.value ?: IDENTITY_MATRIX)
+        private val IDENTITY_MATRIX = Matrix4f()
+
+        private fun typeCodeFor(type: String): Byte = when (type) {
+            "float" -> TYPE_FLOAT1
+            "vec2" -> TYPE_FLOAT2
+            "vec3" -> TYPE_FLOAT3
+            "vec4" -> TYPE_FLOAT4
+            "int" -> TYPE_INT1
+            "mat4" -> TYPE_MAT4
+            else -> error("Unsupported Vulkan uniform type: $type")
+        }
+
+        private fun alignmentBytes(code: Byte): Int = when (code) {
+            TYPE_FLOAT1, TYPE_INT1 -> Float.SIZE_BYTES
+            TYPE_FLOAT2 -> 2 * Float.SIZE_BYTES
+            TYPE_FLOAT3, TYPE_FLOAT4, TYPE_MAT4 -> 4 * Float.SIZE_BYTES
+            else -> error("Unknown uniform type code: $code")
+        }
+
+        private fun sizeBytes(code: Byte): Int = when (code) {
+            TYPE_FLOAT1, TYPE_INT1 -> Float.SIZE_BYTES
+            TYPE_FLOAT2 -> 2 * Float.SIZE_BYTES
+            TYPE_FLOAT3, TYPE_FLOAT4 -> 4 * Float.SIZE_BYTES
+            TYPE_MAT4 -> 16 * Float.SIZE_BYTES
+            else -> error("Unknown uniform type code: $code")
+        }
     }
 }
 

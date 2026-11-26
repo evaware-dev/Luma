@@ -81,43 +81,8 @@ class Program internal constructor(
     var uboCacheUniforms: ShaderUniforms? = null
     var uboCacheRevision: Int = 0
 
-    internal val vulkanUniforms = Array<VulkanUniform>(uniformInfos.size) { index ->
-        val info = uniformInfos[index]
-        when (info.type) {
-            "mat4" -> VulkanMat4Uniform(info.name, info.type)
-            "vec4" -> VulkanFloat4Uniform(info.name, info.type)
-            "vec3" -> VulkanFloat3Uniform(info.name, info.type)
-            "vec2" -> VulkanFloat2Uniform(info.name, info.type)
-            "float" -> VulkanFloat1Uniform(info.name, info.type)
-            "int" -> VulkanInt1Uniform(info.name, info.type)
-            else -> error("Unsupported Vulkan uniform type: ${info.type}")
-        }
-    }
-    private val resolvedUniformHandles = arrayOfNulls<UniformHandle>(vulkanUniforms.size)
-    private var resolvedHandlesUniforms: ShaderUniforms? = null
-    private var resolvedHandlesEntryCount: Int = -1
-
-    internal fun resolveUniformHandles(uniforms: ShaderUniforms): Array<UniformHandle?> {
-        val entryCount = uniforms.registry.entries.size
-        if (resolvedHandlesUniforms === uniforms && resolvedHandlesEntryCount == entryCount) {
-            return resolvedUniformHandles
-        }
-        for (index in vulkanUniforms.indices) {
-            resolvedUniformHandles[index] = vulkanUniforms[index].getHandle(uniforms)
-        }
-        resolvedHandlesUniforms = uniforms
-        resolvedHandlesEntryCount = entryCount
-        return resolvedUniformHandles
-    }
-
-    internal val uniformBlockBytes = run {
-        var bytes = 0
-        for (index in vulkanUniforms.indices) {
-            val uniform = vulkanUniforms[index]
-            bytes = Math.addExact(align(bytes, uniform.alignmentBytes), uniform.sizeBytes)
-        }
-        bytes
-    }
+    internal val uniformLayout = VulkanUniformLayout(uniformInfos)
+    internal val uniformBlockBytes: Int get() = uniformLayout.blockBytes
 
     internal fun getOrCreatePipeline(
         preset: VulkanPreset,
@@ -242,15 +207,8 @@ class Program internal constructor(
         uboCacheUniforms = null
         uboCacheFrameId = -1L
         uboCacheRevision = 0
-        resolvedUniformHandles.fill(null)
-        resolvedHandlesUniforms = null
-        resolvedHandlesEntryCount = -1
+        uniformLayout.clearCache()
         if (failure != null) throw failure
-    }
-
-    private fun align(value: Int, alignment: Int): Int {
-        val remainder = value % alignment
-        return if (remainder == 0) value else Math.addExact(value, alignment - remainder)
     }
 
     private fun parseAttributes(vertex: String): Map<Int, String> {

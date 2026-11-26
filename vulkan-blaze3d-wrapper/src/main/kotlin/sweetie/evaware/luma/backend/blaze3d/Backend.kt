@@ -708,8 +708,8 @@ class Backend(
     }
 
     private fun prepareUniforms(prog: Program, uniforms: ShaderUniforms): Int {
-        val vulkanUniforms = prog.vulkanUniforms
-        if (vulkanUniforms.isEmpty()) return 0
+        val uniformLayout = prog.uniformLayout
+        if (uniformLayout.isEmpty) return 0
 
         val sameUniforms = prog.uboCacheUniforms === uniforms
         val currentRevision = uniforms.registry.revision
@@ -717,7 +717,7 @@ class Backend(
             return prog.uboCacheBytes
         }
 
-        val handles = prog.resolveUniformHandles(uniforms)
+        val handles = uniformLayout.resolveHandles(uniforms)
         var anyDirty = !(sameUniforms && prog.uboCacheFrameId == frameId)
         if (!anyDirty) {
             for (i in handles.indices) {
@@ -735,15 +735,11 @@ class Backend(
         }
 
         val uboOffset = uboStaging.beginAlignedWrite(
-            maxOf(config.uniformScratchBytes, prog.uniformBlockBytes),
+            maxOf(config.uniformScratchBytes, uniformLayout.blockBytes),
             uniformOffsetAlignment
         )
         uniformWriter.begin(uboStaging.buffer)
-        for (i in vulkanUniforms.indices) {
-            val handle = handles[i]
-            vulkanUniforms[i].write(uniformWriter, handle)
-            if (handle != null) handle.isDirty = false
-        }
+        uniformLayout.writeAll(uniformWriter, handles)
         val uboBytes = uniformWriter.size()
         prog.uboCacheOffset = uboOffset
         prog.uboCacheBytes = uboBytes
