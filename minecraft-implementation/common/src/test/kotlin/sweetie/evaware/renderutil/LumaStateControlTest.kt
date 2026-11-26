@@ -1,7 +1,6 @@
 package sweetie.evaware.renderutil
 
 import java.awt.image.BufferedImage
-import java.nio.FloatBuffer
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -46,7 +45,8 @@ class LumaStateControlTest {
         override fun createTexture(image: BufferedImage, mipmap: Boolean, format: TextureFormat, sampler: SamplerState): TextureHandle = error("mock")
         override fun updateTexture(texture: TextureHandle, x: Int, y: Int, image: BufferedImage) {}
         override fun bindTexture(texture: TextureHandle, unit: Int) {}
-        override fun draw(program: ProgramHandle, vertices: FloatBuffer, vertexCount: Int, uniforms: ShaderUniforms, primitiveType: PrimitiveType) {}
+        override fun beginVertices(program: ProgramHandle, vertexCount: Int, cursor: sweetie.evaware.luma.vertex.VertexCursor) {}
+        override fun endVertices(program: ProgramHandle, cursor: sweetie.evaware.luma.vertex.VertexCursor, vertexCount: Int, uniforms: ShaderUniforms, primitiveType: PrimitiveType) {}
         override fun createRenderTarget(width: Int, height: Int, useDepth: Boolean, format: RenderTargetFormat, sampler: SamplerState, useStencil: Boolean): RenderTargetHandle = error("mock")
         override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) {}
         override fun endRenderTarget() {}

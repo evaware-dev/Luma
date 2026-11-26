@@ -21,78 +21,132 @@ class Float1Uniform internal constructor() : UniformHandle() {
                 isDirty = true
             }
         }
+
+    fun set(v: Float) {
+        if (value != v) {
+            value = v
+        }
+    }
 }
 
 class Float2Uniform internal constructor() : UniformHandle() {
-    var first = 0f
+    private var _first = 0f
+    private var _second = 0f
+
+    var first: Float
+        get() = _first
         set(v) {
-            if (field != v) {
-                field = v
+            if (_first != v) {
+                _first = v
                 isDirty = true
             }
         }
-    var second = 0f
+    var second: Float
+        get() = _second
         set(v) {
-            if (field != v) {
-                field = v
+            if (_second != v) {
+                _second = v
                 isDirty = true
             }
         }
+
+    fun set(first: Float, second: Float) {
+        if (_first != first || _second != second) {
+            _first = first
+            _second = second
+            isDirty = true
+        }
+    }
 }
 
 class Float3Uniform internal constructor() : UniformHandle() {
-    var first = 0f
+    private var _first = 0f
+    private var _second = 0f
+    private var _third = 0f
+
+    var first: Float
+        get() = _first
         set(v) {
-            if (field != v) {
-                field = v
+            if (_first != v) {
+                _first = v
                 isDirty = true
             }
         }
-    var second = 0f
+    var second: Float
+        get() = _second
         set(v) {
-            if (field != v) {
-                field = v
+            if (_second != v) {
+                _second = v
                 isDirty = true
             }
         }
-    var third = 0f
+    var third: Float
+        get() = _third
         set(v) {
-            if (field != v) {
-                field = v
+            if (_third != v) {
+                _third = v
                 isDirty = true
             }
         }
+
+    fun set(first: Float, second: Float, third: Float) {
+        if (_first != first || _second != second || _third != third) {
+            _first = first
+            _second = second
+            _third = third
+            isDirty = true
+        }
+    }
 }
 
 class Float4Uniform internal constructor() : UniformHandle() {
-    var first = 0f
+    private var _first = 0f
+    private var _second = 0f
+    private var _third = 0f
+    private var _fourth = 0f
+
+    var first: Float
+        get() = _first
         set(v) {
-            if (field != v) {
-                field = v
+            if (_first != v) {
+                _first = v
                 isDirty = true
             }
         }
-    var second = 0f
+    var second: Float
+        get() = _second
         set(v) {
-            if (field != v) {
-                field = v
+            if (_second != v) {
+                _second = v
                 isDirty = true
             }
         }
-    var third = 0f
+    var third: Float
+        get() = _third
         set(v) {
-            if (field != v) {
-                field = v
+            if (_third != v) {
+                _third = v
                 isDirty = true
             }
         }
-    var fourth = 0f
+    var fourth: Float
+        get() = _fourth
         set(v) {
-            if (field != v) {
-                field = v
+            if (_fourth != v) {
+                _fourth = v
                 isDirty = true
             }
         }
+
+    fun set(first: Float, second: Float, third: Float, fourth: Float) {
+        if (_first != first || _second != second || _third != third || _fourth != fourth) {
+            _first = first
+            _second = second
+            _third = third
+            _fourth = fourth
+            isDirty = true
+        }
+    }
 }
 
 class Int1Uniform internal constructor() : UniformHandle() {
@@ -103,6 +157,12 @@ class Int1Uniform internal constructor() : UniformHandle() {
                 isDirty = true
             }
         }
+
+    fun set(v: Int) {
+        if (value != v) {
+            value = v
+        }
+    }
 }
 
 class Mat4Uniform internal constructor() : UniformHandle() {

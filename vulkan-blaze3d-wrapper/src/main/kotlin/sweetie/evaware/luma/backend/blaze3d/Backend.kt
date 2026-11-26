@@ -1,10 +1,7 @@
 package sweetie.evaware.luma.backend.blaze3d
 
 import java.awt.image.BufferedImage
-import java.lang.foreign.MemorySegment
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.FloatBuffer
 import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.LumaNames
 import sweetie.evaware.luma.api.*
@@ -16,6 +13,7 @@ import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.shader.translator.ShaderSamplerInfo
 import sweetie.evaware.luma.uniform.ShaderUniforms
 import sweetie.evaware.luma.vertex.ShaderVertType
+import sweetie.evaware.luma.vertex.VertexCursor
 import sweetie.evaware.luma.vertex.VertexInputLayout
 import sweetie.evaware.luma.vertex.VertexLayout
 
@@ -62,9 +60,6 @@ class Backend(
     private val textureUploads = TextureUploadQueue(config.maxPooledUploadBytes, retirement)
     private val bufferUploads = BufferUploadQueue(config.initialBufferUploadBytes)
     private var blitProgram: Program? = null
-    private var blitVertexScratch: ByteBuffer? =
-        MemoryUtil.memAlloc(RenderPassEncoder.BLIT_QUAD_BYTES.toInt()).order(ByteOrder.nativeOrder())
-    private var blitVertexSegment: MemorySegment? = MemorySegment.ofBuffer(blitVertexScratch!!)
     private var closed = false
     private val passEncoder = RenderPassEncoder(vertexBuffer, uboBuffer, samplerCache, ::getOrCreateBlitProgram)
 
@@ -424,19 +419,19 @@ class Backend(
             val u1 = (srcX + srcWidth).toFloat() / vkSource.width
             val v0 = srcY.toFloat() / vkSource.height
             val v1 = (srcY + srcHeight).toFloat() / vkSource.height
-            val buf = checkNotNull(blitVertexScratch) { "Backend is closed" }
-            buf.putFloat(0, x0).putFloat(4, y0).putFloat(8, u0).putFloat(12, v0)
-            buf.putFloat(16, x1).putFloat(20, y0).putFloat(24, u1).putFloat(28, v0)
-            buf.putFloat(32, x1).putFloat(36, y1).putFloat(40, u1).putFloat(44, v1)
-            buf.putFloat(48, x0).putFloat(52, y0).putFloat(56, u0).putFloat(60, v0)
-            buf.putFloat(64, x1).putFloat(68, y1).putFloat(72, u1).putFloat(76, v1)
-            buf.putFloat(80, x0).putFloat(84, y1).putFloat(88, u0).putFloat(92, v1)
-            vertexStaging.appendSegmentAligned(
-                checkNotNull(blitVertexSegment) { "Backend is closed" },
-                0L,
+            val offset = vertexStaging.beginAlignedWrite(
                 RenderPassEncoder.BLIT_QUAD_BYTES.toInt(),
                 RenderPassEncoder.BLIT_QUAD_STRIDE_BYTES
             )
+            val addr = vertexStaging.baseAddress + offset
+            MemoryUtil.memPutFloat(addr, x0); MemoryUtil.memPutFloat(addr + 4L, y0); MemoryUtil.memPutFloat(addr + 8L, u0); MemoryUtil.memPutFloat(addr + 12L, v0)
+            MemoryUtil.memPutFloat(addr + 16L, x1); MemoryUtil.memPutFloat(addr + 20L, y0); MemoryUtil.memPutFloat(addr + 24L, u1); MemoryUtil.memPutFloat(addr + 28L, v0)
+            MemoryUtil.memPutFloat(addr + 32L, x1); MemoryUtil.memPutFloat(addr + 36L, y1); MemoryUtil.memPutFloat(addr + 40L, u1); MemoryUtil.memPutFloat(addr + 44L, v1)
+            MemoryUtil.memPutFloat(addr + 48L, x0); MemoryUtil.memPutFloat(addr + 52L, y0); MemoryUtil.memPutFloat(addr + 56L, u0); MemoryUtil.memPutFloat(addr + 60L, v0)
+            MemoryUtil.memPutFloat(addr + 64L, x1); MemoryUtil.memPutFloat(addr + 68L, y1); MemoryUtil.memPutFloat(addr + 72L, u1); MemoryUtil.memPutFloat(addr + 76L, v1)
+            MemoryUtil.memPutFloat(addr + 80L, x0); MemoryUtil.memPutFloat(addr + 84L, y1); MemoryUtil.memPutFloat(addr + 88L, u0); MemoryUtil.memPutFloat(addr + 92L, v1)
+            vertexStaging.commitDirect(offset, RenderPassEncoder.BLIT_QUAD_BYTES.toInt())
+            offset
         }
 
         recorder.recordBlit(
@@ -531,22 +526,41 @@ class Backend(
         pipelineGeneration++
     }
 
-    override fun draw(
+    override fun beginVertices(
         program: ProgramHandle,
-        vertices: FloatBuffer,
         vertexCount: Int,
-        uniforms: ShaderUniforms,
-        primitiveType: PrimitiveType
+        cursor: VertexCursor
     ) {
         val prog = program as Program
         prog.requireOpen()
         val strideBytes = prog.strideBytes
-        val vertexBytes = vertexCount * strideBytes
-        val vertexOffset = vertexStaging.appendFloatsAligned(
-            vertices,
-            vertexBytes,
-            strideBytes
-        )
+        val bytes = Math.multiplyExact(vertexCount, strideBytes)
+        vertexStaging.beginDirectAligned(bytes, strideBytes, cursor)
+    }
+
+    override fun endVertices(
+        program: ProgramHandle,
+        cursor: VertexCursor,
+        vertexCount: Int,
+        uniforms: ShaderUniforms,
+        primitiveType: PrimitiveType
+    ) {
+        if (vertexCount <= 0) return
+        val prog = program as Program
+        val vertexOffset = cursor.token
+        val vertexBytes = vertexCount * prog.strideBytes
+        vertexStaging.commitDirect(vertexOffset, vertexBytes)
+        recordImmediateDraw(prog, vertexOffset, vertexBytes, vertexCount, uniforms, primitiveType)
+    }
+
+    private fun recordImmediateDraw(
+        prog: Program,
+        vertexOffset: Long,
+        vertexBytes: Int,
+        vertexCount: Int,
+        uniforms: ShaderUniforms,
+        primitiveType: PrimitiveType
+    ) {
         val uboBytes = prepareUniforms(prog, uniforms)
         val uboOffset = if (uboBytes > 0) prog.uboCacheOffset else 0L
         val uboBytesLong = uboBytes.toLong()
@@ -788,11 +802,6 @@ class Backend(
         targetStackDepth = 0
         blitProgram?.close()
         blitProgram = null
-        blitVertexSegment = null
-        blitVertexScratch?.let {
-            blitVertexScratch = null
-            MemoryUtil.memFree(it)
-        }
         textureUploads.close()
         bufferUploads.close()
         vertexStaging.close()

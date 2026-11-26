@@ -2,10 +2,10 @@ package sweetie.evaware.luma.tools
 
 import java.awt.image.BufferedImage
 import java.nio.ByteBuffer
-import java.nio.FloatBuffer
 import sweetie.evaware.luma.api.*
 import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.uniform.ShaderUniforms
+import sweetie.evaware.luma.vertex.VertexCursor
 import sweetie.evaware.luma.vertex.VertexInputLayout
 import sweetie.evaware.luma.vertex.VertexLayout
 
@@ -225,15 +225,25 @@ class StatsBackend(
 
     override fun bindIndexBuffer(buffer: IndexBufferHandle) = delegate.bindIndexBuffer(buffer)
 
-    override fun draw(
+    override fun beginVertices(
         program: ProgramHandle,
-        vertices: FloatBuffer,
+        vertexCount: Int,
+        cursor: VertexCursor
+    ) {
+        val tracked = program.tracked()
+        delegate.beginVertices(tracked.delegate, vertexCount, cursor)
+    }
+
+    override fun endVertices(
+        program: ProgramHandle,
+        cursor: VertexCursor,
         vertexCount: Int,
         uniforms: ShaderUniforms,
         primitiveType: PrimitiveType
     ) {
-        val tracked = (program as? TrackedProgram)?.takeIf { it.owner === this }
-            ?: throw IllegalArgumentException("Program was not created by this StatsBackend")
+        val tracked = program.tracked()
+        delegate.endVertices(tracked.delegate, cursor, vertexCount, uniforms, primitiveType)
+        if (vertexCount <= 0) return
         val layout = requireNotNull(tracked.layout) { "Streaming draw requires a single vertex layout" }
         val instances = if (layout.instanced) vertexCount.toLong() else 0L
         val submittedVertices = if (layout.instanced) {
@@ -242,8 +252,6 @@ class StatsBackend(
             vertexCount.toLong()
         }
         val primitives = primitiveCount(primitiveType, submittedVertices)
-        delegate.draw(tracked.delegate, vertices, vertexCount, uniforms, primitiveType)
-
         val programChanged = lastDrawProgram !== tracked
         lastDrawProgram = tracked
         if (frameActive) currentFrame.draw(submittedVertices, instances, primitives, programChanged)
@@ -457,6 +465,7 @@ class StatsBackend(
         val delegate: ProgramHandle,
         val layout: VertexLayout?
     ) : ProgramHandle {
+        override val vertexStrideBytes: Int get() = delegate.vertexStrideBytes
         override fun close() = delegate.close()
     }
 }

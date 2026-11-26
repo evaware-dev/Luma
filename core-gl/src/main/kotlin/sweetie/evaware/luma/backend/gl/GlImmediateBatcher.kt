@@ -1,6 +1,5 @@
 package sweetie.evaware.luma.backend.gl
 
-import java.nio.FloatBuffer
 import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL32
 import sweetie.evaware.luma.api.PrimitiveType
@@ -17,36 +16,23 @@ internal class GlImmediateBatcher {
     val hasPending: Boolean
         get() = pendingProgram != null
 
-    inline fun tryAppend(
+    fun tryAppend(
         glProgram: Program,
         primitiveType: PrimitiveType,
         uniforms: ShaderUniforms,
-        vertices: FloatBuffer,
-        vertexCount: Int,
-        upload: (GlVertexBuffer, FloatBuffer) -> Int,
-        flushCurrent: () -> Unit
+        baseVertex: Int,
+        vertexCount: Int
     ): Boolean {
-        val vb = glProgram.vertexBuffer
-        val floatCount = vertices.remaining()
         if (
             pendingProgram !== glProgram ||
             pendingPrimitive != primitiveType ||
+            baseVertex != pendingBaseVertex + pendingVertexCount ||
             glProgram.hasPendingUniformUpload(uniforms) ||
-            floatCount != vertexCount * vb.layout.strideFloats ||
-            (primitiveType == PrimitiveType.QUADS && ((vertexCount and 3) != 0 || (pendingVertexCount and 3) != 0)) ||
-            !vb.canAppendContiguously(floatCount)
+            (primitiveType == PrimitiveType.QUADS && ((vertexCount and 3) != 0 || (pendingVertexCount and 3) != 0))
         ) {
             return false
         }
-
-        val baseVertex = upload(vb, vertices)
-        if (baseVertex == pendingBaseVertex + pendingVertexCount) {
-            pendingVertexCount += vertexCount
-            return true
-        }
-        // Defensive fallback if offset was not contiguous
-        flushCurrent()
-        recordPending(glProgram, primitiveType, baseVertex, vertexCount, vb.layout.instanced)
+        pendingVertexCount += vertexCount
         return true
     }
 

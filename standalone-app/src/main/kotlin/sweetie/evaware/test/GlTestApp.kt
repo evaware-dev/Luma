@@ -129,11 +129,11 @@ open class GlTestApp : BackendTestApp(960, 540, "Luma OpenGL") {
 
     private fun drawTriangle() {
         shader.attach()
-        shader.vertices
-            .vec2(-0.75f, -0.75f)
-            .vec2(0.75f, -0.75f)
-            .vec2(0f, 0.75f)
-        shader.draw()
+        shader.draw(3) {
+            vec2(-0.75f, -0.75f)
+            vec2(0.75f, -0.75f)
+            vec2(0f, 0.75f)
+        }
     }
 
     companion object {

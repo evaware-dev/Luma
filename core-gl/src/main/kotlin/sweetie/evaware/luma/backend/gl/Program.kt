@@ -17,6 +17,7 @@ class Program(
 
     val layout = layouts.layout(0)
     val vertexBuffer = GlVertexBuffer(layout)
+    override val vertexStrideBytes: Int get() = vertexBuffer.strideBytes
     val directVertexArray = GL30.glGenVertexArrays()
     internal val configuredBuffers = arrayOfNulls<GlVertexBufferHandle>(layouts.size())
     internal val configuredBufferOffsets = LongArray(layouts.size()) { -1L }
@@ -32,9 +33,6 @@ class Program(
             GL20.glGetUniformLocation(programId, name)
         }
     }
-
-    fun getPreparedUniforms(uniforms: ShaderUniforms): List<PreparedGlUniform> =
-        uniformCache.getPreparedUniforms(uniforms)
 
     internal fun hasPendingUniformUpload(uniforms: ShaderUniforms): Boolean =
         !uniformCache.isClean(uniforms)

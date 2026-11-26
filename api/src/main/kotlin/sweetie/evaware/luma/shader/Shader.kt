@@ -5,7 +5,7 @@ import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.ProgramHandle
 import sweetie.evaware.luma.resource.GlResources
 import sweetie.evaware.luma.shader.translator.ShaderTranslator
-import sweetie.evaware.luma.vertex.PreparedVertices
+import sweetie.evaware.luma.vertex.VertexCursor
 
 open class Shader(
     private val fragmentPath: String,
@@ -15,10 +15,14 @@ open class Shader(
     val vertices get() = inputs.vertices
     val uniforms get() = inputs.uniforms
 
-    private var drawMode = PrimitiveType.TRIANGLES
+    @PublishedApi
+    internal var drawMode = PrimitiveType.TRIANGLES
     private var translator: ShaderTranslator? = null
     private var programHandle: ProgramHandle? = null
     private var loaded = false
+
+    @PublishedApi
+    internal val cursor = VertexCursor()
 
     fun drawMode(mode: PrimitiveType) = apply {
         this.drawMode = mode
@@ -58,44 +62,51 @@ open class Shader(
         programHandle?.let { Luma.backend.bindProgram(it) }
     }
 
-    fun prepareVertices(initialVertexCapacity: Int = 0): PreparedVertices {
-        inputs.requireConfigured()
-        return PreparedVertices(vertices.layout.snapshot(), initialVertexCapacity)
+    /**
+     * Zero-copy immediate vertex write & draw.
+     *
+     * Reserves space for up to [vertexCount] vertices directly in backend GPU or staging memory,
+     * invokes [block] with a reusable [VertexCursor] receiver, and submits the exact number of
+     * vertices written.
+     */
+    inline fun draw(vertexCount: Int, block: VertexCursor.() -> Unit): Int {
+        if (vertexCount <= 0) return 0
+        val handle = prepareDraw()
+        val backend = Luma.backend
+        val c = cursor
+        backend.beginVertices(handle, vertexCount, c)
+        var committed = false
+        return try {
+            c.block()
+            val actualVertices = c.finishVertices()
+            committed = true
+            val token = c.token
+            c.reset()
+            c.token = token
+            try {
+                backend.endVertices(handle, c, actualVertices, uniforms, drawMode)
+            } finally {
+                c.token = 0L
+            }
+            actualVertices
+        } finally {
+            if (!committed) {
+                val token = c.token
+                c.reset()
+                c.token = token
+                try {
+                    backend.endVertices(handle, c, 0, uniforms, drawMode)
+                } finally {
+                    c.token = 0L
+                }
+            }
+        }
     }
 
-    fun draw(): Int {
-        val stream = vertices.stream
-        if (!stream.hasVertices()) return 0
-
-        val currentHandle = programHandle ?: return 0
-
-        Luma.backend.draw(
-            program = currentHandle,
-            vertices = stream.flipForUpload(),
-            vertexCount = stream.vertexCount,
-            uniforms = uniforms,
-            primitiveType = drawMode
-        )
-
-        val count = stream.vertexCount
-        stream.clear()
-        return count
-    }
-
-    fun draw(prepared: PreparedVertices): Int {
-        prepared.requireDrawable(vertices.layout)
-        val stream = prepared.stream
-        if (!stream.hasVertices()) return 0
-
-        val currentHandle = programHandle ?: return 0
-        Luma.backend.draw(
-            program = currentHandle,
-            vertices = stream.flipForUpload(),
-            vertexCount = stream.vertexCount,
-            uniforms = uniforms,
-            primitiveType = drawMode
-        )
-        return stream.vertexCount
+    @PublishedApi
+    internal fun prepareDraw(): ProgramHandle {
+        if (!loaded) load()
+        return checkNotNull(programHandle) { "Shader program is not loaded" }
     }
 
     override fun close() {
@@ -105,7 +116,6 @@ open class Shader(
             loaded = false
             GlResources.untrack(this)
         }
-        inputs.close()
     }
 
     private fun loadResource(path: String): String {

@@ -21,39 +21,19 @@ with(shader) {
 
 shader.load()
 
-shader.vertices
-    .vec2(x, y)
-    .vec4(r, g, b, a)
-
 shader.attach()
 shader.uniforms.mat4(uMatrix, matrix)
-shader.draw()
+shader.draw(3) {
+    vec2(x0, y0); vec4(r, g, b, a)
+    vec2(x1, y1); vec4(r, g, b, a)
+    vec2(x2, y2); vec4(r, g, b, a)
+}
 ```
 
 1. Construct a `Shader` with fragment/vertex resource paths and optional `drawMode(...)`.
 2. Declare the vertex layout (`vertices.float(count, layoutPos)`) and uniforms (`uniforms.mat4("name")`).
 3. Call `load()` to translate sources, collect `ShaderReflection`, and create the backend program.
-4. Push per-vertex attributes through `vertices`, call `attach()`, set uniforms, and call `draw()`.
-
-## Preparing Vertices Off the Render Thread
-
-`PreparedVertices` owns a detached native vertex buffer. A worker thread may populate it and call `seal()` to publish the packet to the render thread (caller provides the inter-thread handoff synchronization).
-
-```kotlin
-val prepared = shader.prepareVertices(initialVertexCapacity = 4096)
-
-workerExecutor.submit {
-    prepared
-        .vec2(x0, y0).vec4(r, g, b, a)
-        .vec2(x1, y1).vec4(r, g, b, a)
-        .seal()
-}
-
-shader.attach()
-shader.draw(prepared)
-```
-
-Drawing does not clear `PreparedVertices`, so it can be submitted across frames. Call `clear()` before rebuilding and `close()` to release its native buffer.
+4. Call `attach()`, set uniforms, and invoke `draw(vertexCount) { ... }` to write vertex attributes directly into mapped GPU or staging memory with zero intermediate copies.
 
 ## Hardware Instancing
 
@@ -231,12 +211,14 @@ drawList.record {
         Luma.enableBlend()
         shader.attach()
         shader.uniforms.vec4(uColor, 1f, 0f, 0f, 1f)
-        emitQuad(shader)
-        shader.draw()
+        shader.draw(6) {
+            emitQuad()
+        }
 
         shader.uniforms.vec4(uColor, 0f, 1f, 0f, 1f)
-        emitSecondQuad(shader)
-        shader.draw()
+        shader.draw(6) {
+            emitSecondQuad()
+        }
     }
 }
 

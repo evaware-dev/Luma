@@ -1,8 +1,8 @@
 package sweetie.evaware.luma.backend.gl
 
 import java.lang.foreign.MemorySegment
-import java.lang.foreign.ValueLayout
-import java.nio.FloatBuffer
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import org.lwjgl.opengl.ARBBaseInstance
 import org.lwjgl.opengl.ARBBufferStorage
 import org.lwjgl.opengl.GL
@@ -16,6 +16,7 @@ import org.lwjgl.opengl.GL33
 import org.lwjgl.opengl.GL42
 import org.lwjgl.opengl.GL44
 import org.lwjgl.system.MemoryUtil
+import sweetie.evaware.luma.vertex.VertexCursor
 import sweetie.evaware.luma.vertex.VertexLayout
 
 class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
@@ -30,18 +31,23 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
     private val supportsPersistent = useGl44Storage || caps.GL_ARB_buffer_storage
     private val useGl42BaseInstance = caps.OpenGL42
     internal val supportsBaseInstance = useGl42BaseInstance || caps.GL_ARB_base_instance
-    private val strideBytes = (layout.strideFloats * Float.SIZE_BYTES).coerceAtLeast(Float.SIZE_BYTES)
+    internal val strideBytes = (layout.strideFloats * Float.SIZE_BYTES).coerceAtLeast(Float.SIZE_BYTES)
     private val canUseRingOffsets = !layout.instanced || supportsBaseInstance
 
     private var persistentMapped = false
     private var persistentDisabled = false
+    private var mappedAddress = 0L
     private var mappedSegment: MemorySegment? = null
-    private var lastSrcBuffer: FloatBuffer? = null
-    private var lastSrcSegment: MemorySegment? = null
     private var regionBytes = 0
     private var currentRegion = 0
     private var regionWriteOffsetBytes = 0
     private val regionFences = LongArray(RING_REGIONS)
+
+    // Reusable off-heap scratch buffer used only when persistent coherent mapping is unavailable
+    private var fallbackBuffer: ByteBuffer? = null
+    private var fallbackSegment: MemorySegment? = null
+    private var fallbackAddress = 0L
+    private var fallbackCapacity = 0
 
     private var quadIndexBuffer = 0
     private var quadIndexCapacity = 0
@@ -59,52 +65,65 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
         }
     }
 
-    fun bind() {
-        GL30.glBindVertexArray(vao)
-        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo)
-    }
-
-    fun upload(vertices: FloatBuffer) {
-        uploadStreaming(vertices) {}
-    }
-
-    internal fun canAppendContiguously(floatCount: Int): Boolean {
-        if (floatCount <= 0) return true
+    internal fun canAppendContiguouslyBytes(bytes: Int): Boolean {
+        if (bytes <= 0) return true
         if (regionBytes == 0) return false
-        val alignedBytes = alignToStride(floatCount * Float.SIZE_BYTES)
         if (!canUseRingOffsets && regionWriteOffsetBytes > 0) return false
-        return regionWriteOffsetBytes + alignedBytes <= regionBytes
+        return regionWriteOffsetBytes + bytes <= regionBytes
     }
 
-    internal inline fun uploadStreaming(
-        vertices: FloatBuffer,
+    internal inline fun beginVertices(
+        vertexCount: Int,
+        cursor: VertexCursor,
         onArrayBufferBound: (Int) -> Unit
-    ): Int {
-        val floatCount = vertices.remaining()
-        if (floatCount <= 0) return 0
-        val bytes = floatCount * Float.SIZE_BYTES
-        val alignedBytes = alignToStride(bytes)
-
+    ) {
+        val bytes = Math.multiplyExact(vertexCount, strideBytes)
         if (supportsPersistent && canUseRingOffsets && !persistentDisabled) {
-            if (!persistentMapped || alignedBytes > regionBytes) {
-                if (allocatePersistentRing(alignedBytes, onArrayBufferBound)) {
-                    // Ready in persistentMapped state at region 0, offset 0
-                } else {
+            if (!persistentMapped || bytes > regionBytes) {
+                if (!allocatePersistentRing(bytes, onArrayBufferBound)) {
                     persistentDisabled = true
                 }
             }
             if (persistentMapped) {
-                if (regionWriteOffsetBytes + alignedBytes > regionBytes) {
+                if (regionWriteOffsetBytes + bytes > regionBytes) {
                     advancePersistentRegion()
                 }
                 val absoluteOffsetBytes = currentRegion.toLong() * regionBytes + regionWriteOffsetBytes
-                copyFloatsToSegment(vertices, floatCount, mappedSegment!!, absoluteOffsetBytes)
-                regionWriteOffsetBytes += alignedBytes
-                return (absoluteOffsetBytes / strideBytes).toInt()
+                cursor.init(
+                    baseAddress = mappedAddress + absoluteOffsetBytes,
+                    byteLength = bytes.toLong(),
+                    strideBytes = strideBytes,
+                    token = absoluteOffsetBytes / strideBytes,
+                    segment = mappedSegment,
+                    segmentBaseAddress = mappedAddress
+                )
+                return
             }
         }
 
-        return uploadFallbackRing(vertices, floatCount, bytes, alignedBytes, onArrayBufferBound)
+        ensureFallbackCapacity(bytes)
+        cursor.init(
+            baseAddress = fallbackAddress,
+            byteLength = bytes.toLong(),
+            strideBytes = strideBytes,
+            token = FALLBACK_TOKEN,
+            segment = fallbackSegment,
+            segmentBaseAddress = fallbackAddress
+        )
+    }
+
+    internal inline fun endVertices(
+        vertexCount: Int,
+        cursor: VertexCursor,
+        onArrayBufferBound: (Int) -> Unit
+    ): Int {
+        val bytes = vertexCount * strideBytes
+        val token = cursor.token
+        if (token != FALLBACK_TOKEN) {
+            regionWriteOffsetBytes += bytes
+            return token.toInt()
+        }
+        return uploadFallbackScratch(bytes, onArrayBufferBound)
     }
 
     internal fun drawInstancedBaseInstance(baseVertexCount: Int, instanceCount: Int, baseInstance: Int) {
@@ -153,7 +172,6 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
                 onArrayBufferBound(vbo)
                 GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo)
             } else {
-                // Buffer storage is immutable; replace with a fresh mutable VBO for the fallback path
                 val replacementVbo = GL15.glGenBuffers()
                 onArrayBufferBound(replacementVbo)
                 GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, replacementVbo)
@@ -172,6 +190,7 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
             GL15.glDeleteBuffers(previousVbo)
         }
 
+        mappedAddress = MemoryUtil.memAddress(mapped)
         mappedSegment = MemorySegment.ofBuffer(mapped)
         regionBytes = targetRegionBytes
         capacityFloats = (totalBytes / Float.SIZE_BYTES).toInt()
@@ -179,6 +198,46 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
         regionWriteOffsetBytes = 0
         persistentMapped = true
         return true
+    }
+
+    private fun ensureFallbackCapacity(requiredBytes: Int) {
+        if (requiredBytes <= fallbackCapacity && fallbackBuffer != null) return
+        var newCap = maxOf(fallbackCapacity, INITIAL_FALLBACK_BYTES)
+        while (newCap < requiredBytes) {
+            newCap = Math.multiplyExact(newCap, 2)
+        }
+        fallbackBuffer?.let { MemoryUtil.memFree(it) }
+        val allocated = MemoryUtil.memAlloc(newCap).order(ByteOrder.nativeOrder())
+        fallbackBuffer = allocated
+        fallbackSegment = MemorySegment.ofBuffer(allocated)
+        fallbackAddress = MemoryUtil.memAddress(allocated)
+        fallbackCapacity = newCap
+    }
+
+    private inline fun uploadFallbackScratch(
+        bytes: Int,
+        onArrayBufferBound: (Int) -> Unit
+    ): Int {
+        val scratch = checkNotNull(fallbackBuffer) { "Fallback vertex scratch buffer is not allocated" }
+        onArrayBufferBound(vbo)
+        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo)
+
+        if (regionBytes == 0 || bytes > regionBytes) {
+            regionBytes = computeRegionBytes(bytes)
+            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, regionBytes.toLong(), GL15.GL_STREAM_DRAW)
+            capacityFloats = regionBytes / Float.SIZE_BYTES
+            regionWriteOffsetBytes = 0
+        } else if (!canUseRingOffsets || regionWriteOffsetBytes + bytes > regionBytes) {
+            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, regionBytes.toLong(), GL15.GL_STREAM_DRAW)
+            regionWriteOffsetBytes = 0
+        }
+
+        val writeOffset = regionWriteOffsetBytes
+        scratch.position(0).limit(bytes)
+        GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, writeOffset.toLong(), scratch)
+        scratch.clear()
+        regionWriteOffsetBytes = writeOffset + bytes
+        return writeOffset / strideBytes
     }
 
     private fun advancePersistentRegion() {
@@ -210,81 +269,6 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
                 regionFences[i] = 0L
             }
         }
-    }
-
-    private inline fun uploadFallbackRing(
-        vertices: FloatBuffer,
-        floatCount: Int,
-        bytes: Int,
-        alignedBytes: Int,
-        onArrayBufferBound: (Int) -> Unit
-    ): Int {
-        onArrayBufferBound(vbo)
-        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo)
-
-        if (regionBytes == 0 || alignedBytes > regionBytes) {
-            regionBytes = computeRegionBytes(alignedBytes)
-            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, regionBytes.toLong(), GL15.GL_STREAM_DRAW)
-            capacityFloats = regionBytes / Float.SIZE_BYTES
-            regionWriteOffsetBytes = 0
-        } else if (!canUseRingOffsets || regionWriteOffsetBytes + alignedBytes > regionBytes) {
-            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, regionBytes.toLong(), GL15.GL_STREAM_DRAW)
-            regionWriteOffsetBytes = 0
-        }
-
-        val writeOffset = regionWriteOffsetBytes
-        val mapped = GL30.glMapBufferRange(
-            GL15.GL_ARRAY_BUFFER,
-            writeOffset.toLong(),
-            bytes.toLong(),
-            GL30.GL_MAP_WRITE_BIT or GL30.GL_MAP_UNSYNCHRONIZED_BIT
-        )
-        if (mapped != null) {
-            copyFloatsToSegment(vertices, floatCount, MemorySegment.ofBuffer(mapped), 0L)
-            GL15.glUnmapBuffer(GL15.GL_ARRAY_BUFFER)
-        } else {
-            GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, writeOffset.toLong(), vertices)
-        }
-        regionWriteOffsetBytes = writeOffset + alignedBytes
-        return writeOffset / strideBytes
-    }
-
-    private fun copyFloatsToSegment(
-        vertices: FloatBuffer,
-        floatCount: Int,
-        dstSegment: MemorySegment,
-        dstOffsetBytes: Long
-    ) {
-        if (vertices.isDirect) {
-            val srcSeg = resolveSourceSegment(vertices)
-            MemorySegment.copy(
-                srcSeg,
-                vertices.position().toLong() shl 2,
-                dstSegment,
-                dstOffsetBytes,
-                floatCount.toLong() shl 2
-            )
-        } else {
-            val pos = vertices.position()
-            var dst = dstOffsetBytes
-            for (i in 0 until floatCount) {
-                dstSegment.set(ValueLayout.JAVA_FLOAT_UNALIGNED, dst, vertices.get(pos + i))
-                dst += Float.SIZE_BYTES
-            }
-        }
-    }
-
-    private fun resolveSourceSegment(vertices: FloatBuffer): MemorySegment {
-        if (vertices === lastSrcBuffer) return lastSrcSegment!!
-        val savedPos = vertices.position()
-        val savedLim = vertices.limit()
-        vertices.clear()
-        val seg = MemorySegment.ofBuffer(vertices)
-        vertices.limit(savedLim)
-        vertices.position(savedPos)
-        lastSrcBuffer = vertices
-        lastSrcSegment = seg
-        return seg
     }
 
     private fun alignToStride(bytes: Int): Int {
@@ -361,9 +345,15 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
     override fun close() {
         deleteAllFences()
         persistentMapped = false
+        mappedAddress = 0L
         mappedSegment = null
-        lastSrcBuffer = null
-        lastSrcSegment = null
+        fallbackBuffer?.let {
+            fallbackBuffer = null
+            fallbackSegment = null
+            fallbackAddress = 0L
+            fallbackCapacity = 0
+            MemoryUtil.memFree(it)
+        }
         GL15.glDeleteBuffers(vbo)
         if (quadIndexBuffer != 0) {
             GL15.glDeleteBuffers(quadIndexBuffer)
@@ -371,8 +361,10 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
         GL30.glDeleteVertexArrays(vao)
     }
 
-    private companion object {
+    internal companion object {
         const val RING_REGIONS = 3
         const val INITIAL_REGION_BYTES = 128 * 1024
+        const val INITIAL_FALLBACK_BYTES = 16 * 1024
+        const val FALLBACK_TOKEN = -1L
     }
 }

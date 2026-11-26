@@ -112,8 +112,7 @@ internal class RenderBenchmarkSuite(
             record {
                 shader.attach()
                 repeat(2_000) {
-                    putOffscreenTriangle(shader)
-                    shader.draw()
+                    drawOffscreenTriangle(shader)
                 }
             }
         }
@@ -122,8 +121,7 @@ internal class RenderBenchmarkSuite(
                 uniformShader.attach()
                 repeat(2_000) { index ->
                     uniformShader.uniforms.vec4(uniformColor, index.toFloat(), 1f, 1f, 1f)
-                    putOffscreenTriangle(uniformShader)
-                    uniformShader.draw()
+                    drawOffscreenTriangle(uniformShader)
                 }
             }
         }
@@ -257,8 +255,7 @@ internal class RenderBenchmarkSuite(
             renderToTarget(firstTarget) {
                 shader.attach()
                 repeat(2_000) {
-                    putOffscreenTriangle(shader)
-                    shader.draw()
+                    drawOffscreenTriangle(shader)
                 }
             }
         }
@@ -268,8 +265,7 @@ internal class RenderBenchmarkSuite(
                 uniformShader.attach()
                 uniformShader.uniforms.vec4(uniformColor, 1f, 1f, 1f, 1f)
                 repeat(2_000) {
-                    putOffscreenTriangle(uniformShader)
-                    uniformShader.draw()
+                    drawOffscreenTriangle(uniformShader)
                 }
             }
         }
@@ -279,8 +275,7 @@ internal class RenderBenchmarkSuite(
                 uniformShader.attach()
                 repeat(2_000) { index ->
                     uniformShader.uniforms.vec4(uniformColor, index.toFloat(), 1f, 1f, 1f)
-                    putOffscreenTriangle(uniformShader)
-                    uniformShader.draw()
+                    drawOffscreenTriangle(uniformShader)
                 }
             }
         }
@@ -290,8 +285,7 @@ internal class RenderBenchmarkSuite(
                 repeat(2_000) { index ->
                     val active = if (index and 1 == 0) shader else secondShader
                     active.attach()
-                    putOffscreenTriangle(active)
-                    active.draw()
+                    drawOffscreenTriangle(active)
                 }
             }
         }
@@ -301,8 +295,7 @@ internal class RenderBenchmarkSuite(
                 texturedShader.attach()
                 repeat(2_000) { index ->
                     Luma.backend.bindTexture(if (index and 1 == 0) firstTexture else secondTexture, 0)
-                    putOffscreenTriangle(texturedShader)
-                    texturedShader.draw()
+                    drawOffscreenTriangle(texturedShader)
                 }
             }
         }
@@ -310,16 +303,20 @@ internal class RenderBenchmarkSuite(
         runner.measure("draw", "batched triangles", 40_000) {
             renderToTarget(firstTarget) {
                 shader.attach()
-                repeat(40_000) { putOffscreenTriangle(shader) }
-                shader.draw()
+                shader.draw(40_000 * 3) {
+                    repeat(40_000) {
+                        vec2(2f, 2f); vec2(2.001f, 2f); vec2(2f, 2.001f)
+                    }
+                }
             }
         }
 
         runner.measure("draw", "instanced triangles", 40_000) {
             renderToTarget(firstTarget) {
                 instancedShader.attach()
-                repeat(40_000) { instancedShader.vertices.vec2(2f, 2f) }
-                instancedShader.draw()
+                instancedShader.draw(40_000) {
+                    repeat(40_000) { vec2(2f, 2f) }
+                }
             }
         }
 
@@ -361,8 +358,9 @@ internal class RenderBenchmarkSuite(
             renderToTarget(firstTarget) {
                 lineShader.attach()
                 repeat(2_000) {
-                    lineShader.vertices.vec2(2f, 2f).vec2(2.001f, 2.001f)
-                    lineShader.draw()
+                    lineShader.draw(2) {
+                        vec2(2f, 2f); vec2(2.001f, 2.001f)
+                    }
                 }
             }
         }
@@ -371,12 +369,12 @@ internal class RenderBenchmarkSuite(
             renderToTarget(firstTarget) {
                 quadShader.attach()
                 repeat(2_000) {
-                    quadShader.vertices
-                        .vec2(2f, 2f)
-                        .vec2(2.001f, 2f)
-                        .vec2(2.001f, 2.001f)
-                        .vec2(2f, 2.001f)
-                    quadShader.draw()
+                    quadShader.draw(4) {
+                        vec2(2f, 2f)
+                        vec2(2.001f, 2f)
+                        vec2(2.001f, 2.001f)
+                        vec2(2f, 2.001f)
+                    }
                 }
             }
         }
@@ -409,8 +407,7 @@ internal class RenderBenchmarkSuite(
                 shader.attach()
                 repeat(2_000) { index ->
                     Luma.backend.blend(index and 1 == 0)
-                    putOffscreenTriangle(shader)
-                    shader.draw()
+                    drawOffscreenTriangle(shader)
                 }
             }
         }
@@ -423,8 +420,7 @@ internal class RenderBenchmarkSuite(
                     Luma.backend.depthTest(index and 1 == 0)
                     Luma.backend.depthWrite(index and 1 == 0)
                     Luma.backend.depthCompare(if (index and 1 == 0) DepthCompare.LESS else DepthCompare.ALWAYS)
-                    putOffscreenTriangle(shader)
-                    shader.draw()
+                    drawOffscreenTriangle(shader)
                 }
             }
         }
@@ -489,18 +485,18 @@ internal class RenderBenchmarkSuite(
         Luma.backend.beginRenderTarget(target, null)
         try {
             shader.attach()
-            putOffscreenTriangle(shader)
-            shader.draw()
+            drawOffscreenTriangle(shader)
         } finally {
             Luma.backend.endRenderTarget()
         }
     }
 
-    private fun putOffscreenTriangle(targetShader: Shader) {
-        targetShader.vertices
-            .vec2(2f, 2f)
-            .vec2(2.001f, 2f)
-            .vec2(2f, 2.001f)
+    private fun drawOffscreenTriangle(targetShader: Shader) {
+        targetShader.draw(3) {
+            vec2(2f, 2f)
+            vec2(2.001f, 2f)
+            vec2(2f, 2.001f)
+        }
     }
 
     private fun solidImage(argb: Int): BufferedImage {

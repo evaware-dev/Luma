@@ -21,7 +21,7 @@ class GlUniformCacheTest {
         uniforms.vec4(color, 1f, 0f, 0f, 1f)
 
         val uploaded = ArrayList<Pair<String, Int>>()
-        cache.uploadWith(uniforms) { uniform, location, _ -> uploaded.add(uniform.name to location) }
+        cache.uploadWith(uniforms) { name, location, _ -> uploaded.add(name to location) }
 
         assertEquals(listOf("uAlpha" to 1, "uColor" to 2), uploaded)
         assertFalse(alpha.isDirty)
@@ -29,18 +29,18 @@ class GlUniformCacheTest {
 
         // Clean draw: O(1) revision skip
         uploaded.clear()
-        cache.uploadWith(uniforms) { uniform, location, _ -> uploaded.add(uniform.name to location) }
+        cache.uploadWith(uniforms) { name, location, _ -> uploaded.add(name to location) }
         assertEquals(emptyList(), uploaded)
 
         // Mutate only uAlpha: only uAlpha uploads
         uniforms.float1(alpha, 0.75f)
-        cache.uploadWith(uniforms) { uniform, location, _ -> uploaded.add(uniform.name to location) }
+        cache.uploadWith(uniforms) { name, location, _ -> uploaded.add(name to location) }
         assertEquals(listOf("uAlpha" to 1), uploaded)
         assertFalse(alpha.isDirty)
 
         // Clean again
         uploaded.clear()
-        cache.uploadWith(uniforms) { uniform, location, _ -> uploaded.add(uniform.name to location) }
+        cache.uploadWith(uniforms) { name, location, _ -> uploaded.add(name to location) }
         assertEquals(emptyList(), uploaded)
     }
 
@@ -78,16 +78,16 @@ class GlUniformCacheTest {
         uniforms.float1(first, 1f)
 
         val uploaded = ArrayList<Pair<String, Float>>()
-        cache.uploadWith(uniforms) { uniform, _, handle ->
-            uploaded.add(uniform.name to (handle as Float1Uniform).value)
+        cache.uploadWith(uniforms) { name, _, handle ->
+            uploaded.add(name to (handle as Float1Uniform).value)
         }
         assertEquals(listOf("uFirst" to 1f), uploaded)
 
         val second = uniforms.float1("uSecond")
         uniforms.float1(second, 2f)
         uploaded.clear()
-        cache.uploadWith(uniforms) { uniform, _, handle ->
-            uploaded.add(uniform.name to (handle as Float1Uniform).value)
+        cache.uploadWith(uniforms) { name, _, handle ->
+            uploaded.add(name to (handle as Float1Uniform).value)
         }
         assertEquals(listOf("uSecond" to 2f), uploaded)
     }

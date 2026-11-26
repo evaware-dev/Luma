@@ -1,14 +1,13 @@
 package sweetie.evaware.luma.shader
 
 import java.awt.image.BufferedImage
-import java.nio.FloatBuffer
-import java.util.concurrent.Executors
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.PrimitiveType
 import sweetie.evaware.luma.api.ProgramHandle
@@ -23,6 +22,7 @@ import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.shader.translator.ShaderTranslator
 import sweetie.evaware.luma.shader.translator.TranslationResult
 import sweetie.evaware.luma.uniform.ShaderUniforms
+import sweetie.evaware.luma.vertex.VertexCursor
 import sweetie.evaware.luma.vertex.VertexInputLayout
 
 class RawShaderLoadTest {
@@ -49,11 +49,15 @@ class RawShaderLoadTest {
         val shader = Shader("raw_shader.frag", "raw_shader.vert")
         shader.vertices.float(2, 0)
 
-        shader.load()
+        try {
+            shader.load()
 
-        assertEquals(javaClass.classLoader.getResource("raw_shader.vert")!!.readText(), backend.vertexSource)
-        assertEquals(javaClass.classLoader.getResource("raw_shader.frag")!!.readText(), backend.fragmentSource)
-        shader.close()
+            assertEquals(javaClass.classLoader.getResource("raw_shader.vert")!!.readText(), backend.vertexSource)
+            assertEquals(javaClass.classLoader.getResource("raw_shader.frag")!!.readText(), backend.fragmentSource)
+        } finally {
+            shader.close()
+            backend.close()
+        }
     }
 
     @Test
@@ -68,71 +72,21 @@ class RawShaderLoadTest {
             .translator(localTranslator)
         shader.vertices.float(2, 0)
 
-        shader.load()
-
-        kotlin.test.assertTrue(backend.vertexSource.endsWith("#define LOCAL_VERTEX"))
-        kotlin.test.assertTrue(backend.fragmentSource.endsWith("#define LOCAL_FRAGMENT"))
-        kotlin.test.assertSame(globalTranslator, Luma.shaderTranslator)
-        shader.close()
-    }
-
-    @Test
-    fun preparesVerticesOnAnotherThreadAndDrawsWithoutConsumingThem() {
-        val backend = CapturingBackend()
-        Luma.backend = backend
-        Luma.shaderTranslator = RawShaderTranslator
-        val shader = Shader("raw_shader.frag", "raw_shader.vert")
-        shader.vertices.float2(0)
-        val prepared = shader.prepareVertices(2)
-        val executor = Executors.newSingleThreadExecutor()
-
         try {
-            executor.submit {
-                prepared.vec2(1f, 2f).vec2(3f, 4f).seal()
-            }.get()
             shader.load()
 
-            assertEquals(2, shader.draw(prepared))
-            assertEquals(2, shader.draw(prepared))
-            assertEquals(2, prepared.vertexCount)
-            assertEquals(listOf(1f, 2f, 3f, 4f), backend.uploadedVertices)
-            assertEquals(2, backend.drawCalls)
+            assertTrue(backend.vertexSource.endsWith("#define LOCAL_VERTEX"))
+            assertTrue(backend.fragmentSource.endsWith("#define LOCAL_FRAGMENT"))
+            assertSame(globalTranslator, Luma.shaderTranslator)
         } finally {
-            executor.shutdownNow()
-            prepared.close()
             shader.close()
-        }
-    }
-
-    @Test
-    fun preparedVerticesEnforceHandoffAndLayoutCompatibility() {
-        val backend = CapturingBackend()
-        Luma.backend = backend
-        Luma.shaderTranslator = RawShaderTranslator
-        val shader = Shader("raw_shader.frag", "raw_shader.vert")
-        shader.vertices.float2(0)
-        val incompatible = Shader("raw_shader.frag", "raw_shader.vert")
-        incompatible.vertices.float3(0)
-        val prepared = shader.prepareVertices().vec2(1f, 2f)
-
-        try {
-            assertFailsWith<IllegalStateException> { shader.draw(prepared) }
-            prepared.seal()
-            assertFailsWith<IllegalStateException> { prepared.vec2(3f, 4f) }
-            incompatible.load()
-            assertFailsWith<IllegalArgumentException> { incompatible.draw(prepared) }
-
-            prepared.clear().vec2(3f, 4f).seal()
-            assertTrue(prepared.isSealed)
-            assertEquals(1, prepared.vertexCount)
-        } finally {
-            prepared.close()
-            shader.close()
-            incompatible.close()
+            backend.close()
         }
     }
 
     private class CapturingBackend : RenderBackend {
+        private val scratch = MemoryUtil.memAllocFloat(64)
+        private val scratchAddr = MemoryUtil.memAddress(scratch)
         var vertexSource = ""
         var fragmentSource = ""
         var drawCalls = 0
@@ -149,7 +103,9 @@ class RawShaderLoadTest {
         ): ProgramHandle {
             this.vertexSource = vertexSource
             this.fragmentSource = fragmentSource
+            val stride = layouts.layout(0).strideBytes
             return object : ProgramHandle {
+                override val vertexStrideBytes: Int = stride
                 override fun close() {}
             }
         }
@@ -169,16 +125,23 @@ class RawShaderLoadTest {
         override fun bindTexture(texture: TextureHandle, unit: Int) {
             throw UnsupportedOperationException()
         }
-        override fun draw(
+
+        override fun beginVertices(program: ProgramHandle, vertexCount: Int, cursor: VertexCursor) {
+            val stride = program.vertexStrideBytes
+            cursor.init(scratchAddr, vertexCount.toLong() * stride, stride)
+        }
+
+        override fun endVertices(
             program: ProgramHandle,
-            vertices: FloatBuffer,
+            cursor: VertexCursor,
             vertexCount: Int,
             uniforms: ShaderUniforms,
             primitiveType: PrimitiveType
         ) {
+            if (vertexCount <= 0) return
             drawCalls++
-            val copy = vertices.duplicate()
-            uploadedVertices = List(copy.remaining()) { copy.get() }
+            val floats = vertexCount * (program.vertexStrideBytes / Float.SIZE_BYTES)
+            uploadedVertices = List(floats) { scratch.get(it) }
         }
 
         override fun createRenderTarget(
@@ -197,7 +160,11 @@ class RawShaderLoadTest {
         override fun endRenderTarget() {
             throw UnsupportedOperationException()
         }
-        override fun close() {}
+
+        override fun close() {
+            MemoryUtil.memFree(scratch)
+        }
+
         override fun hasContext() = true
 
         private fun <T> unsupported(): T = throw UnsupportedOperationException()

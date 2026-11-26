@@ -8,7 +8,6 @@ import sweetie.evaware.luma.resource.GlResources
 import sweetie.evaware.luma.shader.BaseShader
 import sweetie.evaware.luma.uniform.Int1Uniform
 import sweetie.evaware.luma.uniform.Mat4Uniform
-import sweetie.evaware.luma.vertex.PreparedVertices
 
 class BlitShader : BaseShader("blit.frag", "blit.vert") {
     lateinit var uMatrix: Mat4Uniform
@@ -32,7 +31,6 @@ object OffscreenDemo {
     private var target: RenderTargetHandle? = null
     private var width = 0
     private var height = 0
-    private var preparedVertices: PreparedVertices? = null
 
     fun render() {
         if (!enabled) return
@@ -54,12 +52,18 @@ object OffscreenDemo {
     }
 
     private fun present(shader: BlitShader, renderTarget: RenderTargetHandle) {
-        val prepared = preparedVertices ?: return
+        val wf = width.toFloat()
+        val hf = height.toFloat()
         shader.attach()
         shader.uniforms.mat4(shader.uMatrix, MatrixControl.current())
         shader.uniforms.int1(shader.uTexture, 0)
         Luma.bindTexture(renderTarget.colorTexture, 0)
-        shader.draw(prepared)
+        shader.draw(4) {
+            vec2(0f, 0f); vec2(wf, hf)
+            vec2(0f, 0f); vec2(wf, hf)
+            vec2(0f, 0f); vec2(wf, hf)
+            vec2(0f, 0f); vec2(wf, hf)
+        }
     }
 
     fun reset() {
@@ -67,8 +71,6 @@ object OffscreenDemo {
         blit = null
         width = 0
         height = 0
-        preparedVertices?.close()
-        preparedVertices = null
     }
 
     private fun ensureBlit(): BlitShader {
@@ -82,7 +84,7 @@ object OffscreenDemo {
     }
 
     private fun updateSize(w: Int, h: Int) {
-        if (width == w && height == h && target != null && preparedVertices != null) return
+        if (width == w && height == h && target != null) return
         width = w
         height = h
 
@@ -91,16 +93,6 @@ object OffscreenDemo {
             it.close()
         }
         target = GlResources.track(RenderUtil.createRenderTarget(w, h))
-
-        preparedVertices?.close()
-        val shader = ensureBlit()
-        val wf = w.toFloat()
-        val hf = h.toFloat()
-        preparedVertices = shader.prepareVertices(4)
-            .vec2(0f, 0f).vec2(wf, hf)
-            .vec2(0f, 0f).vec2(wf, hf)
-            .vec2(0f, 0f).vec2(wf, hf)
-            .vec2(0f, 0f).vec2(wf, hf)
-            .seal()
+        ensureBlit()
     }
 }

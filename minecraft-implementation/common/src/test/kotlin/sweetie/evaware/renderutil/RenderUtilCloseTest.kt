@@ -14,7 +14,6 @@ import sweetie.evaware.luma.uniform.ShaderUniforms
 import sweetie.evaware.luma.vertex.VertexInputLayout
 import sweetie.evaware.luma.scissor.ScissorControl
 import java.awt.image.BufferedImage
-import java.nio.FloatBuffer
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -29,9 +28,10 @@ class RenderUtilCloseTest {
         override fun createTexture(image: BufferedImage, mipmap: Boolean, format: TextureFormat, sampler: SamplerState): TextureHandle = error("mock")
         override fun updateTexture(texture: TextureHandle, x: Int, y: Int, image: BufferedImage) {}
         override fun bindTexture(texture: TextureHandle, unit: Int) {}
-        override fun draw(
+        override fun beginVertices(program: ProgramHandle, vertexCount: Int, cursor: sweetie.evaware.luma.vertex.VertexCursor) {}
+        override fun endVertices(
             program: ProgramHandle,
-            vertices: FloatBuffer,
+            cursor: sweetie.evaware.luma.vertex.VertexCursor,
             vertexCount: Int,
             uniforms: ShaderUniforms,
             primitiveType: PrimitiveType

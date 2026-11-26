@@ -2,7 +2,6 @@ package sweetie.evaware.luma.backend.gl
 
 import java.awt.image.BufferedImage
 import java.nio.ByteBuffer
-import java.nio.FloatBuffer
 import java.util.Arrays
 import org.lwjgl.BufferUtils
 import org.lwjgl.glfw.GLFW
@@ -11,6 +10,7 @@ import sweetie.evaware.luma.api.*
 import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.texture.RgbaTransferBuffer
 import sweetie.evaware.luma.uniform.ShaderUniforms
+import sweetie.evaware.luma.vertex.VertexCursor
 import sweetie.evaware.luma.vertex.VertexInputLayout
 
 class Backend(
@@ -386,9 +386,26 @@ class Backend(
         }
     }
 
-    override fun draw(
+    override fun beginVertices(
         program: ProgramHandle,
-        vertices: FloatBuffer,
+        vertexCount: Int,
+        cursor: VertexCursor
+    ) {
+        val glProgram = program as Program
+        val vb = glProgram.vertexBuffer
+        val bytes = Math.multiplyExact(vertexCount, vb.strideBytes)
+        if (batcher.hasPending && (batcher.pendingProgram !== glProgram || !vb.canAppendContiguouslyBytes(bytes))) {
+            flushPendingDraw()
+        }
+        vb.beginVertices(vertexCount, cursor) { boundId ->
+            stateGuard.saveArrayBufferIfNeeded(frameActive)
+            boundArrayBufferId = boundId
+        }
+    }
+
+    override fun endVertices(
+        program: ProgramHandle,
+        cursor: VertexCursor,
         vertexCount: Int,
         uniforms: ShaderUniforms,
         primitiveType: PrimitiveType
@@ -396,17 +413,12 @@ class Backend(
         if (vertexCount <= 0) return
         val glProgram = program as Program
         val vb = glProgram.vertexBuffer
+        val baseVertex = vb.endVertices(vertexCount, cursor) { boundId ->
+            stateGuard.saveArrayBufferIfNeeded(frameActive)
+            boundArrayBufferId = boundId
+        }
 
-        if (frameActive && batcher.pendingProgram === glProgram && batcher.tryAppend(
-                glProgram,
-                primitiveType,
-                uniforms,
-                vertices,
-                vertexCount,
-                upload = { targetVb, verts -> uploadVertexBuffer(targetVb, verts) },
-                flushCurrent = { flushPendingDraw() }
-            )
-        ) {
+        if (frameActive && batcher.tryAppend(glProgram, primitiveType, uniforms, baseVertex, vertexCount)) {
             return
         }
 
@@ -414,8 +426,6 @@ class Backend(
         prepareDrawTargetAndState()
         useProgram(glProgram.programId)
         bindVertexArray(vb.vao)
-
-        val baseVertex = uploadVertexBuffer(vb, vertices)
         glProgram.uploadUniforms(uniforms)
 
         if (frameActive) {
@@ -796,13 +806,6 @@ class Backend(
         }
         glProgram.uploadUniforms(uniforms)
         return glProgram
-    }
-
-    private fun uploadVertexBuffer(vb: GlVertexBuffer, vertices: FloatBuffer): Int {
-        return vb.uploadStreaming(vertices) { boundId ->
-            stateGuard.saveArrayBufferIfNeeded(frameActive)
-            boundArrayBufferId = boundId
-        }
     }
 
     private fun flushPendingDraw() {

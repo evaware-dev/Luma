@@ -119,17 +119,17 @@ open class VulkanTestApp : BackendTestApp(64, 64, "Luma Vulkan") {
             backend.beginRenderTarget(target, floatArrayOf(0f, 0f, 1f, 1f))
             shader.attach()
             Luma.enableBlend()
-            shader.vertices
-                .vec2(-0.9f, -0.6f)
-                .vec2(-0.1f, -0.6f)
-                .vec2(-0.5f, 0.6f)
-            shader.draw()
+            shader.draw(3) {
+                vec2(-0.9f, -0.6f)
+                vec2(-0.1f, -0.6f)
+                vec2(-0.5f, 0.6f)
+            }
             Luma.disableBlend()
-            shader.vertices
-                .vec2(0.1f, -0.6f)
-                .vec2(0.9f, -0.6f)
-                .vec2(0.5f, 0.6f)
-            shader.draw()
+            shader.draw(3) {
+                vec2(0.1f, -0.6f)
+                vec2(0.9f, -0.6f)
+                vec2(0.5f, 0.6f)
+            }
             backend.endRenderTarget()
         }
     }

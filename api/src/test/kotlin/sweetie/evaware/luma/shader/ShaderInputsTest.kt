@@ -1,9 +1,8 @@
 package sweetie.evaware.luma.shader
 
 import kotlin.test.Test
-import kotlin.test.assertFailsWith
+import kotlin.test.assertEquals
 import kotlin.test.assertSame
-import kotlin.test.assertTrue
 import sweetie.evaware.luma.uniform.Float4Uniform
 import sweetie.evaware.luma.vertex.ShaderVertices
 
@@ -11,20 +10,9 @@ class ShaderInputsTest {
     @Test
     fun `shader inputs owns vertices and uniforms`() {
         val inputs = ShaderInputs()
-
-        try {
-            assertTrue(inputs.vertices is ShaderInputApi<*>)
-            assertTrue(inputs.uniforms is ShaderInputApi<*>)
-
-            inputs.vertices.float2(0).float4(1)
-            inputs.vertices
-                .vec2(1f, 2f)
-                .vec4(1f, 1f, 1f, 1f)
-
-            assertTrue(inputs.vertices.hasVertices())
-        } finally {
-            inputs.close()
-        }
+        inputs.vertices.float2(0).float4(1)
+        assertEquals(2, inputs.vertices.layout.size())
+        assertEquals(6, inputs.vertices.layout.strideFloats)
     }
 
     @Test
@@ -37,20 +25,12 @@ class ShaderInputsTest {
     }
 
     @Test
-    fun `vertices typed declarations match grouped writer`() {
+    fun `vertices typed declarations build expected stride`() {
         val vertices = ShaderVertices()
+        vertices.vec1(0).vec3(1).vec4(2)
 
-        try {
-            vertices.vec1(0).vec3(1).vec4(2)
-            vertices
-                .vec1(1f)
-                .vec3(2f, 3f, 4f)
-                .vec4(5f, 6f, 7f, 8f)
-
-            assertTrue(vertices.hasVertices())
-        } finally {
-            vertices.close()
-        }
+        assertEquals(3, vertices.layout.size())
+        assertEquals(8, vertices.layout.strideFloats)
     }
 
     @Test
@@ -59,21 +39,5 @@ class ShaderInputsTest {
         val color: Float4Uniform = inputs.uniforms.vec4("uColor")
 
         assertSame(inputs.uniforms, inputs.uniforms.vec4(color, 1f, 1f, 1f, 1f))
-    }
-
-    @Test
-    fun `input api rejects unsupported direction`() {
-        val inputs = ShaderInputs()
-
-        try {
-            assertFailsWith<IllegalStateException> {
-                inputs.vertices.vec4("uColor")
-            }
-            assertFailsWith<IllegalStateException> {
-                inputs.uniforms.vec4(0)
-            }
-        } finally {
-            inputs.close()
-        }
     }
 }

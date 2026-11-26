@@ -2,7 +2,6 @@ package sweetie.evaware.luma.tools
 
 import java.awt.image.BufferedImage
 import java.nio.ByteBuffer
-import java.nio.FloatBuffer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -22,6 +21,7 @@ import sweetie.evaware.luma.api.TextureHandle
 import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.uniform.ShaderUniforms
 import sweetie.evaware.luma.vertex.ShaderVertType
+import sweetie.evaware.luma.vertex.VertexCursor
 import sweetie.evaware.luma.vertex.VertexInputLayout
 import sweetie.evaware.luma.vertex.VertexLayout
 
@@ -47,8 +47,11 @@ class StatsBackendTest {
         backend.bindTexture(texture, 0)
         backend.updateTexture(texture, 0, 0, BufferedImage(4, 2, BufferedImage.TYPE_INT_ARGB))
         backend.beginRenderTarget(target, null)
-        backend.draw(program, FloatBuffer.allocate(12), 6, ShaderUniforms(), PrimitiveType.TRIANGLES)
-        backend.draw(program, FloatBuffer.allocate(12), 6, ShaderUniforms(), PrimitiveType.TRIANGLES)
+        val cursor = VertexCursor()
+        backend.beginVertices(program, 6, cursor)
+        backend.endVertices(program, cursor, 6, ShaderUniforms(), PrimitiveType.TRIANGLES)
+        backend.beginVertices(program, 6, cursor)
+        backend.endVertices(program, cursor, 6, ShaderUniforms(), PrimitiveType.TRIANGLES)
         backend.endRenderTarget()
         backend.endFrame()
 
@@ -89,7 +92,9 @@ class StatsBackendTest {
         val program = backend.createProgram("", "", layout)
 
         backend.beginFrame()
-        backend.draw(program, FloatBuffer.allocate(160_000), 40_000, ShaderUniforms(), PrimitiveType.TRIANGLES)
+        val cursor = VertexCursor()
+        backend.beginVertices(program, 40_000, cursor)
+        backend.endVertices(program, cursor, 40_000, ShaderUniforms(), PrimitiveType.TRIANGLES)
         backend.endFrame()
 
         assertEquals(1L, backend.lastFrame.drawCalls)
@@ -106,7 +111,10 @@ class StatsBackendTest {
         val program = first.createProgram("", "", layout)
 
         assertFailsWith<IllegalArgumentException> {
-            second.draw(program, FloatBuffer.allocate(6), 3, ShaderUniforms(), PrimitiveType.TRIANGLES)
+            second.beginVertices(program, 3, VertexCursor())
+        }
+        assertFailsWith<IllegalArgumentException> {
+            second.endVertices(program, VertexCursor(), 3, ShaderUniforms(), PrimitiveType.TRIANGLES)
         }
         assertFailsWith<IllegalArgumentException> {
             second.bindProgram(program)
@@ -397,9 +405,10 @@ class StatsBackendTest {
         override fun pushDebugGroup(label: String) { debugEvents.add("push:$label") }
         override fun popDebugGroup() { debugEvents.add("pop") }
         override fun bindTexture(texture: TextureHandle, unit: Int) {}
-        override fun draw(
+        override fun beginVertices(program: ProgramHandle, vertexCount: Int, cursor: VertexCursor) {}
+        override fun endVertices(
             program: ProgramHandle,
-            vertices: FloatBuffer,
+            cursor: VertexCursor,
             vertexCount: Int,
             uniforms: ShaderUniforms,
             primitiveType: PrimitiveType

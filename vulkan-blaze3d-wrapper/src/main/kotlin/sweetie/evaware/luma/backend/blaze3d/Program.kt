@@ -44,6 +44,7 @@ class Program internal constructor(
 
     val layout = layouts.layout(0)
     internal val strideBytes = layout.strideFloats * Float.SIZE_BYTES
+    override val vertexStrideBytes: Int get() = strideBytes
     private var pipelineKeys = LongArray(32)
     private var pipelines = arrayOfNulls<PresetPipeline>(32)
     private var pipelineGenerations = LongArray(32) { Long.MIN_VALUE }

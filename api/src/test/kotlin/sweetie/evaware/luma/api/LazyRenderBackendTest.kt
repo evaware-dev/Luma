@@ -127,9 +127,10 @@ class LazyRenderBackendTest {
         ): TextureHandle = throw UnsupportedOperationException()
         override fun updateTexture(texture: TextureHandle, x: Int, y: Int, image: BufferedImage) {}
         override fun bindTexture(texture: TextureHandle, unit: Int) {}
-        override fun draw(
+        override fun beginVertices(program: ProgramHandle, vertexCount: Int, cursor: sweetie.evaware.luma.vertex.VertexCursor) {}
+        override fun endVertices(
             program: ProgramHandle,
-            vertices: FloatBuffer,
+            cursor: sweetie.evaware.luma.vertex.VertexCursor,
             vertexCount: Int,
             uniforms: ShaderUniforms,
             primitiveType: PrimitiveType

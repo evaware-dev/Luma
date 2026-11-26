@@ -64,9 +64,8 @@ RenderUtil.renderFrame {
 }
 ```
 
-### 3. Static Geometry & Command Reuse (`PreparedVertices` and `DrawList`)
+### 3. Command Reuse (`DrawList`)
 
-- **`PreparedVertices`**: Cache immutable vertex buffers for individual shaders (`shader.prepareVertices(...).seal()`).
 - **`DrawList`**: Record multi-draw command sequences (state, textures, uniforms, clip masks, render targets) once via `drawList.record { ... }` and replay them at `0 B/op` via `drawList.replay()`. Close the `DrawList` on teardown to release its native vertex buffer.
 
 ### 4. Lifecycle & Resource Management

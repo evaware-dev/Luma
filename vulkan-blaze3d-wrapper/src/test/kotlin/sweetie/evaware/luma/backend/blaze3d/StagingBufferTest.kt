@@ -1,55 +1,65 @@
 package sweetie.evaware.luma.backend.blaze3d
 
 import java.nio.ByteBuffer
-import org.lwjgl.system.MemoryUtil
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import sweetie.evaware.luma.vertex.VertexCursor
 
 class StagingBufferTest {
     @Test
-    fun `address appends remain contiguous`() {
-        val source = MemoryUtil.memAlloc(4)
+    fun `appendBytes writes contiguous payloads and grows cleanly`() {
+        val staging = StagingBuffer(4)
         try {
-            val staging = StagingBuffer(4)
-            source.put(0, 1).put(1, 2)
-            assertEquals(0L, staging.appendFromAddress(MemoryUtil.memAddress(source), 2))
-            source.put(0, 3).put(1, 4)
-            assertEquals(2L, staging.appendFromAddress(MemoryUtil.memAddress(source), 2))
+            assertEquals(0L, staging.appendBytes(ByteBuffer.wrap(byteArrayOf(1, 2)), 2))
+            assertEquals(2L, staging.appendBytes(ByteBuffer.wrap(byteArrayOf(3, 4, 5)), 3))
 
             staging.flip()
             val contents = ByteArray(staging.buffer.remaining())
             staging.buffer.get(contents)
-            assertArrayEquals(byteArrayOf(1, 2, 3, 4), contents)
+            assertArrayEquals(byteArrayOf(1, 2, 3, 4, 5), contents)
         } finally {
-            MemoryUtil.memFree(source)
+            staging.close()
         }
     }
 
     @Test
-    fun `aligned append pads offset without changing payload`() {
+    fun `beginDirectAligned pads offset to stride alignment and commits exact bytes`() {
         val staging = StagingBuffer(8)
+        val cursor = VertexCursor()
+        try {
+            staging.beginDirectAligned(8, 8, cursor)
+            assertEquals(0L, cursor.token)
+            cursor.vec2(1f, 2f)
+            staging.commitDirect(cursor.token, 8)
 
-        assertEquals(0L, staging.append(ByteBuffer.wrap(byteArrayOf(1, 2, 3))))
-        assertEquals(8L, staging.appendAligned(ByteBuffer.wrap(byteArrayOf(4, 5)), 8))
+            // Reserve with 12-byte stride after 8 bytes -> padded to 12
+            staging.beginDirectAligned(12, 12, cursor)
+            assertEquals(12L, cursor.token)
+            cursor.vec3(3f, 4f, 5f)
+            staging.commitDirect(cursor.token, 12)
 
-        staging.flip()
-        val contents = ByteArray(staging.buffer.remaining())
-        staging.buffer.get(contents)
-        assertArrayEquals(byteArrayOf(1, 2, 3, 0, 0, 0, 0, 0, 4, 5), contents)
+            staging.flip()
+            assertEquals(24, staging.buffer.remaining())
+        } finally {
+            staging.close()
+        }
     }
 
     @Test
-    fun `aligned address append aligns independent vertex layouts`() {
-        val source = MemoryUtil.memAlloc(4)
+    fun `beginAlignedWrite zero-pads to requested alignment`() {
         val staging = StagingBuffer(8)
         try {
-            source.putInt(0, 0x01020304)
-            assertEquals(0L, staging.appendFromAddressAligned(MemoryUtil.memAddress(source), 3, 3))
-            assertEquals(4L, staging.appendFromAddressAligned(MemoryUtil.memAddress(source), 4, 4))
+            assertEquals(0L, staging.appendBytes(ByteBuffer.wrap(byteArrayOf(1, 2, 3)), 3))
+            assertEquals(8L, staging.beginAlignedWrite(4, 8))
+            staging.buffer.put(4).put(5)
+
+            staging.flip()
+            val contents = ByteArray(staging.buffer.remaining())
+            staging.buffer.get(contents)
+            assertArrayEquals(byteArrayOf(1, 2, 3, 0, 0, 0, 0, 0, 4, 5), contents)
         } finally {
             staging.close()
-            MemoryUtil.memFree(source)
         }
     }
 }

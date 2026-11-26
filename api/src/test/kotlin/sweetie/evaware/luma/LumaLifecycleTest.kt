@@ -125,9 +125,12 @@ class LumaLifecycleTest {
 
         override fun bindTexture(texture: TextureHandle, unit: Int) = unsupported<Unit>()
 
-        override fun draw(
+        override fun beginVertices(program: ProgramHandle, vertexCount: Int, cursor: sweetie.evaware.luma.vertex.VertexCursor) =
+            unsupported<Unit>()
+
+        override fun endVertices(
             program: ProgramHandle,
-            vertices: FloatBuffer,
+            cursor: sweetie.evaware.luma.vertex.VertexCursor,
             vertexCount: Int,
             uniforms: ShaderUniforms,
             primitiveType: PrimitiveType

@@ -2,8 +2,6 @@ package sweetie.evaware.luma.list
 
 import java.awt.image.BufferedImage
 import java.lang.management.ManagementFactory
-import java.nio.ByteBuffer
-import java.nio.FloatBuffer
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -14,12 +12,13 @@ import kotlin.test.assertFalse
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import org.joml.Matrix4f
+import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.*
 import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.uniform.*
+import sweetie.evaware.luma.vertex.VertexCursor
 import sweetie.evaware.luma.vertex.VertexInputLayout
-import sweetie.evaware.luma.vertex.VertexLayout
 
 class DrawListTest {
     private var previousBackend: RenderBackend? = null
@@ -69,8 +68,8 @@ class DrawListTest {
         val uMode = uniforms.int1("uMode")
         val uMat = uniforms.mat4("uMat")
 
-        val verts1 = FloatBuffer.wrap(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f))
-        val verts2 = FloatBuffer.wrap(floatArrayOf(-1f, -1f, 1f, -1f, 1f, 1f))
+        val verts1 = floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f)
+        val verts2 = floatArrayOf(-1f, -1f, 1f, -1f, 1f, 1f)
 
         DrawList().use { list ->
             list.record {
@@ -80,7 +79,7 @@ class DrawListTest {
                 uniforms.vec4(uColor, 1f, 0f, 0f, 1f)
                 uniforms.int1(uMode, 7)
                 uniforms.mat4(uMat, Matrix4f().translation(10f, 20f, 30f))
-                Luma.backend.draw(program, verts1, 3, uniforms, PrimitiveType.TRIANGLES)
+                submitVertices(Luma.backend, program, verts1, 3, uniforms, PrimitiveType.TRIANGLES)
 
                 // Mutate the exact same ShaderUniforms before the second draw
                 uniforms.float1(uFloat, 0.75f)
@@ -89,7 +88,7 @@ class DrawListTest {
                 uniforms.vec4(uColor, 0f, 1f, 0f, 0.5f)
                 uniforms.int1(uMode, 42)
                 uniforms.mat4(uMat, Matrix4f().scaling(2f, 3f, 4f))
-                Luma.backend.draw(program, verts2, 3, uniforms, PrimitiveType.TRIANGLES)
+                submitVertices(Luma.backend, program, verts2, 3, uniforms, PrimitiveType.TRIANGLES)
             }
 
             // Mutate caller's uniforms again after recording — replay must NOT see this!
@@ -260,7 +259,7 @@ class DrawListTest {
         DrawList(initialCommandCapacity = 4, initialVertexFloats = 16).use { list ->
             list.record {
                 uniforms.vec4(uColor, 1f, 0f, 0f, 1f)
-                Luma.backend.draw(program, FloatBuffer.wrap(floatArrayOf(1f, 2f, 3f, 4f, 5f, 6f)), 3, uniforms, PrimitiveType.TRIANGLES)
+                submitVertices(Luma.backend, program, floatArrayOf(1f, 2f, 3f, 4f, 5f, 6f), 3, uniforms, PrimitiveType.TRIANGLES)
             }
             list.replay()
             assertEquals(1, backend.immediateDraws.size)
@@ -271,7 +270,7 @@ class DrawListTest {
             // Re-record completely different state & uniform value
             list.record {
                 uniforms.vec4(uColor, 0f, 0f, 1f, 1f)
-                Luma.backend.draw(program, FloatBuffer.wrap(floatArrayOf(9f, 8f, 7f, 6f, 5f, 4f)), 3, uniforms, PrimitiveType.LINES)
+                submitVertices(Luma.backend, program, floatArrayOf(9f, 8f, 7f, 6f, 5f, 4f), 3, uniforms, PrimitiveType.LINES)
             }
             list.replay()
             assertEquals(1, backend.immediateDraws.size)
@@ -321,33 +320,37 @@ class DrawListTest {
         val tex = FakeTexture(8, 8)
         val uniforms = ShaderUniforms()
         val uColor = uniforms.float4("uColor")
-        val verts = FloatBuffer.wrap(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f))
+        val verts = floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f)
         val clear = floatArrayOf(0f, 0f, 0f, 1f)
 
-        DrawList().use { list ->
-            list.record {
-                Luma.backend.beginRenderTarget(target, clear)
-                Luma.enableBlend()
-                Luma.bindTexture(tex, 0)
-                for (i in 0 until 100) {
-                    uniforms.vec4(uColor, i.toFloat(), 1f, 0f, 1f)
-                    Luma.backend.draw(program, verts, 3, uniforms, PrimitiveType.TRIANGLES)
+        try {
+            DrawList().use { list ->
+                list.record {
+                    Luma.backend.beginRenderTarget(target, clear)
+                    Luma.enableBlend()
+                    Luma.bindTexture(tex, 0)
+                    for (i in 0 until 100) {
+                        uniforms.vec4(uColor, i.toFloat(), 1f, 0f, 1f)
+                        submitVertices(Luma.backend, program, verts, 3, uniforms, PrimitiveType.TRIANGLES)
+                    }
+                    Luma.backend.endRenderTarget()
                 }
-                Luma.backend.endRenderTarget()
-            }
 
-            // Warm up JIT & replay caches
-            repeat(500) { list.replay(noop) }
+                // Warm up JIT & replay caches
+                repeat(500) { list.replay(noop) }
 
-            val threadBean = ManagementFactory.getThreadMXBean() as? com.sun.management.ThreadMXBean
-            if (threadBean != null && threadBean.isThreadAllocatedMemorySupported) {
-                val tid = Thread.currentThread().threadId()
-                val before = threadBean.getThreadAllocatedBytes(tid)
-                repeat(1_000) { list.replay(noop) }
-                val after = threadBean.getThreadAllocatedBytes(tid)
-                assertEquals(0L, after - before, "Steady-state DrawList.replay() must allocate 0 bytes")
+                val threadBean = ManagementFactory.getThreadMXBean() as? com.sun.management.ThreadMXBean
+                if (threadBean != null && threadBean.isThreadAllocatedMemorySupported) {
+                    val tid = Thread.currentThread().threadId()
+                    val before = threadBean.getThreadAllocatedBytes(tid)
+                    repeat(1_000) { list.replay(noop) }
+                    val after = threadBean.getThreadAllocatedBytes(tid)
+                    assertEquals(0L, after - before, "Steady-state DrawList.replay() must allocate 0 bytes")
+                }
+                assertEquals(150_000, noop.draws)
             }
-            assertEquals(150_000, noop.draws)
+        } finally {
+            noop.close()
         }
     }
 
@@ -359,30 +362,51 @@ class DrawListTest {
         val uniforms = ShaderUniforms()
         val uColor = uniforms.float4("uColor")
         uniforms.vec4(uColor, 1f, 0f, 0f, 1f)
-        val tri1 = FloatBuffer.wrap(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f))
-        val tri2 = FloatBuffer.wrap(floatArrayOf(2f, 0f, 3f, 0f, 2f, 1f))
-        val tri3 = FloatBuffer.wrap(floatArrayOf(4f, 0f, 5f, 0f, 4f, 1f))
+        val tri1 = floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f)
+        val tri2 = floatArrayOf(2f, 0f, 3f, 0f, 2f, 1f)
+        val tri3 = floatArrayOf(4f, 0f, 5f, 0f, 4f, 1f)
 
-        DrawList().use { list ->
-            list.record {
-                Luma.backend.draw(program, tri1, 3, uniforms, PrimitiveType.TRIANGLES)
-                Luma.backend.draw(program, tri2, 3, uniforms, PrimitiveType.TRIANGLES)
-                Luma.enableBlend()
-                Luma.backend.draw(program, tri3, 3, uniforms, PrimitiveType.TRIANGLES)
+        try {
+            DrawList().use { list ->
+                list.record {
+                    submitVertices(Luma.backend, program, tri1, 3, uniforms, PrimitiveType.TRIANGLES)
+                    submitVertices(Luma.backend, program, tri2, 3, uniforms, PrimitiveType.TRIANGLES)
+                    Luma.enableBlend()
+                    submitVertices(Luma.backend, program, tri3, 3, uniforms, PrimitiveType.TRIANGLES)
+                }
+
+                assertEquals(3, list.commandCount) // 1 merged draw + 1 blend + 1 draw
+                list.replay()
+
+                assertEquals(2, backend.immediateDraws.size)
+                assertEquals(6, backend.immediateDraws[0].vertexCount)
+                assertContentEquals(
+                    floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 2f, 0f, 3f, 0f, 2f, 1f),
+                    backend.immediateDraws[0].vertices
+                )
+                assertEquals(3, backend.immediateDraws[1].vertexCount)
+                assertContentEquals(floatArrayOf(4f, 0f, 5f, 0f, 4f, 1f), backend.immediateDraws[1].vertices)
             }
-
-            assertEquals(3, list.commandCount) // 1 merged draw + 1 blend + 1 draw
-            list.replay()
-
-            assertEquals(2, backend.immediateDraws.size)
-            assertEquals(6, backend.immediateDraws[0].vertexCount)
-            assertContentEquals(
-                floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 2f, 0f, 3f, 0f, 2f, 1f),
-                backend.immediateDraws[0].vertices
-            )
-            assertEquals(3, backend.immediateDraws[1].vertexCount)
-            assertContentEquals(floatArrayOf(4f, 0f, 5f, 0f, 4f, 1f), backend.immediateDraws[1].vertices)
+        } finally {
+            backend.close()
         }
+    }
+
+    private fun submitVertices(
+        backend: RenderBackend,
+        program: ProgramHandle,
+        floats: FloatArray,
+        vertexCount: Int,
+        uniforms: ShaderUniforms,
+        primitiveType: PrimitiveType
+    ) {
+        val cursor = VertexCursor()
+        backend.beginVertices(program, vertexCount, cursor)
+        for (f in floats) cursor.vec1(f)
+        val token = cursor.token
+        cursor.reset()
+        cursor.token = token
+        backend.endVertices(program, cursor, vertexCount, uniforms, primitiveType)
     }
 
     private data class RecordedImmediateDraw(
@@ -393,7 +417,10 @@ class DrawListTest {
         val uniformSnapshot: Map<String, Any>
     )
 
-    private class FakeProgram(val name: String) : ProgramHandle {
+    private class FakeProgram(
+        val name: String,
+        override val vertexStrideBytes: Int = 2 * Float.SIZE_BYTES
+    ) : ProgramHandle {
         override fun close() {}
     }
 
@@ -416,6 +443,8 @@ class DrawListTest {
     }
 
     private class RecordingTestBackend : RenderBackend {
+        private val scratch = MemoryUtil.memAllocFloat(256)
+        private val scratchAddr = MemoryUtil.memAddress(scratch)
         val events = ArrayList<String>()
         val immediateDraws = ArrayList<RecordedImmediateDraw>()
 
@@ -443,7 +472,7 @@ class DrawListTest {
 
         override fun beginFrame() {}
         override fun endFrame() {}
-        override fun close() {}
+        override fun close() { MemoryUtil.memFree(scratch) }
         override fun hasContext(): Boolean = true
 
         override fun createProgram(vertexSource: String, fragmentSource: String, layouts: VertexInputLayout, reflection: ShaderReflection?): ProgramHandle =
@@ -534,16 +563,21 @@ class DrawListTest {
         override fun pushDebugGroup(label: String) { events.add("pushDebug:$label") }
         override fun popDebugGroup() { events.add("popDebug") }
 
-        override fun draw(
+        override fun beginVertices(program: ProgramHandle, vertexCount: Int, cursor: VertexCursor) {
+            val stride = program.vertexStrideBytes
+            cursor.init(scratchAddr, vertexCount.toLong() * stride, stride)
+        }
+
+        override fun endVertices(
             program: ProgramHandle,
-            vertices: FloatBuffer,
+            cursor: VertexCursor,
             vertexCount: Int,
             uniforms: ShaderUniforms,
             primitiveType: PrimitiveType
         ) {
-            val copy = FloatArray(vertices.remaining())
-            val pos = vertices.position()
-            for (i in copy.indices) copy[i] = vertices.get(pos + i)
+            if (vertexCount <= 0) return
+            val floatCount = vertexCount * (program.vertexStrideBytes / Float.SIZE_BYTES)
+            val copy = FloatArray(floatCount) { scratch.get(it) }
             immediateDraws.add(RecordedImmediateDraw(program, copy, vertexCount, primitiveType, snapshotMap(uniforms)))
         }
 
@@ -595,10 +629,12 @@ class DrawListTest {
     }
 
     private class NoopZeroAllocBackend : RenderBackend {
+        private val scratch = MemoryUtil.memAllocFloat(256)
+        private val scratchAddr = MemoryUtil.memAddress(scratch)
         var draws = 0
         override fun beginFrame() {}
         override fun endFrame() {}
-        override fun close() {}
+        override fun close() { MemoryUtil.memFree(scratch) }
         override fun hasContext(): Boolean = true
         override fun createProgram(vertexSource: String, fragmentSource: String, layouts: VertexInputLayout, reflection: ShaderReflection?): ProgramHandle =
             FakeProgram("noop")
@@ -611,14 +647,18 @@ class DrawListTest {
             FakeTarget("noop", width, height)
         override fun beginRenderTarget(target: RenderTargetHandle, clearColor: FloatArray?) {}
         override fun endRenderTarget() {}
-        override fun draw(
+        override fun beginVertices(program: ProgramHandle, vertexCount: Int, cursor: VertexCursor) {
+            val stride = program.vertexStrideBytes
+            cursor.init(scratchAddr, vertexCount.toLong() * stride, stride)
+        }
+        override fun endVertices(
             program: ProgramHandle,
-            vertices: FloatBuffer,
+            cursor: VertexCursor,
             vertexCount: Int,
             uniforms: ShaderUniforms,
             primitiveType: PrimitiveType
         ) {
-            draws++
+            if (vertexCount > 0) draws++
         }
     }
 }

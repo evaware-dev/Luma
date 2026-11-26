@@ -10,6 +10,7 @@ import sweetie.evaware.luma.Luma
 import sweetie.evaware.luma.api.*
 import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.uniform.*
+import sweetie.evaware.luma.vertex.VertexCursor
 import sweetie.evaware.luma.vertex.VertexInputLayout
 import sweetie.evaware.luma.vertex.VertexLayout
 
@@ -44,10 +45,9 @@ class DrawList(
 
     private var vertexBuffer: FloatBuffer? = MemoryUtil.memAllocFloat(initialVertexFloats)
     private var vertexSegment: MemorySegment? = MemorySegment.ofBuffer(vertexBuffer!!)
-    private val srcBuffers = arrayOfNulls<FloatBuffer>(4)
-    private val srcSegments = arrayOfNulls<MemorySegment>(4)
-    private var srcNextSlot = 0
+    private var vertexBaseAddress: Long = MemoryUtil.memAddress(vertexBuffer!!)
     private var vertexFloats = 0
+    private val replayCursor = VertexCursor()
 
     // Uniform snapshot storage (flat primitive payloads + reusable per-schema replay ShaderUniforms)
     private var schemas = arrayOfNulls<UniformSchema>(4)
@@ -132,7 +132,9 @@ class DrawList(
         val opArr = ops
         val ints = intArgs
         val objs = objArgs
-        val vb = vertexBuffer!!
+        val srcSeg = vertexSegment!!
+        val baseAddr = vertexBaseAddress
+        val cursor = replayCursor
 
         var i = 0
         var o = 0
@@ -171,10 +173,32 @@ class DrawList(
                     val snapshotIdx = ints[i++]
                     val primitive = PRIMITIVE_TYPES[ints[i++]]
                     val uniforms = resolveReplayUniforms(snapshotIdx)
-                    vb.clear()
-                    vb.limit(floatOffset + floatCount)
-                    vb.position(floatOffset)
-                    backend.draw(program, vb, vertexCount, uniforms, primitive)
+                    backend.beginVertices(program, vertexCount, cursor)
+                    val copyBytes = floatCount.toLong() shl 2
+                    var committed = false
+                    try {
+                        cursor.copyFrom(srcSeg, floatOffset.toLong() shl 2, baseAddr, copyBytes)
+                        committed = true
+                        val token = cursor.token
+                        cursor.reset()
+                        cursor.token = token
+                        try {
+                            backend.endVertices(program, cursor, vertexCount, uniforms, primitive)
+                        } finally {
+                            cursor.token = 0L
+                        }
+                    } finally {
+                        if (!committed) {
+                            val token = cursor.token
+                            cursor.reset()
+                            cursor.token = token
+                            try {
+                                backend.endVertices(program, cursor, 0, uniforms, primitive)
+                            } finally {
+                                cursor.token = 0L
+                            }
+                        }
+                    }
                 }
                 OP_DRAW_DIRECT -> {
                     val program = objs[o++] as ProgramHandle
@@ -312,9 +336,8 @@ class DrawList(
             schemas[i] = null
         }
         schemaCount = 0
-        srcBuffers.fill(null)
-        srcSegments.fill(null)
         vertexSegment = null
+        vertexBaseAddress = 0L
         vertexBuffer?.let {
             vertexBuffer = null
             MemoryUtil.memFree(it)
@@ -379,54 +402,18 @@ class DrawList(
         }
     }
 
-    private fun appendVertices(vertices: FloatBuffer): Int {
-        val count = vertices.remaining()
+    private fun reserveVertexFloats(additionalFloats: Int): Int {
         val start = vertexFloats
-        val required = start + count
+        val required = Math.addExact(start, additionalFloats)
         var dst = vertexBuffer!!
-        var dstSeg = vertexSegment!!
         if (required > dst.capacity()) {
             dst = MemoryUtil.memRealloc(dst, nextCapacity(required, dst.capacity()))
             dst.clear()
             vertexBuffer = dst
-            dstSeg = MemorySegment.ofBuffer(dst)
-            vertexSegment = dstSeg
+            vertexSegment = MemorySegment.ofBuffer(dst)
+            vertexBaseAddress = MemoryUtil.memAddress(dst)
         }
-        if (vertices.isDirect) {
-            val srcSeg = resolveSourceSegment(vertices)
-            MemorySegment.copy(
-                srcSeg,
-                vertices.position().toLong() shl 2,
-                dstSeg,
-                start.toLong() shl 2,
-                count.toLong() shl 2
-            )
-        } else {
-            val srcPos = vertices.position()
-            for (k in 0 until count) {
-                dst.put(start + k, vertices.get(srcPos + k))
-            }
-        }
-        vertexFloats = required
         return start
-    }
-
-    private fun resolveSourceSegment(vertices: FloatBuffer): MemorySegment {
-        val buffers = srcBuffers
-        for (i in 0 until 4) {
-            if (buffers[i] === vertices) return srcSegments[i]!!
-        }
-        val savedPos = vertices.position()
-        val savedLim = vertices.limit()
-        vertices.clear()
-        val seg = MemorySegment.ofBuffer(vertices)
-        vertices.limit(savedLim)
-        vertices.position(savedPos)
-        val slot = srcNextSlot
-        buffers[slot] = vertices
-        srcSegments[slot] = seg
-        srcNextSlot = (slot + 1) and 3
-        return seg
     }
 
     private fun snapshotUniforms(uniforms: ShaderUniforms): Int {
@@ -839,16 +826,38 @@ class DrawList(
             emitObj(buffer)
         }
 
-        override fun draw(
+        override fun beginVertices(
             program: ProgramHandle,
-            vertices: FloatBuffer,
+            vertexCount: Int,
+            cursor: VertexCursor
+        ) {
+            val strideBytes = program.vertexStrideBytes
+            require(strideBytes > 0 && (strideBytes and 3) == 0) {
+                "ProgramHandle must report a positive float-aligned vertexStrideBytes for DrawList recording: $strideBytes"
+            }
+            val strideFloats = strideBytes ushr 2
+            val floatCount = Math.multiplyExact(vertexCount, strideFloats)
+            val startFloat = reserveVertexFloats(floatCount)
+            cursor.init(
+                baseAddress = vertexBaseAddress + (startFloat.toLong() shl 2),
+                byteLength = floatCount.toLong() shl 2,
+                strideBytes = strideBytes,
+                token = startFloat.toLong()
+            )
+        }
+
+        override fun endVertices(
+            program: ProgramHandle,
+            cursor: VertexCursor,
             vertexCount: Int,
             uniforms: ShaderUniforms,
             primitiveType: PrimitiveType
         ) {
-            val floats = vertices.remaining()
-            if (vertexCount <= 0 || floats <= 0) return
-            val floatOffset = appendVertices(vertices)
+            if (vertexCount <= 0) return
+            val strideFloats = program.vertexStrideBytes ushr 2
+            val floats = vertexCount * strideFloats
+            val floatOffset = cursor.token.toInt()
+            vertexFloats = floatOffset + floats
             val snapshotIdx = snapshotUniforms(uniforms)
             val primOrd = primitiveType.ordinal
 

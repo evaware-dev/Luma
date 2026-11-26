@@ -72,8 +72,7 @@ internal class FeatureVerificationSuite(
                 backend.beginRenderTarget(target, floatArrayOf(0f, 0f, 1f, 1f))
                 ClipMask.write(clear = true, backend = backend) {
                     circleMaskShader.attach()
-                    putFullscreenQuad(circleMaskShader)
-                    circleMaskShader.draw()
+                    drawFullscreenQuad(circleMaskShader)
                 }
                 ClipMask.inside(backend = backend) {
                     drawFullscreenColor(1f, 0f, 0f, 1f)
@@ -337,12 +336,12 @@ internal class FeatureVerificationSuite(
                         Luma.debugGroup("FillQuads") {
                             timedShader.attach()
                             timedShader.uniforms.vec4(timedColor, 1f, 0.25f, 0.5f, 1f)
-                            repeat(64) {
-                                timedShader.vertices
-                                    .vec2(-1f, -1f).vec2(1f, -1f).vec2(1f, 1f)
-                                    .vec2(-1f, -1f).vec2(1f, 1f).vec2(-1f, 1f)
+                            timedShader.draw(64 * 6) {
+                                repeat(64) {
+                                    vec2(-1f, -1f); vec2(1f, -1f); vec2(1f, 1f)
+                                    vec2(-1f, -1f); vec2(1f, 1f); vec2(-1f, 1f)
+                                }
                             }
-                            timedShader.draw()
                         }
                     }
                     Luma.backend.endRenderTarget()
@@ -378,10 +377,10 @@ internal class FeatureVerificationSuite(
     private fun drawDiamond(shader: Shader) {
         shader.attach()
         shader.uniforms.vec4(solidColorUniform, 1f, 1f, 1f, 1f)
-        shader.vertices
-            .vec2(0f, 0.5f).vec2(0.5f, 0f).vec2(0f, -0.5f)
-            .vec2(0f, 0.5f).vec2(0f, -0.5f).vec2(-0.5f, 0f)
-        shader.draw()
+        shader.draw(6) {
+            vec2(0f, 0.5f); vec2(0.5f, 0f); vec2(0f, -0.5f)
+            vec2(0f, 0.5f); vec2(0f, -0.5f); vec2(-0.5f, 0f)
+        }
     }
 
     private fun drawFullscreenColor(r: Float, g: Float, b: Float, a: Float) {
@@ -391,28 +390,29 @@ internal class FeatureVerificationSuite(
     private fun drawRectColor(x0: Float, y0: Float, x1: Float, y1: Float, r: Float, g: Float, b: Float, a: Float) {
         solidShader.attach()
         solidShader.uniforms.vec4(solidColorUniform, r, g, b, a)
-        solidShader.vertices
-            .vec2(x0, y0).vec2(x1, y0).vec2(x1, y1)
-            .vec2(x0, y0).vec2(x1, y1).vec2(x0, y1)
-        solidShader.draw()
+        solidShader.draw(6) {
+            vec2(x0, y0); vec2(x1, y0); vec2(x1, y1)
+            vec2(x0, y0); vec2(x1, y1); vec2(x0, y1)
+        }
     }
 
-    private fun putFullscreenQuad(shader: Shader) {
-        shader.vertices
-            .vec2(-1f, -1f).vec2(1f, -1f).vec2(1f, 1f)
-            .vec2(-1f, -1f).vec2(1f, 1f).vec2(-1f, 1f)
+    private fun drawFullscreenQuad(shader: Shader) {
+        shader.draw(6) {
+            vec2(-1f, -1f); vec2(1f, -1f); vec2(1f, 1f)
+            vec2(-1f, -1f); vec2(1f, 1f); vec2(-1f, 1f)
+        }
     }
 
     private fun drawTexturedQuad(uMax: Float) {
         texturedShader.attach()
-        texturedShader.vertices
-            .vec2(-1f, -1f).vec2(0f, 0f)
-            .vec2(1f, -1f).vec2(uMax, 0f)
-            .vec2(1f, 1f).vec2(uMax, 1f)
-            .vec2(-1f, -1f).vec2(0f, 0f)
-            .vec2(1f, 1f).vec2(uMax, 1f)
-            .vec2(-1f, 1f).vec2(0f, 1f)
-        texturedShader.draw()
+        texturedShader.draw(6) {
+            vec2(-1f, -1f); vec2(0f, 0f)
+            vec2(1f, -1f); vec2(uMax, 0f)
+            vec2(1f, 1f); vec2(uMax, 1f)
+            vec2(-1f, -1f); vec2(0f, 0f)
+            vec2(1f, 1f); vec2(uMax, 1f)
+            vec2(-1f, 1f); vec2(0f, 1f)
+        }
     }
 
     override fun close() {

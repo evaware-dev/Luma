@@ -23,6 +23,7 @@ import sweetie.evaware.luma.shader.translator.ShaderSamplerInfo
 import sweetie.evaware.luma.shader.translator.ShaderUniformInfo
 import sweetie.evaware.luma.uniform.ShaderUniforms
 import sweetie.evaware.luma.vertex.ShaderVertType
+import sweetie.evaware.luma.vertex.VertexCursor
 import sweetie.evaware.luma.vertex.VertexLayout
 
 class VulkanBackendLifecycleTest {
@@ -141,36 +142,35 @@ class VulkanBackendLifecycleTest {
             val secondColor = second.float4("uColor")
             second.vec4(secondColor, 0f, 1f, 0f, 1f)
 
-            val verts = ByteBuffer.allocateDirect(6 * Float.SIZE_BYTES).order(ByteOrder.nativeOrder()).asFloatBuffer()
-            verts.put(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f)).flip()
+            val verts = floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f)
 
             backend.beginFrame()
             backend.beginRenderTarget(target, null)
             // Draw 1: initial upload for 'first'
-            backend.draw(program, verts, 3, first, PrimitiveType.TRIANGLES)
+            submitVertices(backend, program, verts, 3, first, PrimitiveType.TRIANGLES)
             val offset1 = (program as Program).uboCacheOffset
             // Draw 2: clean draw with 'first' -> reuses exact same UBO offset
-            backend.draw(program, verts, 3, first, PrimitiveType.TRIANGLES)
+            submitVertices(backend, program, verts, 3, first, PrimitiveType.TRIANGLES)
             assertEquals(offset1, program.uboCacheOffset)
             // Draw 3: unrelated uniform mutated -> still reuses UBO offset
             first.float1(unused, 99f)
-            backend.draw(program, verts, 3, first, PrimitiveType.TRIANGLES)
+            submitVertices(backend, program, verts, 3, first, PrimitiveType.TRIANGLES)
             assertEquals(offset1, program.uboCacheOffset)
             // Draw 4: active uniform mutated -> writes new UBO offset
             first.vec4(firstColor, 0.5f, 0f, 0f, 1f)
-            backend.draw(program, verts, 3, first, PrimitiveType.TRIANGLES)
+            submitVertices(backend, program, verts, 3, first, PrimitiveType.TRIANGLES)
             val offset2 = program.uboCacheOffset
             assertNotEquals(offset1, offset2)
             // Draw 5: switch to 'second' -> new UBO offset
-            backend.draw(program, verts, 3, second, PrimitiveType.TRIANGLES)
+            submitVertices(backend, program, verts, 3, second, PrimitiveType.TRIANGLES)
             val offset3 = program.uboCacheOffset
             assertNotEquals(offset2, offset3)
             // Draw 6: switch back to 'first' (clean) -> must still write fresh UBO offset
-            backend.draw(program, verts, 3, first, PrimitiveType.TRIANGLES)
+            submitVertices(backend, program, verts, 3, first, PrimitiveType.TRIANGLES)
             val offset4 = program.uboCacheOffset
             assertNotEquals(offset3, offset4)
             // Draw 7: repeated 'first' -> clean skip, reuses offset4
-            backend.draw(program, verts, 3, first, PrimitiveType.TRIANGLES)
+            submitVertices(backend, program, verts, 3, first, PrimitiveType.TRIANGLES)
             assertEquals(offset4, program.uboCacheOffset)
 
             backend.endRenderTarget()
@@ -192,17 +192,16 @@ class VulkanBackendLifecycleTest {
             val program = backend.createProgram("", "uniform sampler2D Sampler0;", layout)
             val target = backend.createRenderTarget(16, 16, false, RenderTargetFormat.RGBA8)
             val texture = backend.createTexture(BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB), false)
-            val quadVerts = ByteBuffer.allocateDirect(8 * Float.SIZE_BYTES).order(ByteOrder.nativeOrder()).asFloatBuffer()
-            quadVerts.put(floatArrayOf(0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f)).flip()
+            val quadVerts = floatArrayOf(0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f)
 
             // Frame 1: bind texture and draw two quads separated by blend change (forces 2 pass draws)
             backend.beginFrame()
             backend.beginRenderTarget(target, null)
             backend.bindTexture(texture, 0)
             backend.blend(true)
-            backend.draw(program, quadVerts, 4, ShaderUniforms(), PrimitiveType.QUADS)
+            submitVertices(backend, program, quadVerts, 4, ShaderUniforms(), PrimitiveType.QUADS)
             backend.blend(false)
-            backend.draw(program, quadVerts, 4, ShaderUniforms(), PrimitiveType.QUADS)
+            submitVertices(backend, program, quadVerts, 4, ShaderUniforms(), PrimitiveType.QUADS)
             backend.endRenderTarget()
             backend.endFrame()
 
@@ -214,7 +213,7 @@ class VulkanBackendLifecycleTest {
             preset.textureBindCalls = 0
             backend.beginFrame()
             backend.beginRenderTarget(target, null)
-            backend.draw(program, quadVerts, 4, ShaderUniforms(), PrimitiveType.QUADS)
+            submitVertices(backend, program, quadVerts, 4, ShaderUniforms(), PrimitiveType.QUADS)
             backend.endRenderTarget()
             backend.endFrame()
             assertEquals(0, preset.textureBindCalls)
@@ -455,17 +454,16 @@ class VulkanBackendLifecycleTest {
             val program = backend.createProgram("", "", layout)
             val target1 = backend.createRenderTarget(16, 16, false, RenderTargetFormat.RGBA8)
             val target2 = backend.createRenderTarget(16, 16, false, RenderTargetFormat.RGBA8)
-            val verts = ByteBuffer.allocateDirect(6 * Float.SIZE_BYTES).order(ByteOrder.nativeOrder()).asFloatBuffer()
-            verts.put(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f)).flip()
+            val verts = floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f)
 
             backend.beginFrame()
             backend.pushDebugGroup("Frame")
             backend.beginRenderTarget(target1, null)
-            backend.draw(program, verts, 3, ShaderUniforms(), PrimitiveType.TRIANGLES)
+            submitVertices(backend, program, verts, 3, ShaderUniforms(), PrimitiveType.TRIANGLES)
             backend.endRenderTarget()
             backend.beginRenderTarget(target2, null)
             backend.pushDebugGroup("Pass2")
-            backend.draw(program, verts, 3, ShaderUniforms(), PrimitiveType.TRIANGLES)
+            submitVertices(backend, program, verts, 3, ShaderUniforms(), PrimitiveType.TRIANGLES)
             backend.popDebugGroup()
             backend.endRenderTarget()
             backend.popDebugGroup()
@@ -501,19 +499,18 @@ class VulkanBackendLifecycleTest {
                 format = TextureFormat.RGBA8,
                 sampler = SamplerState.NEAREST_CLAMP
             )
-            val verts = ByteBuffer.allocateDirect(6 * Float.SIZE_BYTES).order(ByteOrder.nativeOrder()).asFloatBuffer()
-            verts.put(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f)).flip()
+            val verts = floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f)
 
             backend.beginFrame()
             backend.beginRenderTarget(src, null)
             backend.bindTexture(tex, 0)
             // Draw 1 with colorMask(false) and NEAREST_CLAMP
             backend.colorMask(false, false, false, false)
-            backend.draw(program, verts, 3, ShaderUniforms(), PrimitiveType.TRIANGLES)
+            submitVertices(backend, program, verts, 3, ShaderUniforms(), PrimitiveType.TRIANGLES)
             // Switch sampler mid-frame AND restore colorMask -> must NOT merge with draw 1 and must bind new sampler
             backend.colorMask(true, true, true, true)
             backend.setTextureSampler(tex, SamplerState.LINEAR_REPEAT)
-            backend.draw(program, verts, 3, ShaderUniforms(), PrimitiveType.TRIANGLES)
+            submitVertices(backend, program, verts, 3, ShaderUniforms(), PrimitiveType.TRIANGLES)
             backend.endRenderTarget()
 
             // 1:1 matching-format blit -> native copyTextureToTexture (zero blit shader!)
@@ -545,6 +542,20 @@ class VulkanBackendLifecycleTest {
         }
         // All created pipelines (2 user + 1 internal blit) must be closed cleanly
         assertEquals(preset.createdPipelines, preset.closedPipelines)
+    }
+
+    private fun submitVertices(
+        backend: Backend,
+        program: sweetie.evaware.luma.api.ProgramHandle,
+        floats: FloatArray,
+        vertexCount: Int,
+        uniforms: ShaderUniforms,
+        primitiveType: PrimitiveType
+    ) {
+        val cursor = VertexCursor()
+        backend.beginVertices(program, vertexCount, cursor)
+        for (f in floats) cursor.vec1(f)
+        backend.endVertices(program, cursor, vertexCount, uniforms, primitiveType)
     }
 
     private class FakeVulkanPreset(

@@ -32,12 +32,14 @@ class RoundedRectBatch(
 ) : BatchRenderer, AutoCloseable {
     private val shader = RoundedRectShader()
     private val scissor = ScissorCache()
+    private var instanceData = FloatArray(INITIAL_INSTANCE_CAPACITY * FLOATS_PER_INSTANCE)
+    private var instanceCount = 0
 
     override fun load() {
         shader.load()
     }
 
-    override fun hasPending() = shader.vertices.hasVertices()
+    override fun hasPending() = instanceCount > 0
 
     fun rect(x: Float, y: Float, width: Float, height: Float, color: Int, radius: Float) {
         rect(x, y, width, height, color, radius, radius, radius, radius)
@@ -105,25 +107,63 @@ class RoundedRectBatch(
 
         scissor.update(this)
 
-        shader.vertices
-            .vec2(x, y)
-            .vec2(width, height)
-            .vec4(topLeft, topRight, bottomRight, bottomLeft)
-            .vec4(red, green, blue, alpha)
-            .vec4(uOffset, vOffset, uScale, vScale)
-            .vec4(scissor.minX, scissor.minY, scissor.maxX, scissor.maxY)
+        val base = instanceCount * FLOATS_PER_INSTANCE
+        if (base + FLOATS_PER_INSTANCE > instanceData.size) {
+            instanceData = instanceData.copyOf(instanceData.size shl 1)
+        }
+        val arr = instanceData
+        arr[base] = x
+        arr[base + 1] = y
+        arr[base + 2] = width
+        arr[base + 3] = height
+        arr[base + 4] = topLeft
+        arr[base + 5] = topRight
+        arr[base + 6] = bottomRight
+        arr[base + 7] = bottomLeft
+        arr[base + 8] = red
+        arr[base + 9] = green
+        arr[base + 10] = blue
+        arr[base + 11] = alpha
+        arr[base + 12] = uOffset
+        arr[base + 13] = vOffset
+        arr[base + 14] = uScale
+        arr[base + 15] = vScale
+        arr[base + 16] = scissor.minX
+        arr[base + 17] = scissor.minY
+        arr[base + 18] = scissor.maxX
+        arr[base + 19] = scissor.maxY
+        instanceCount++
     }
 
     override fun flush() {
-        if (!hasPending()) return
+        val count = instanceCount
+        if (count == 0) return
+        instanceCount = 0
         shader.attach()
         shader.uniforms.int1(shader.uTexture, 0)
         shader.uniforms.mat4(shader.uMatrix, MatrixControl.current())
         atlas.texture().bind(0)
-        shader.draw()
+        val arr = instanceData
+        shader.draw(count) {
+            var i = 0
+            repeat(count) {
+                vec2(arr[i++], arr[i++])
+                vec2(arr[i++], arr[i++])
+                vec4(arr[i++], arr[i++], arr[i++], arr[i++])
+                vec4(arr[i++], arr[i++], arr[i++], arr[i++])
+                vec4(arr[i++], arr[i++], arr[i++], arr[i++])
+                vec4(arr[i++], arr[i++], arr[i++], arr[i++])
+            }
+        }
     }
 
     override fun close() {
+        instanceCount = 0
         shader.close()
+    }
+
+    private companion object {
+        const val FLOATS_PER_INSTANCE = 20
+        const val INITIAL_INSTANCE_CAPACITY = 64
     }
 }

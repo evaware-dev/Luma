@@ -2,9 +2,9 @@ package sweetie.evaware.luma.api
 
 import java.awt.image.BufferedImage
 import java.nio.ByteBuffer
-import java.nio.FloatBuffer
 import sweetie.evaware.luma.shader.translator.ShaderReflection
 import sweetie.evaware.luma.uniform.ShaderUniforms
+import sweetie.evaware.luma.vertex.VertexCursor
 import sweetie.evaware.luma.vertex.VertexInputLayout
 import sweetie.evaware.luma.vertex.VertexLayout
 
@@ -203,9 +203,15 @@ interface DrawBackend {
         throw UnsupportedOperationException("Indexed drawing is not supported")
     }
 
-    fun draw(
+    fun beginVertices(
         program: ProgramHandle,
-        vertices: FloatBuffer,
+        vertexCount: Int,
+        cursor: VertexCursor
+    )
+
+    fun endVertices(
+        program: ProgramHandle,
+        cursor: VertexCursor,
         vertexCount: Int,
         uniforms: ShaderUniforms,
         primitiveType: PrimitiveType
@@ -237,7 +243,9 @@ interface RenderBackend :
     DrawBackend,
     DebugBackend
 
-interface ProgramHandle : AutoCloseable
+interface ProgramHandle : AutoCloseable {
+    val vertexStrideBytes: Int get() = 0
+}
 
 interface TextureHandle : AutoCloseable {
     val width: Int

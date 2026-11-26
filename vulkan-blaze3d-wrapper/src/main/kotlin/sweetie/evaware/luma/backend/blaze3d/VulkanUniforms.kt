@@ -6,17 +6,29 @@ import sweetie.evaware.luma.uniform.*
 data class UniformInfo(val name: String, val type: String)
 
 internal abstract class VulkanUniform(
-    name: String,
+    val name: String,
     val type: String,
     val alignmentBytes: Int,
     val sizeBytes: Int
-) : UniformBinding(name) {
+) {
+    private var cachedIndex = -1
+
+    fun getHandle(uniforms: ShaderUniforms): UniformHandle? {
+        val entries = uniforms.registry.entries
+        val cached = cachedIndex
+        if (cached in entries.indices && entries[cached].name == name) {
+            return entries[cached].handle
+        }
+        for (i in entries.indices) {
+            if (entries[i].name == name) {
+                cachedIndex = i
+                return entries[i].handle
+            }
+        }
+        return null
+    }
 
     abstract fun write(writer: Std140Writer, handle: UniformHandle?)
-
-    fun write(writer: Std140Writer, uniforms: ShaderUniforms) {
-        write(writer, getHandle(uniforms))
-    }
 }
 
 internal class VulkanFloat1Uniform(name: String, type: String) :
