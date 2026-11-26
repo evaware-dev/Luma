@@ -1,6 +1,7 @@
 package sweetie.evaware.luma.backend.blaze3d
 
 import java.awt.image.BufferedImage
+import java.lang.foreign.MemorySegment
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import org.lwjgl.system.MemoryUtil
@@ -112,7 +113,13 @@ internal class TextureUploadQueue(
         try {
             buffer.clear()
             if (data.isDirect) {
-                MemoryUtil.memCopy(MemoryUtil.memAddress(data), MemoryUtil.memAddress(buffer), requiredBytes.toLong())
+                MemorySegment.copy(
+                    MemorySegment.ofBuffer(data),
+                    0L,
+                    MemorySegment.ofBuffer(buffer),
+                    0L,
+                    requiredBytes.toLong()
+                )
                 buffer.limit(requiredBytes)
             } else {
                 val slice = data.duplicate()

@@ -1,5 +1,7 @@
 package sweetie.evaware.luma.backend.gl
 
+import java.lang.foreign.MemorySegment
+import java.lang.foreign.ValueLayout
 import java.nio.FloatBuffer
 import org.lwjgl.opengl.ARBBaseInstance
 import org.lwjgl.opengl.ARBBufferStorage
@@ -33,7 +35,9 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
 
     private var persistentMapped = false
     private var persistentDisabled = false
-    private var mappedAddress = 0L
+    private var mappedSegment: MemorySegment? = null
+    private var lastSrcBuffer: FloatBuffer? = null
+    private var lastSrcSegment: MemorySegment? = null
     private var regionBytes = 0
     private var currentRegion = 0
     private var regionWriteOffsetBytes = 0
@@ -94,7 +98,7 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
                     advancePersistentRegion()
                 }
                 val absoluteOffsetBytes = currentRegion.toLong() * regionBytes + regionWriteOffsetBytes
-                copyFloatsToAddress(vertices, floatCount, mappedAddress + absoluteOffsetBytes)
+                copyFloatsToSegment(vertices, floatCount, mappedSegment!!, absoluteOffsetBytes)
                 regionWriteOffsetBytes += alignedBytes
                 return (absoluteOffsetBytes / strideBytes).toInt()
             }
@@ -168,7 +172,7 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
             GL15.glDeleteBuffers(previousVbo)
         }
 
-        mappedAddress = MemoryUtil.memAddress(mapped)
+        mappedSegment = MemorySegment.ofBuffer(mapped)
         regionBytes = targetRegionBytes
         capacityFloats = (totalBytes / Float.SIZE_BYTES).toInt()
         currentRegion = 0
@@ -236,7 +240,7 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
             GL30.GL_MAP_WRITE_BIT or GL30.GL_MAP_UNSYNCHRONIZED_BIT
         )
         if (mapped != null) {
-            copyFloatsToAddress(vertices, floatCount, MemoryUtil.memAddress(mapped))
+            copyFloatsToSegment(vertices, floatCount, MemorySegment.ofBuffer(mapped), 0L)
             GL15.glUnmapBuffer(GL15.GL_ARRAY_BUFFER)
         } else {
             GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, writeOffset.toLong(), vertices)
@@ -245,17 +249,42 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
         return writeOffset / strideBytes
     }
 
-    private fun copyFloatsToAddress(vertices: FloatBuffer, floatCount: Int, dstAddress: Long) {
+    private fun copyFloatsToSegment(
+        vertices: FloatBuffer,
+        floatCount: Int,
+        dstSegment: MemorySegment,
+        dstOffsetBytes: Long
+    ) {
         if (vertices.isDirect) {
-            MemoryUtil.memCopy(MemoryUtil.memAddress(vertices), dstAddress, floatCount.toLong() * Float.SIZE_BYTES)
+            val srcSeg = resolveSourceSegment(vertices)
+            MemorySegment.copy(
+                srcSeg,
+                vertices.position().toLong() shl 2,
+                dstSegment,
+                dstOffsetBytes,
+                floatCount.toLong() shl 2
+            )
         } else {
             val pos = vertices.position()
-            var dst = dstAddress
+            var dst = dstOffsetBytes
             for (i in 0 until floatCount) {
-                MemoryUtil.memPutFloat(dst, vertices.get(pos + i))
+                dstSegment.set(ValueLayout.JAVA_FLOAT_UNALIGNED, dst, vertices.get(pos + i))
                 dst += Float.SIZE_BYTES
             }
         }
+    }
+
+    private fun resolveSourceSegment(vertices: FloatBuffer): MemorySegment {
+        if (vertices === lastSrcBuffer) return lastSrcSegment!!
+        val savedPos = vertices.position()
+        val savedLim = vertices.limit()
+        vertices.clear()
+        val seg = MemorySegment.ofBuffer(vertices)
+        vertices.limit(savedLim)
+        vertices.position(savedPos)
+        lastSrcBuffer = vertices
+        lastSrcSegment = seg
+        return seg
     }
 
     private fun alignToStride(bytes: Int): Int {
@@ -332,7 +361,9 @@ class GlVertexBuffer(val layout: VertexLayout) : AutoCloseable {
     override fun close() {
         deleteAllFences()
         persistentMapped = false
-        mappedAddress = 0L
+        mappedSegment = null
+        lastSrcBuffer = null
+        lastSrcSegment = null
         GL15.glDeleteBuffers(vbo)
         if (quadIndexBuffer != 0) {
             GL15.glDeleteBuffers(quadIndexBuffer)

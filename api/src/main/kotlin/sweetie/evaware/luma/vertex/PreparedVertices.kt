@@ -5,7 +5,6 @@ class PreparedVertices internal constructor(
     initialVertexCapacity: Int
 ) : AutoCloseable {
     internal val stream = VertexStream()
-    private val writer = VertexWriter(stream)
 
     @Volatile
     private var sealed = false
@@ -21,39 +20,39 @@ class PreparedVertices internal constructor(
 
     fun vec1(value: Float) = apply {
         requireWritable()
-        writer.vec1(layout.strideFloats, value)
+        stream.writeVec1(layout.strideFloats, value)
     }
 
     fun vec2(first: Float, second: Float) = apply {
         requireWritable()
-        writer.vec2(layout.strideFloats, first, second)
+        stream.writeVec2(layout.strideFloats, first, second)
     }
 
     fun vec3(first: Float, second: Float, third: Float) = apply {
         requireWritable()
-        writer.vec3(layout.strideFloats, first, second, third)
+        stream.writeVec3(layout.strideFloats, first, second, third)
     }
 
     fun vec4(first: Float, second: Float, third: Float, fourth: Float) = apply {
         requireWritable()
-        writer.vec4(layout.strideFloats, first, second, third, fourth)
+        stream.writeVec4(layout.strideFloats, first, second, third, fourth)
     }
 
     fun attribute2(layoutPos: Int, first: Float, second: Float) = apply {
         requireWritable()
-        writer.requireIdle()
+        stream.requireRawIdle()
         stream.putAttribute2(layout, layoutPos, first, second)
     }
 
     fun attribute3(layoutPos: Int, first: Float, second: Float, third: Float) = apply {
         requireWritable()
-        writer.requireIdle()
+        stream.requireRawIdle()
         stream.putAttribute3(layout, layoutPos, first, second, third)
     }
 
     fun attribute4(layoutPos: Int, first: Float, second: Float, third: Float, fourth: Float) = apply {
         requireWritable()
-        writer.requireIdle()
+        stream.requireRawIdle()
         stream.putAttribute4(layout, layoutPos, first, second, third, fourth)
     }
 
@@ -65,7 +64,7 @@ class PreparedVertices internal constructor(
 
     fun seal() = apply {
         requireOpen()
-        writer.requireIdle()
+        stream.requireRawIdle()
         stream.requireVertexBoundary()
         sealed = true
     }
@@ -73,7 +72,6 @@ class PreparedVertices internal constructor(
     fun clear() = apply {
         requireOpen()
         sealed = false
-        writer.reset()
         stream.clear()
     }
 
@@ -96,7 +94,6 @@ class PreparedVertices internal constructor(
         if (closed) return
         closed = true
         sealed = false
-        writer.reset()
         stream.close()
     }
 }

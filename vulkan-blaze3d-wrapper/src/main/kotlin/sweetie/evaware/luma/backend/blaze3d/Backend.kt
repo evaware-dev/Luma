@@ -1,6 +1,7 @@
 package sweetie.evaware.luma.backend.blaze3d
 
 import java.awt.image.BufferedImage
+import java.lang.foreign.MemorySegment
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -63,7 +64,7 @@ class Backend(
     private var blitProgram: Program? = null
     private var blitVertexScratch: ByteBuffer? =
         MemoryUtil.memAlloc(RenderPassEncoder.BLIT_QUAD_BYTES.toInt()).order(ByteOrder.nativeOrder())
-    private val blitVertexAddress: Long = MemoryUtil.memAddress(blitVertexScratch!!)
+    private var blitVertexSegment: MemorySegment? = MemorySegment.ofBuffer(blitVertexScratch!!)
     private var closed = false
     private val passEncoder = RenderPassEncoder(vertexBuffer, uboBuffer, samplerCache, ::getOrCreateBlitProgram)
 
@@ -430,8 +431,9 @@ class Backend(
             buf.putFloat(48, x0).putFloat(52, y0).putFloat(56, u0).putFloat(60, v0)
             buf.putFloat(64, x1).putFloat(68, y1).putFloat(72, u1).putFloat(76, v1)
             buf.putFloat(80, x0).putFloat(84, y1).putFloat(88, u0).putFloat(92, v1)
-            vertexStaging.appendFromAddressAligned(
-                blitVertexAddress,
+            vertexStaging.appendSegmentAligned(
+                checkNotNull(blitVertexSegment) { "Backend is closed" },
+                0L,
                 RenderPassEncoder.BLIT_QUAD_BYTES.toInt(),
                 RenderPassEncoder.BLIT_QUAD_STRIDE_BYTES
             )
@@ -540,8 +542,8 @@ class Backend(
         prog.requireOpen()
         val strideBytes = prog.strideBytes
         val vertexBytes = vertexCount * strideBytes
-        val vertexOffset = vertexStaging.appendFromAddressAligned(
-            MemoryUtil.memAddress(vertices),
+        val vertexOffset = vertexStaging.appendFloatsAligned(
+            vertices,
             vertexBytes,
             strideBytes
         )
@@ -786,6 +788,7 @@ class Backend(
         targetStackDepth = 0
         blitProgram?.close()
         blitProgram = null
+        blitVertexSegment = null
         blitVertexScratch?.let {
             blitVertexScratch = null
             MemoryUtil.memFree(it)

@@ -142,7 +142,7 @@ class VulkanBackendLifecycleTest {
             second.vec4(secondColor, 0f, 1f, 0f, 1f)
 
             val verts = ByteBuffer.allocateDirect(6 * Float.SIZE_BYTES).order(ByteOrder.nativeOrder()).asFloatBuffer()
-            verts.put(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f))
+            verts.put(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f)).flip()
 
             backend.beginFrame()
             backend.beginRenderTarget(target, null)
@@ -193,7 +193,7 @@ class VulkanBackendLifecycleTest {
             val target = backend.createRenderTarget(16, 16, false, RenderTargetFormat.RGBA8)
             val texture = backend.createTexture(BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB), false)
             val quadVerts = ByteBuffer.allocateDirect(8 * Float.SIZE_BYTES).order(ByteOrder.nativeOrder()).asFloatBuffer()
-            quadVerts.put(floatArrayOf(0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f))
+            quadVerts.put(floatArrayOf(0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f)).flip()
 
             // Frame 1: bind texture and draw two quads separated by blend change (forces 2 pass draws)
             backend.beginFrame()
@@ -456,7 +456,7 @@ class VulkanBackendLifecycleTest {
             val target1 = backend.createRenderTarget(16, 16, false, RenderTargetFormat.RGBA8)
             val target2 = backend.createRenderTarget(16, 16, false, RenderTargetFormat.RGBA8)
             val verts = ByteBuffer.allocateDirect(6 * Float.SIZE_BYTES).order(ByteOrder.nativeOrder()).asFloatBuffer()
-            verts.put(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f))
+            verts.put(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f)).flip()
 
             backend.beginFrame()
             backend.pushDebugGroup("Frame")
@@ -502,7 +502,7 @@ class VulkanBackendLifecycleTest {
                 sampler = SamplerState.NEAREST_CLAMP
             )
             val verts = ByteBuffer.allocateDirect(6 * Float.SIZE_BYTES).order(ByteOrder.nativeOrder()).asFloatBuffer()
-            verts.put(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f))
+            verts.put(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f)).flip()
 
             backend.beginFrame()
             backend.beginRenderTarget(src, null)

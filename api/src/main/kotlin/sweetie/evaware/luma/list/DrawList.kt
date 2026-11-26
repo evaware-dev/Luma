@@ -1,6 +1,7 @@
 package sweetie.evaware.luma.list
 
 import java.awt.image.BufferedImage
+import java.lang.foreign.MemorySegment
 import java.nio.ByteBuffer
 import java.nio.FloatBuffer
 import java.util.Arrays
@@ -42,6 +43,10 @@ class DrawList(
     private var objCount = 0
 
     private var vertexBuffer: FloatBuffer? = MemoryUtil.memAllocFloat(initialVertexFloats)
+    private var vertexSegment: MemorySegment? = MemorySegment.ofBuffer(vertexBuffer!!)
+    private val srcBuffers = arrayOfNulls<FloatBuffer>(4)
+    private val srcSegments = arrayOfNulls<MemorySegment>(4)
+    private var srcNextSlot = 0
     private var vertexFloats = 0
 
     // Uniform snapshot storage (flat primitive payloads + reusable per-schema replay ShaderUniforms)
@@ -307,6 +312,9 @@ class DrawList(
             schemas[i] = null
         }
         schemaCount = 0
+        srcBuffers.fill(null)
+        srcSegments.fill(null)
+        vertexSegment = null
         vertexBuffer?.let {
             vertexBuffer = null
             MemoryUtil.memFree(it)
@@ -376,14 +384,21 @@ class DrawList(
         val start = vertexFloats
         val required = start + count
         var dst = vertexBuffer!!
+        var dstSeg = vertexSegment!!
         if (required > dst.capacity()) {
             dst = MemoryUtil.memRealloc(dst, nextCapacity(required, dst.capacity()))
+            dst.clear()
             vertexBuffer = dst
+            dstSeg = MemorySegment.ofBuffer(dst)
+            vertexSegment = dstSeg
         }
         if (vertices.isDirect) {
-            MemoryUtil.memCopy(
-                MemoryUtil.memAddress(vertices),
-                MemoryUtil.memAddress(dst, start),
+            val srcSeg = resolveSourceSegment(vertices)
+            MemorySegment.copy(
+                srcSeg,
+                vertices.position().toLong() shl 2,
+                dstSeg,
+                start.toLong() shl 2,
                 count.toLong() shl 2
             )
         } else {
@@ -394,6 +409,24 @@ class DrawList(
         }
         vertexFloats = required
         return start
+    }
+
+    private fun resolveSourceSegment(vertices: FloatBuffer): MemorySegment {
+        val buffers = srcBuffers
+        for (i in 0 until 4) {
+            if (buffers[i] === vertices) return srcSegments[i]!!
+        }
+        val savedPos = vertices.position()
+        val savedLim = vertices.limit()
+        vertices.clear()
+        val seg = MemorySegment.ofBuffer(vertices)
+        vertices.limit(savedLim)
+        vertices.position(savedPos)
+        val slot = srcNextSlot
+        buffers[slot] = vertices
+        srcSegments[slot] = seg
+        srcNextSlot = (slot + 1) and 3
+        return seg
     }
 
     private fun snapshotUniforms(uniforms: ShaderUniforms): Int {

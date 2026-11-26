@@ -36,6 +36,7 @@ class Backend(
     private var samplerBindings = IntArray(config.initialTextureUnits) { UNKNOWN_SAMPLER_BINDING }
     private var activeTextureUnit = -1
     private var frameActive = false
+    private var ownedStateDirty = true
 
     // Direct draw bindings
     private val directVertexBuffers = arrayOfNulls<GlVertexBufferHandle>(16)
@@ -58,11 +59,11 @@ class Backend(
     override val colorMaskAlpha: Boolean get() = renderState.colorMaskAlpha
 
     override fun beginFrame() {
-        stateGuard.beginFrame()
         batcher.clear()
         framebuffers.beginFrame()
-        invalidateBindingCache()
         if (preserveState) {
+            stateGuard.beginFrame()
+            invalidateBindingCache()
             activeTextureUnit = -1
             renderState.invalidate()
         } else {
@@ -86,12 +87,10 @@ class Backend(
         } finally {
             batcher.clear()
             frameActive = false
-            stateGuard.resetAfterFrame()
             framebuffers.resetAfterFrame()
             if (preserveState) {
+                stateGuard.resetAfterFrame()
                 invalidateStateCache()
-            } else {
-                invalidateBindingCache()
             }
         }
     }
@@ -125,6 +124,8 @@ class Backend(
                 error("Failed to link program: ${GL20.glGetProgramInfoLog(programId)}")
             }
             loaded = true
+            boundProgramId = -1
+            boundVertexArrayId = -1
             return Program(programId, layouts)
         } finally {
             if (vertShader != 0) GL20.glDeleteShader(vertShader)
@@ -396,14 +397,14 @@ class Backend(
         val glProgram = program as Program
         val vb = glProgram.vertexBuffer
 
-        if (frameActive && batcher.tryAppend(
+        if (frameActive && batcher.pendingProgram === glProgram && batcher.tryAppend(
                 glProgram,
                 primitiveType,
                 uniforms,
                 vertices,
                 vertexCount,
-                upload = ::uploadVertexBuffer,
-                flushCurrent = ::flushPendingDraw
+                upload = { targetVb, verts -> uploadVertexBuffer(targetVb, verts) },
+                flushCurrent = { flushPendingDraw() }
             )
         ) {
             return
@@ -497,6 +498,7 @@ class Backend(
 
     override fun blend(enabled: Boolean) {
         if (!renderState.blend(enabled)) return
+        ownedStateDirty = true
         if (batcher.hasPending) flushPendingDraw()
         if (stateGuard.saveBlendEnableAndMatchesHost(frameActive, enabled)) return
         if (enabled) GL11.glEnable(GL11.GL_BLEND) else GL11.glDisable(GL11.GL_BLEND)
@@ -504,6 +506,7 @@ class Backend(
 
     override fun blendFunction(function: BlendFunction) {
         if (!renderState.blendFunction(function)) return
+        ownedStateDirty = true
         if (batcher.hasPending) flushPendingDraw()
         val srcRgb = GlEnums.blendFactor(function.sourceColor)
         val dstRgb = GlEnums.blendFactor(function.destinationColor)
@@ -520,6 +523,7 @@ class Backend(
 
     override fun colorMask(red: Boolean, green: Boolean, blue: Boolean, alpha: Boolean) {
         if (!renderState.colorMask(red, green, blue, alpha)) return
+        ownedStateDirty = true
         if (batcher.hasPending) flushPendingDraw()
         if (stateGuard.saveColorMaskAndMatchesHost(frameActive, red, green, blue, alpha)) return
         GL11.glColorMask(red, green, blue, alpha)
@@ -527,6 +531,7 @@ class Backend(
 
     override fun depthTest(enabled: Boolean) {
         if (!renderState.depthTest(enabled)) return
+        ownedStateDirty = true
         if (batcher.hasPending) flushPendingDraw()
         if (stateGuard.saveDepthEnableAndMatchesHost(frameActive, enabled)) return
         if (enabled) GL11.glEnable(GL11.GL_DEPTH_TEST) else GL11.glDisable(GL11.GL_DEPTH_TEST)
@@ -534,6 +539,7 @@ class Backend(
 
     override fun depthWrite(enabled: Boolean) {
         if (!renderState.depthWrite(enabled)) return
+        ownedStateDirty = true
         if (batcher.hasPending) flushPendingDraw()
         if (stateGuard.saveDepthWriteAndMatchesHost(frameActive, enabled)) return
         GL11.glDepthMask(enabled)
@@ -541,6 +547,7 @@ class Backend(
 
     override fun depthCompare(compare: DepthCompare) {
         if (!renderState.depthCompare(compare)) return
+        ownedStateDirty = true
         if (batcher.hasPending) flushPendingDraw()
         val glFunc = GlEnums.depthFunction(compare)
         if (stateGuard.saveDepthFuncAndMatchesHost(frameActive, glFunc)) return
@@ -549,6 +556,7 @@ class Backend(
 
     override fun stencilTest(enabled: Boolean) {
         if (!renderState.stencilTest(enabled)) return
+        ownedStateDirty = true
         if (batcher.hasPending) flushPendingDraw()
         if (stateGuard.saveStencilEnableAndMatchesHost(frameActive, enabled)) return
         if (enabled) GL11.glEnable(GL11.GL_STENCIL_TEST) else GL11.glDisable(GL11.GL_STENCIL_TEST)
@@ -581,6 +589,7 @@ class Backend(
 
     override fun cull(enabled: Boolean) {
         if (!renderState.cull(enabled)) return
+        ownedStateDirty = true
         if (batcher.hasPending) flushPendingDraw()
         if (stateGuard.saveCullAndMatchesHost(frameActive, enabled)) return
         if (enabled) GL11.glEnable(GL11.GL_CULL_FACE) else GL11.glDisable(GL11.GL_CULL_FACE)
@@ -685,6 +694,7 @@ class Backend(
         renderState.invalidate()
         framebuffers.invalidateApplied()
         stateGuard.ownedFixedStateKnown = false
+        ownedStateDirty = true
     }
 
     fun <T> externalGl(action: () -> T): T {
@@ -757,6 +767,7 @@ class Backend(
     private fun prepareOwnedFrame() {
         stateGuard.snapshot.drawFramebuffer = config.ownedDrawFramebuffer
         stateGuard.snapshot.readFramebuffer = config.ownedReadFramebuffer
+        if (!ownedStateDirty && stateGuard.ownedFixedStateKnown && activeTextureUnit == 0) return
         depthTest(false)
         depthWrite(false)
         depthCompare(DepthCompare.ALWAYS)
@@ -770,6 +781,7 @@ class Backend(
             stateGuard.ownedFixedStateKnown = true
         }
         activateTextureUnit(0)
+        ownedStateDirty = false
     }
 
     private fun prepareDirectDraw(program: ProgramHandle, uniforms: ShaderUniforms): Program {

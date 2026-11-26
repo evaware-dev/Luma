@@ -50,24 +50,24 @@ abstract class ShaderInputApi<Self : ShaderInputApi<Self>> {
 
     fun mat4(name: String) = onRegisterUniform(ShaderUniformType.MAT4, name) as Mat4Uniform
 
-    fun float1(value: Float): Self {
+    open fun float1(value: Float): Self {
         onWriteFloat(1, value, 0f, 0f, 0f)
         return self()
     }
 
-    fun vec1(value: Float) = float1(value)
+    open fun vec1(value: Float): Self = float1(value)
 
-    fun vec2(first: Float, second: Float): Self {
+    open fun vec2(first: Float, second: Float): Self {
         onWriteFloat(2, first, second, 0f, 0f)
         return self()
     }
 
-    fun vec3(first: Float, second: Float, third: Float): Self {
+    open fun vec3(first: Float, second: Float, third: Float): Self {
         onWriteFloat(3, first, second, third, 0f)
         return self()
     }
 
-    fun vec4(first: Float, second: Float, third: Float, fourth: Float): Self {
+    open fun vec4(first: Float, second: Float, third: Float, fourth: Float): Self {
         onWriteFloat(4, first, second, third, fourth)
         return self()
     }

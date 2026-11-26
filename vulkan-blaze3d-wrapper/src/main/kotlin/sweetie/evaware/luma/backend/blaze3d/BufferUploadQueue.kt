@@ -1,7 +1,6 @@
 package sweetie.evaware.luma.backend.blaze3d
 
 import java.nio.ByteBuffer
-import org.lwjgl.system.MemoryUtil
 import sweetie.evaware.luma.backend.blaze3d.preset.PresetCommandEncoder
 
 internal class BufferUploadQueue(initialCapacity: Int) : AutoCloseable {
@@ -28,7 +27,7 @@ internal class BufferUploadQueue(initialCapacity: Int) : AutoCloseable {
         val upload = if (size < uploads.size) uploads[size] else Upload().also(uploads::add)
         upload.buffer = buffer
         upload.targetOffset = targetOffset
-        upload.sourceOffset = staging.appendFromAddress(MemoryUtil.memAddress(data), bytes).toInt()
+        upload.sourceOffset = staging.appendBytes(data, bytes).toInt()
         upload.size = bytes
         size++
     }
